@@ -3,8 +3,8 @@ import "./globals.css";
 import { ToastProvider } from "@/components/providers/toast-provider";
 
 export const metadata: Metadata = {
-  title: "Sonora | Hudba bez šumu",
-  description: "Offline-first hudební knihovna s volitelnou čtečkou dokumentů.",
+  title: "P/_ayer | Hudba offline",
+  description: "Lokální hudební přehrávač s volitelnou čtečkou dokumentů.",
 };
 
 export const viewport: Viewport = {

@@ -484,10 +484,7 @@
 
 /* Sonora workspace --------------------------------------------------------- */
 .app-shell {
-  background:
-    radial-gradient(circle at 76% -10%, color-mix(in oklab, #ef7d32 10%, transparent), transparent 27rem),
-    radial-gradient(circle at 20% 72%, color-mix(in oklab, #51307d 8%, transparent), transparent 32rem),
-    var(--background);
+  background: var(--background);
 }
 
 .brand-mark {
@@ -499,8 +496,8 @@
   justify-content: center;
   overflow: hidden;
   border-radius: 0.75rem;
-  background: linear-gradient(135deg, #ffc371, #f16a45 52%, #8c3d7c);
-  box-shadow: 0 8px 22px color-mix(in oklab, #f16a45 24%, transparent);
+  background: var(--win);
+  box-shadow: none;
 }
 
 .brand-mark::before,
@@ -563,16 +560,19 @@
 }
 
 .hero-card {
-  background:
-    linear-gradient(116deg, rgb(90 38 37 / 88%), rgb(52 30 55 / 92%) 54%, rgb(27 27 44 / 96%)),
-    radial-gradient(circle at 88% 18%, #f29456, transparent 38%);
-  box-shadow: 0 24px 80px rgb(0 0 0 / 18%);
+  background: var(--card);
+  box-shadow: none;
 }
 
 .reader-empty {
   background:
     radial-gradient(circle at 50% 0%, color-mix(in oklab, #ef7d32 14%, transparent), transparent 23rem),
     color-mix(in oklab, var(--card) 45%, transparent);
+}
+
+.player-dock {
+  background: color-mix(in oklab, var(--card) 96%, transparent);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
 }
 
 .reader-paper {

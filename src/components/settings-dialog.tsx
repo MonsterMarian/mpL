@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenText, Check, Download, Moon, RotateCcw, Settings, Sun } from "lucide-react";
+import { BookOpenText, Check, Download, Moon, Music2, RotateCcw, Settings, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,22 +10,23 @@ import * as liveUpdate from "@/lib/live-update";
 interface SettingsDialogProps {
   addonEnabled?: boolean;
   onAddonEnabledChange?: (enabled: boolean) => void;
-  onAudioSettingsChange?: (url: string, autoPlay: boolean) => void;
+  mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
+  onRequestMediaAccess?: () => Promise<void> | void;
   trigger?: React.ReactNode;
 }
 
 export function SettingsDialog({
   addonEnabled = true,
   onAddonEnabledChange,
-  onAudioSettingsChange,
+  mediaPermission = "unknown",
+  onRequestMediaAccess,
   trigger,
 }: SettingsDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [url, setUrl] = React.useState("");
-  const [audioUrl, setAudioUrl] = React.useState("");
-  const [autoPlay, setAutoPlay] = React.useState(false);
   const [documentAddon, setDocumentAddon] = React.useState(addonEnabled);
   const [theme, setTheme] = React.useState<"dark" | "light">("dark");
+  const [isRequestingMedia, setIsRequestingMedia] = React.useState(false);
   
   const [updateStatus, setUpdateStatus] = React.useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = React.useState<string | null>(null);
@@ -34,8 +35,6 @@ export function SettingsDialog({
     if (open) {
       setUrl(liveUpdate.getUpdateUrl());
       setCurrentVersion(liveUpdate.currentBundleVersion() || "APK verze");
-      setAudioUrl(localStorage.getItem("microwins:audio_url") || "");
-      setAutoPlay(localStorage.getItem("microwins:audio_autoplay") === "true");
       setDocumentAddon(localStorage.getItem("microwins:reader_addon") !== "false");
       setTheme(localStorage.getItem("microwins:theme") === "light" ? "light" : "dark");
     }
@@ -43,14 +42,21 @@ export function SettingsDialog({
 
   const handleSave = () => {
     liveUpdate.setUpdateUrl(url);
-    localStorage.setItem("microwins:audio_url", audioUrl);
-    localStorage.setItem("microwins:audio_autoplay", autoPlay ? "true" : "false");
     localStorage.setItem("microwins:reader_addon", documentAddon ? "true" : "false");
     localStorage.setItem("microwins:theme", theme);
     document.documentElement.classList.toggle("dark", theme === "dark");
     onAddonEnabledChange?.(documentAddon);
-    onAudioSettingsChange?.(audioUrl.trim(), autoPlay);
     setOpen(false);
+  };
+
+  const handleRequestMediaAccess = async () => {
+    if (!onRequestMediaAccess || isRequestingMedia) return;
+    setIsRequestingMedia(true);
+    try {
+      await onRequestMediaAccess();
+    } finally {
+      setIsRequestingMedia(false);
+    }
   };
 
   const handleCheckUpdate = async () => {
@@ -70,7 +76,7 @@ export function SettingsDialog({
 
   return (
     <>
-      {trigger ?? (
+      {trigger ? <span className="contents" onClick={() => setOpen(true)}>{trigger}</span> : (
         <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setOpen(true)}>
           <Settings className="size-5" />
         </Button>
@@ -79,40 +85,31 @@ export function SettingsDialog({
         open={open} 
         onOpenChange={setOpen} 
         title="Nastavení"
-        description="Uprav si Sonoru podle svého poslechu."
+        description="Uprav si P/_ayer podle svého poslechu."
         className="max-w-lg"
       >
         <div className="flex flex-col gap-5">
           <section className="rounded-2xl border bg-background/50 p-4">
             <div className="mb-4 flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
-                <Settings className="size-4" />
+                <Music2 className="size-4" />
               </div>
               <div>
-                <h3 className="font-semibold">Přehrávač</h3>
-                <p className="text-xs text-muted-foreground">Stream i automatické spuštění</p>
+                <h3 className="font-semibold">Hudba v zařízení</h3>
+                <p className="text-xs text-muted-foreground">Skladby ze složky Hudba a Stažené</p>
               </div>
             </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-medium text-muted-foreground">Výchozí stream URL</label>
-              <Input 
-                value={audioUrl} 
-                onChange={(e) => setAudioUrl(e.target.value)} 
-                placeholder="https://example.com/stream.mp3"
-              />
+            <div className="flex items-center justify-between gap-4 rounded-xl border bg-card/70 p-3">
+              <div>
+                <p className="text-sm font-medium">Přístup k médiím</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {mediaPermission === "granted" ? "Přístup je povolený." : mediaPermission === "unavailable" ? "V prohlížeči použij výběr souboru." : "Povol načtení lokální hudby."}
+                </p>
+              </div>
+              <Button type="button" size="sm" variant={mediaPermission === "granted" ? "secondary" : "win"} disabled={isRequestingMedia || mediaPermission === "unavailable"} onClick={handleRequestMediaAccess}>
+                {isRequestingMedia ? "Čekám…" : mediaPermission === "granted" ? "Obnovit" : "Povolit"}
+              </Button>
             </div>
-            <label className="mt-4 flex cursor-pointer items-center justify-between gap-4">
-              <span>
-                <span className="block text-sm font-medium">Přehrát po spuštění</span>
-                <span className="text-xs text-muted-foreground">Prohlížeč může autoplay zablokovat.</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={autoPlay}
-                onChange={(e) => setAutoPlay(e.target.checked)}
-                className="size-4 accent-orange-500"
-              />
-            </label>
           </section>
 
           <section className="rounded-2xl border bg-background/50 p-4">
