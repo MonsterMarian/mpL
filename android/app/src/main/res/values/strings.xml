@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MicroWins</string>
+    <string name="title_activity_main">MicroWins</string>
+    <string name="package_name">cz.microwins.app</string>
+    <string name="custom_url_scheme">cz.microwins.app</string>
+</resources>

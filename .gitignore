@@ -1,0 +1,34 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+.env
+.env.local
+.DS_Store
+*.log
+
+# Android (Capacitor)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+*.keystore
+*.jks
+android/keystore.properties
+
+# Web Harness
+.webharness/cache/
+variants/**/node_modules/
+taste/*.psd
+
+# Živé aktualizace: balík se schválně verzuje, appka si ho z GitHubu stahuje.
+# Staré balíky maže build skript, v repozitáři zůstává jen ten poslední.
+
+harness/

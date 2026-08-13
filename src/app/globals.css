@@ -1,0 +1,483 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.21 0.006 285.885);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+
+  /* Jediný barevný akcent v appce: jantar = microwin/rekord. */
+  --win: oklch(0.72 0.16 62);
+  --win-foreground: oklch(0.99 0 0);
+  --win-muted: oklch(0.96 0.035 75);
+  --win-muted-foreground: oklch(0.46 0.11 55);
+
+  /*
+   * Postup má vlastní barvu: zelenou. Odstín 145° je od jantaru winů (62°)
+   * dost daleko, aby se obě barvy na obrazovce nepletly, a leží tam, kde má
+   * gamut zelené špičku - proto snese vysokou sytost, aniž by se v sRGB
+   * usekla. Komu dvě barvy vadí, přepne v Nastavení na bílou (`data-accent`).
+   */
+  --progress: oklch(0.66 0.19 145);
+  --progress-foreground: oklch(0.99 0 0);
+  --progress-muted: oklch(0.95 0.05 145);
+  --progress-muted-foreground: oklch(0.46 0.13 145);
+  --track: oklch(0.9 0.004 286.32);
+}
+
+.dark {
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.19 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.19 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.92 0.004 286.32);
+  --primary-foreground: oklch(0.21 0.006 285.885);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.552 0.016 285.938);
+
+  --win: oklch(0.78 0.15 68);
+  --win-foreground: oklch(0.17 0.02 60);
+  --win-muted: oklch(0.32 0.06 66);
+  --win-muted-foreground: oklch(0.88 0.09 75);
+
+  --progress: oklch(0.82 0.2 145);
+  --progress-foreground: oklch(0.17 0.04 145);
+  --progress-muted: oklch(0.31 0.08 145);
+  --progress-muted-foreground: oklch(0.89 0.16 145);
+  --track: oklch(1 0 0 / 14%);
+}
+
+/*
+ * Bílý postup. Bere si stejnou dvojici jako tlačítka (`--primary`), takže bílé
+ * „Nový úkol" a pruh postupu mluví stejným jazykem a barevný akcent zbyde
+ * v appce jediný - jantar u microwinů.
+ *
+ * Pořadí je tady nosné: `.dark` a `[data-accent]` mají stejnou váhu, takže
+ * přepis musí stát níž. Kombinace obojího pak přebije obě.
+ */
+[data-accent="white"] {
+  --progress: oklch(0.21 0.006 285.885);
+  --progress-foreground: oklch(0.985 0 0);
+  --progress-muted: oklch(0.967 0.001 286.375);
+  --progress-muted-foreground: oklch(0.45 0.008 286);
+}
+
+.dark[data-accent="white"] {
+  --progress: oklch(0.92 0.004 286.32);
+  --progress-foreground: oklch(0.21 0.006 285.885);
+  --progress-muted: oklch(0.274 0.006 286.033);
+  --progress-muted-foreground: oklch(0.75 0.008 286);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-win: var(--win);
+  --color-win-foreground: var(--win-foreground);
+  --color-win-muted: var(--win-muted);
+  --color-win-muted-foreground: var(--win-muted-foreground);
+
+  --color-progress: var(--progress);
+  --color-progress-foreground: var(--progress-foreground);
+  --color-progress-muted: var(--progress-muted);
+  --color-progress-muted-foreground: var(--progress-muted-foreground);
+  --color-track: var(--track);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Appka, ne stránka: žádné dotažení nahoru, žádný odraz na konci seznamu. */
+    overscroll-behavior: none;
+    /*
+     * Bezpečná zóna. Na Androidu ji vstřikuje Capacitor jako
+     * --safe-area-inset-*, jinde ji dodá env(). V prohlížeči vyjde 0.
+     */
+    --mw-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    --mw-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    --mw-safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+    --mw-safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+    /* Modrý záblesk pod prstem prozradí web na první dotek. */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* Text se v appce neoznačuje - kromě míst, kde ho uživatel chce zkopírovat. */
+  .select-none input,
+  .select-none textarea,
+  .select-none [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  .select-none {
+    -webkit-touch-callout: none;
+  }
+
+  /* Lišty appky kreslí až pod systémové pruhy, obsah zůstává nad nimi. */
+  .mw-safe-top {
+    padding-top: var(--mw-safe-top);
+  }
+
+  .mw-safe-bottom {
+    padding-bottom: var(--mw-safe-bottom);
+  }
+
+  .mw-safe-x {
+    padding-left: var(--mw-safe-left);
+    padding-right: var(--mw-safe-right);
+  }
+
+  /*
+   * Místo pod obsahem, aby ho nepřekryla spodní lišta. Počítá se z její výšky
+   * i z bezpečné zóny gest - na telefonu s gesty je pruh o dost vyšší, takže
+   * pevné číslo poslední řádek uřízne.
+   */
+  .mw-pad-nav {
+    padding-bottom: calc(7.5rem + var(--mw-safe-bottom));
+  }
+
+  @media (min-width: 640px) {
+    .mw-pad-nav {
+      padding-bottom: 1.5rem;
+    }
+  }
+
+  /*
+   * Prstem se míří hůř než myší. Malá ikonová tlačítka si proto na dotykových
+   * zařízeních roztáhnou zásah na 44 px, aniž by se pohnulo rozvržení.
+   */
+  @media (pointer: coarse) {
+    button[class*="size-7"],
+    button[class*="size-9"] {
+      position: relative;
+    }
+
+    button[class*="size-7"]::after,
+    button[class*="size-9"]::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 44px;
+      height: 44px;
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /*
+   * Posuvník hodnoty úkolu - vlastní jezdec, stopa kreslí obal. Jezdec je
+   * schválně vyšší než stopa a se stínem: prstem se za něj musí dát chytit
+   * a musí být vidět, kde přesně hodnota stojí.
+   */
+  .slider-input::-webkit-slider-thumb {
+    appearance: none;
+    width: 8px;
+    height: 20px;
+    border-radius: 4px;
+    background: var(--progress);
+    border: 2px solid var(--card);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+    cursor: grab;
+    transition: transform 0.12s ease-out;
+  }
+
+  .slider-input:active::-webkit-slider-thumb {
+    transform: scale(1.15);
+    cursor: grabbing;
+  }
+
+  .slider-input::-moz-range-thumb {
+    width: 8px;
+    height: 20px;
+    border-radius: 4px;
+    background: var(--progress);
+    border: 2px solid var(--card);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+    cursor: grab;
+  }
+
+  .slider-input::-moz-range-track {
+    background: transparent;
+  }
+
+  /*
+   * Vzorky barvy v Nastavení. Nesmí jít přes --progress: obě dlaždice by pak
+   * ukazovaly právě zvolenou barvu a nebylo by z čeho vybírat.
+   */
+  .mw-swatch-green {
+    background: oklch(0.66 0.19 145);
+  }
+
+  .dark .mw-swatch-green {
+    background: oklch(0.82 0.2 145);
+  }
+
+  .mw-swatch-white {
+    background: oklch(0.21 0.006 285.885);
+  }
+
+  .dark .mw-swatch-white {
+    background: oklch(0.92 0.004 286.32);
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes mw-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-in-up {
+    animation: mw-in 0.18s ease-out both;
+  }
+
+  /*
+   * Odezva na přírůstek. Pruh sám o sobě jen tiše povyroste, což se v běhu
+   * palce ztratí - proto přes něj přeběhne světlo, číslo lehce nadskočí
+   * a nad ním vyplave bublina s tím, o kolik se to hnulo.
+   */
+  @keyframes mw-shine {
+    from {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    to {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+  }
+
+  .mw-shine {
+    animation: mw-shine 0.75s ease-out both;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, white 65%, transparent) 50%,
+      transparent 100%
+    );
+  }
+
+  @keyframes mw-pop {
+    0% {
+      transform: scale(1);
+    }
+    40% {
+      transform: scale(1.09);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  .mw-pop {
+    animation: mw-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes mw-rise {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, 4px) scale(0.85);
+    }
+    22% {
+      opacity: 1;
+      transform: translate(-50%, -6px) scale(1);
+    }
+    70% {
+      opacity: 1;
+      transform: translate(-50%, -12px) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, -24px) scale(0.95);
+    }
+  }
+
+  .mw-rise {
+    animation: mw-rise 1.15s ease-out both;
+  }
+
+  /* Doražení do stovky. Jednou zazáří celý pruh a je hotovo. */
+  @keyframes mw-flash {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--progress) 70%, transparent);
+    }
+    to {
+      box-shadow: 0 0 0 10px color-mix(in oklab, var(--progress) 0%, transparent);
+    }
+  }
+
+  .mw-flash {
+    animation: mw-flash 0.9s ease-out both;
+  }
+
+  /*
+   * Losování PushWinu. Pás výzev projede kolem značky a dojede - zpomalení
+   * na konci dělá celé napětí, proto křivka s dlouhým doběhem.
+   */
+  @keyframes mw-reel {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-72%);
+    }
+  }
+
+  .mw-reel {
+    animation: mw-reel 2.6s cubic-bezier(0.12, 0.7, 0.1, 1) both;
+  }
+
+  /* Plovoucí tlačítko nepřilétá odnikud, jen se zvedne zpod svého místa. */
+  @keyframes mw-fab-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .mw-fab-in {
+    animation: mw-fab-in 0.22s ease-out both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-in-up,
+    .mw-shine,
+    .mw-pop,
+    .mw-rise,
+    .mw-flash,
+    .mw-fab-in,
+    .mw-reel {
+      animation: none;
+    }
+
+    /* Bublina i lesk jsou čistě ozdobné - bez pohybu nemají co dělat na obraze. */
+    .mw-shine,
+    .mw-rise {
+      display: none;
+    }
+  }
+}
+
+@layer utilities {
+  /* Tenký, tichý scrollbar - kalendář na úzkém okně přeteče a hrubý systémový
+     pruh pod ním kalendář opticky rozbíjí. */
+  .scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+  }
+
+  .scroll-quiet::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+  }
+
+  .scroll-quiet::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scroll-quiet::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 18%, transparent);
+  }
+
+  .scroll-quiet:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--foreground) 32%, transparent);
+  }
+}

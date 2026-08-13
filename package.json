@@ -1,0 +1,52 @@
+{
+  "name": "microwins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MicroWins - stromová evidence denních rekordů a microwinů",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "ci:validate": "npm run type-check && npm run test",
+    "android:assets": "node scripts/android-assets.mjs",
+    "ota:bundle": "node scripts/release.mjs",
+    "android:sync": "cap sync android",
+    "android:apk": "npm run ota:bundle && npm run android:sync && cd android && gradlew.bat assembleDebug",
+    "android:release": "npm run ota:bundle && npm run android:sync && cd android && gradlew.bat assembleRelease && cd .. && npm run android:sign",
+    "android:sign": "node scripts/sign-apk.mjs"
+  },
+  "dependencies": {
+    "@capacitor-community/text-to-speech": "^8.0.2",
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3",
+    "@capawesome/capacitor-background-task": "^8.0.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "next": "^15.1.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
