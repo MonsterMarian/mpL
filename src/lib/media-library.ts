@@ -13,6 +13,7 @@ export interface NativeAudioTrack {
 interface MediaLibraryPlugin {
   checkPermission(): Promise<{ granted: boolean }>;
   requestPermission(): Promise<{ granted: boolean }>;
+  openAppSettings(): Promise<void>;
   listAudio(): Promise<{ tracks: NativeAudioTrack[] }>;
 }
 

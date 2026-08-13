@@ -259,6 +259,24 @@ export default function HomePage() {
     }
   }, [toast]);
 
+  const openMediaSettings = React.useCallback(async () => {
+    if (!canReadDeviceMedia()) return;
+    try {
+      await MediaLibrary.openAppSettings();
+    } catch (error) {
+      console.error("Nepodařilo se otevřít nastavení oprávnění", error);
+      toast({ tone: "warn", title: "Nastavení se nepodařilo otevřít", description: "Otevři Android Nastavení a najdi P/_ayer ručně." });
+    }
+  }, [toast]);
+
+  const requestMediaAccess = React.useCallback(async () => {
+    if (mediaPermission === "denied") {
+      await openMediaSettings();
+      return;
+    }
+    await loadDeviceMusic(true);
+  }, [loadDeviceMusic, mediaPermission, openMediaSettings]);
+
   React.useEffect(() => {
     const savedLikes = localStorage.getItem("microwins:liked_tracks");
     if (savedLikes) {
@@ -544,7 +562,7 @@ export default function HomePage() {
               addonEnabled={readerAddon}
               onAddonEnabledChange={handleAddonChange}
               mediaPermission={mediaPermission}
-              onRequestMediaAccess={() => loadDeviceMusic(true)}
+              onRequestMediaAccess={requestMediaAccess}
               trigger={<button type="button" className="sidebar-link w-full"><Settings2 className="size-[18px]" /> Nastavení</button>}
             />
             <div className="px-3 pt-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">P/_ayer 1.0 · offline ready</div>
@@ -563,7 +581,7 @@ export default function HomePage() {
                 addonEnabled={readerAddon}
                 onAddonEnabledChange={handleAddonChange}
                 mediaPermission={mediaPermission}
-                onRequestMediaAccess={() => loadDeviceMusic(true)}
+                onRequestMediaAccess={requestMediaAccess}
                 trigger={<button type="button" className="rounded-xl p-2.5 text-muted-foreground hover:bg-white/10" aria-label="Nastavení"><Settings2 className="size-5" /></button>}
               />
             </div>
@@ -590,12 +608,12 @@ export default function HomePage() {
                       <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Knihovna</p><h2 className="mt-2 text-xl font-semibold">Stažená hudba</h2><p className="mt-1 text-sm text-muted-foreground">{tracks.length ? `${tracks.length} ${tracks.length === 1 ? "skladba" : "skladeb"} připravených k poslechu` : "Zatím tu nejsou žádné skladby"}</p></div>
                       <div className="flex size-11 items-center justify-center rounded-xl bg-win-muted text-win-muted-foreground"><Music2 className="size-5" /></div>
                     </div>
-                    {tracks.length ? <div className="mt-5 divide-y divide-border">{tracks.slice(0, 5).map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="mt-6 rounded-lg border border-dashed p-6 text-center"><Music2 className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Povol přístup k médiím</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Přehrávač načte hudbu z telefonu, včetně složky Stažené.</p><button type="button" onClick={() => loadDeviceMusic(true)} className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-win px-3 text-xs font-semibold text-win-foreground hover:bg-win/90">Povolit přístup</button><label className="mx-auto mt-3 flex h-9 w-fit cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Vybrat soubory<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>}
+                    {tracks.length ? <div className="mt-5 divide-y divide-border">{tracks.slice(0, 5).map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="mt-6 rounded-lg border border-dashed p-6 text-center"><Music2 className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{mediaPermission === "denied" ? "Přístup k hudbě je vypnutý" : "Povol přístup k médiím"}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{mediaPermission === "denied" ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio." : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}</p><button type="button" onClick={requestMediaAccess} className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-win px-3 text-xs font-semibold text-win-foreground hover:bg-win/90">{mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}</button><label className="mx-auto mt-3 flex h-9 w-fit cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Vybrat soubory<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>}
                   </section>
                   <section className="rounded-xl border bg-card p-5">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Stav zařízení</p>
                     <div className="mt-5 space-y-4"><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Přístup k médiím</span><span className={cn("font-medium", mediaPermission === "granted" ? "text-progress" : "text-win-muted-foreground")}>{mediaPermission === "granted" ? "Povolený" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Skladby</span><span className="tabular">{tracks.length}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Oblíbené</span><span className="tabular">{liked.size}</span></div></div>
-                    <button type="button" onClick={() => loadDeviceMusic(true)} disabled={isLoadingMedia || mediaPermission === "unavailable"} className="mt-7 flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-accent disabled:opacity-50">{isLoadingMedia ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} {isLoadingMedia ? "Načítám…" : "Obnovit knihovnu"}</button>
+                    <button type="button" onClick={requestMediaAccess} disabled={isLoadingMedia || mediaPermission === "unavailable"} className="mt-7 flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-accent disabled:opacity-50">{isLoadingMedia ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} {isLoadingMedia ? "Načítám…" : mediaPermission === "denied" ? "Otevřít nastavení" : "Obnovit knihovnu"}</button>
                   </section>
                 </div>
                 <div className="mt-4 flex items-center justify-between rounded-xl border bg-card px-5 py-4"><div className="flex items-center gap-3"><div className="flex size-8 items-center justify-center rounded-lg bg-muted"><ListMusic className="size-4 text-muted-foreground" /></div><div><p className="text-sm font-medium">Chceš jiný soubor?</p><p className="text-xs text-muted-foreground">Vyber MP3 přímo ze Stažených souborů.</p></div></div><label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Přidat<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>

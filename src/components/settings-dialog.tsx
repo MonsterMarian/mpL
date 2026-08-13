@@ -103,11 +103,11 @@ export function SettingsDialog({
               <div>
                 <p className="text-sm font-medium">Přístup k médiím</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {mediaPermission === "granted" ? "Přístup je povolený." : mediaPermission === "unavailable" ? "V prohlížeči použij výběr souboru." : "Povol načtení lokální hudby."}
+                  {mediaPermission === "granted" ? "Přístup je povolený." : mediaPermission === "denied" ? "Přístup byl zamítnutý. Otevři nastavení aplikace." : mediaPermission === "unavailable" ? "V prohlížeči použij výběr souboru." : "Povol načtení lokální hudby."}
                 </p>
               </div>
               <Button type="button" size="sm" variant={mediaPermission === "granted" ? "secondary" : "win"} disabled={isRequestingMedia || mediaPermission === "unavailable"} onClick={handleRequestMediaAccess}>
-                {isRequestingMedia ? "Čekám…" : mediaPermission === "granted" ? "Obnovit" : "Povolit"}
+                {isRequestingMedia ? "Čekám…" : mediaPermission === "denied" ? "Nastavení" : mediaPermission === "granted" ? "Obnovit" : "Povolit"}
               </Button>
             </div>
           </section>
