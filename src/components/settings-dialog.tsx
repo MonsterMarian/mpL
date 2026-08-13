@@ -1,17 +1,31 @@
 "use client";
 
 import * as React from "react";
-import { Settings, Download, RotateCcw } from "lucide-react";
+import { BookOpenText, Check, Download, Moon, RotateCcw, Settings, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
 
-export function SettingsDialog() {
+interface SettingsDialogProps {
+  addonEnabled?: boolean;
+  onAddonEnabledChange?: (enabled: boolean) => void;
+  onAudioSettingsChange?: (url: string, autoPlay: boolean) => void;
+  trigger?: React.ReactNode;
+}
+
+export function SettingsDialog({
+  addonEnabled = true,
+  onAddonEnabledChange,
+  onAudioSettingsChange,
+  trigger,
+}: SettingsDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [url, setUrl] = React.useState("");
   const [audioUrl, setAudioUrl] = React.useState("");
   const [autoPlay, setAutoPlay] = React.useState(false);
+  const [documentAddon, setDocumentAddon] = React.useState(addonEnabled);
+  const [theme, setTheme] = React.useState<"dark" | "light">("dark");
   
   const [updateStatus, setUpdateStatus] = React.useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = React.useState<string | null>(null);
@@ -22,6 +36,8 @@ export function SettingsDialog() {
       setCurrentVersion(liveUpdate.currentBundleVersion() || "APK verze");
       setAudioUrl(localStorage.getItem("microwins:audio_url") || "");
       setAutoPlay(localStorage.getItem("microwins:audio_autoplay") === "true");
+      setDocumentAddon(localStorage.getItem("microwins:reader_addon") !== "false");
+      setTheme(localStorage.getItem("microwins:theme") === "light" ? "light" : "dark");
     }
   }, [open]);
 
@@ -29,9 +45,12 @@ export function SettingsDialog() {
     liveUpdate.setUpdateUrl(url);
     localStorage.setItem("microwins:audio_url", audioUrl);
     localStorage.setItem("microwins:audio_autoplay", autoPlay ? "true" : "false");
+    localStorage.setItem("microwins:reader_addon", documentAddon ? "true" : "false");
+    localStorage.setItem("microwins:theme", theme);
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    onAddonEnabledChange?.(documentAddon);
+    onAudioSettingsChange?.(audioUrl.trim(), autoPlay);
     setOpen(false);
-    // Reload to apply auto-play if needed
-    window.location.reload();
   };
 
   const handleCheckUpdate = async () => {
@@ -51,61 +70,132 @@ export function SettingsDialog() {
 
   return (
     <>
-      <Button variant="ghost" size="icon" className="absolute top-4 right-4 rounded-full" onClick={() => setOpen(true)}>
-        <Settings className="w-6 h-6" />
-      </Button>
+      {trigger ?? (
+        <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setOpen(true)}>
+          <Settings className="size-5" />
+        </Button>
+      )}
       <Dialog 
         open={open} 
         onOpenChange={setOpen} 
         title="Nastavení"
+        description="Uprav si Sonoru podle svého poslechu."
+        className="max-w-lg"
       >
-        <div className="flex flex-col gap-6 py-4">
-          <div className="flex flex-col gap-3">
-            <h3 className="font-semibold text-lg">Přehrávač</h3>
+        <div className="flex flex-col gap-5">
+          <section className="rounded-2xl border bg-background/50 p-4">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
+                <Settings className="size-4" />
+              </div>
+              <div>
+                <h3 className="font-semibold">Přehrávač</h3>
+                <p className="text-xs text-muted-foreground">Stream i automatické spuštění</p>
+              </div>
+            </div>
             <div className="flex flex-col gap-2">
-              <label className="text-sm">URL adresa hudby (načte se automaticky)</label>
+              <label className="text-xs font-medium text-muted-foreground">Výchozí stream URL</label>
               <Input 
                 value={audioUrl} 
                 onChange={(e) => setAudioUrl(e.target.value)} 
                 placeholder="https://example.com/stream.mp3"
               />
             </div>
-            <div className="flex items-center gap-2">
-              <input 
-                type="checkbox" 
-                id="autoplay" 
-                checked={autoPlay} 
-                onChange={(e) => setAutoPlay(e.target.checked)} 
-                className="w-4 h-4"
+            <label className="mt-4 flex cursor-pointer items-center justify-between gap-4">
+              <span>
+                <span className="block text-sm font-medium">Přehrát po spuštění</span>
+                <span className="text-xs text-muted-foreground">Prohlížeč může autoplay zablokovat.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={autoPlay}
+                onChange={(e) => setAutoPlay(e.target.checked)}
+                className="size-4 accent-orange-500"
               />
-              <label htmlFor="autoplay" className="text-sm">Přehrát automaticky po spuštění</label>
+            </label>
+          </section>
+
+          <section className="rounded-2xl border bg-background/50 p-4">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
+                <BookOpenText className="size-4" />
+              </div>
+              <div>
+                <h3 className="font-semibold">Addony</h3>
+                <p className="text-xs text-muted-foreground">Rozšiř si Sonoru o čtení dokumentů</p>
+              </div>
             </div>
-          </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={documentAddon}
+              onClick={() => setDocumentAddon((enabled) => !enabled)}
+              className="flex w-full items-center justify-between gap-4 rounded-xl border bg-card/70 p-3 text-left transition-colors hover:bg-accent"
+            >
+              <span>
+                <span className="block text-sm font-medium">Čtečka dokumentů</span>
+                <span className="text-xs text-muted-foreground">
+                  {documentAddon ? "PDF a TXT knihovna je zapnutá" : "Čtečka bude skrytá z navigace"}
+                </span>
+              </span>
+              <span className={"relative h-6 w-11 rounded-full transition-colors " + (documentAddon ? "bg-orange-500" : "bg-muted")}>
+                <span className={"absolute top-1 size-4 rounded-full bg-white shadow-sm transition-transform " + (documentAddon ? "translate-x-6" : "translate-x-1")} />
+              </span>
+            </button>
+          </section>
 
-          <div className="w-full h-px bg-border" />
+          <section className="rounded-2xl border bg-background/50 p-4">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
+                {theme === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
+              </div>
+              <div>
+                <h3 className="font-semibold">Vzhled</h3>
+                <p className="text-xs text-muted-foreground">Klidný režim pro dlouhý poslech</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-1">
+              {(["dark", "light"] as const).map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  onClick={() => setTheme(option)}
+                  className={"flex h-9 items-center justify-center gap-2 rounded-lg text-xs font-medium transition-colors " + (theme === option ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                >
+                  {option === "dark" ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
+                  {option === "dark" ? "Tmavý" : "Světlý"}
+                  {theme === option ? <Check className="size-3.5 text-orange-400" /> : null}
+                </button>
+              ))}
+            </div>
+          </section>
 
-          <div className="flex flex-col gap-3">
-            <h3 className="font-semibold text-lg">Aktualizace z GitHubu</h3>
-            <div className="text-sm text-muted-foreground">Aktuální verze: {currentVersion}</div>
+          <section className="rounded-2xl border bg-background/50 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Aktualizace z GitHubu</h3>
+                <p className="text-xs text-muted-foreground">Verze: {currentVersion}</p>
+              </div>
+            </div>
             <div className="flex flex-col gap-2">
-              <label className="text-sm">Adresa manifestu (OTA URL)</label>
+              <label className="text-xs font-medium text-muted-foreground">Adresa manifestu OTA</label>
               <Input 
                 value={url} 
                 onChange={(e) => setUrl(e.target.value)} 
               />
             </div>
             
-            <Button onClick={handleCheckUpdate} variant="secondary" className="w-full flex items-center justify-center gap-2">
+            <Button onClick={handleCheckUpdate} variant="secondary" className="mt-3 w-full">
               <Download className="w-4 h-4" /> Zkontrolovat aktualizace
             </Button>
-            {updateStatus && <div className="text-sm font-medium text-blue-500">{updateStatus}</div>}
+            {updateStatus && <div className="mt-2 text-xs font-medium text-orange-400">{updateStatus}</div>}
             
-            <Button onClick={handleRevert} variant="destructive" className="w-full flex items-center justify-center gap-2 mt-4">
+            <Button onClick={handleRevert} variant="ghost" className="mt-2 w-full text-destructive hover:text-destructive">
               <RotateCcw className="w-4 h-4" /> Vrátit na výchozí APK
             </Button>
-          </div>
+          </section>
 
-          <Button onClick={handleSave} className="w-full mt-4">Uložit nastavení</Button>
+          <Button onClick={handleSave} className="h-11 w-full bg-orange-500 text-white hover:bg-orange-400">Uložit nastavení</Button>
         </div>
       </Dialog>
     </>

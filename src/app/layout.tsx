@@ -3,8 +3,8 @@ import "./globals.css";
 import { ToastProvider } from "@/components/providers/toast-provider";
 
 export const metadata: Metadata = {
-  title: "Audio & PDF Player",
-  description: "Aplikace pro přehrávání hudby a čtení PDF na pozadí.",
+  title: "Sonora | Hudba bez šumu",
+  description: "Offline-first hudební knihovna s volitelnou čtečkou dokumentů.",
 };
 
 export const viewport: Viewport = {
@@ -19,7 +19,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-const themeScript = `try{var d=document.documentElement;var t=localStorage.getItem("microwins:theme");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches))d.classList.add("dark");var a=localStorage.getItem("microwins:accent");if(a)d.setAttribute("data-accent",a)}catch(e){}`;
+const themeScript = `try{var d=document.documentElement;var t=localStorage.getItem("microwins:theme");if(t!=="light")d.classList.add("dark");var a=localStorage.getItem("microwins:accent");if(a)d.setAttribute("data-accent",a)}catch(e){}`;
 
 const rescueScript = `try{
 if(localStorage.getItem("microwins:ota:booting")){

@@ -71,7 +71,7 @@ await writeFile(path.join(DEST, bundleName), JSON.stringify(files));
 // Plná adresa, ne jen jméno souboru: manifest se stahuje z API (kvůli
 // čerstvosti), ale balík leží na raw. Relativní jméno by se skládalo vůči
 // adrese manifestu a ukázalo by do prázdna.
-const bundleUrl = `https://raw.githubusercontent.com/MonsterMarian/MicroWins/main/ota/${bundleName}`;
+const bundleUrl = `https://raw.githubusercontent.com/MonsterMarian/mpL/main/ota/${bundleName}`;
 await writeFile(
   path.join(DEST, "latest.json"),
   JSON.stringify({ version, bundle: bundleUrl, notes: "" }, null, 2),
