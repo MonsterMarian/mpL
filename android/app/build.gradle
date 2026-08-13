@@ -14,10 +14,10 @@ if (keystorePropsFile.exists()) {
 }
 
 android {
-    namespace = "cz.microwins.app"
+    namespace = "cz.player.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "cz.microwins.app"
+        applicationId "cz.player.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode buildNumber

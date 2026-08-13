@@ -5,8 +5,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * Appka běží offline ze souborů v telefonu, žádný server.
  */
 const config: CapacitorConfig = {
-  appId: "cz.microwins.app",
-  appName: "MicroWins",
+  appId: "cz.player.app",
+  appName: "P/_ayer",
   webDir: "out",
   android: {
     // Vlastní pozadí, ať mezi splash screenem a appkou neprobleskne bílá.

@@ -1,4 +1,4 @@
-package cz.microwins.app;
+package cz.player.app;
 
 import com.getcapacitor.BridgeActivity;
 
