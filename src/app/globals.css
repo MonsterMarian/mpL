@@ -306,6 +306,13 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Vinylový disc u přehrávače - točí se jen, když něco hraje. */
+  @keyframes mw-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   @keyframes mw-in {
     from {
       opacity: 0;
@@ -438,6 +445,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .animate-in-up,
+    [class*="mw-spin"],
     .mw-shine,
     .mw-pop,
     .mw-rise,

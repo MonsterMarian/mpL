@@ -76,8 +76,21 @@ export function SettingsDialog({
 
   return (
     <>
-      {trigger ? <span className="contents" onClick={() => setOpen(true)}>{trigger}</span> : (
-        <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setOpen(true)}>
+      {trigger ? (
+        <span className="contents" onClick={() => setOpen(true)}>
+          {trigger}
+        </span>
+      ) : (
+        /* Záložní tlačítko sedí v toku stránky, ne absolutně - dřív padalo
+           pod status bar. 44px cíl, ať se do něj trefí prst. */
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Nastavení"
+          title="Nastavení"
+          className="size-11 rounded-full"
+          onClick={() => setOpen(true)}
+        >
           <Settings className="size-5" />
         </Button>
       )}
