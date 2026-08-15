@@ -15,7 +15,10 @@ next-env.d.ts
 android/.gradle/
 android/app/build/
 android/build/
+# Buildy z android/, ale hotové APK v kořeni verzujeme - stáhne se
+# z GitHubu rovnou do telefonu.
 *.apk
+!/Player.apk
 android/local.properties
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
