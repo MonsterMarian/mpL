@@ -6,7 +6,8 @@
  * jen `adb install --incremental` a jinak po sobě nechává soubor .apk.idsig.
  *
  * Spuštění: npm run android:sign
- * Výstup:   ../MicroWins.apk (vedle složky projektu)
+ * Výstup:   Player.apk v kořeni projektu - odtud se verzuje, aby si ho
+ *           šlo stáhnout z GitHubu rovnou do telefonu.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -14,7 +15,7 @@ import path from "node:path";
 
 const SDK = process.env.ANDROID_HOME ?? "C:/Android/sdk";
 const APK_IN = "android/app/build/outputs/apk/release/app-release.apk";
-const APK_OUT = process.argv[2] ?? "../MicroWins.apk";
+const APK_OUT = process.argv[2] ?? "Player.apk";
 
 if (!existsSync(APK_IN)) {
   console.error(`Chybí ${APK_IN} - spusť nejdřív npm run android:release.`);

@@ -40,6 +40,18 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
 import { MediaLibrary, NativeAudioTrack, canReadDeviceMedia, playableMediaSource } from "@/lib/media-library";
+import {
+  buildTextPages,
+  clampPage,
+  documentId,
+  isImageOnly,
+  pageText,
+  speechChunks,
+  type DocumentPage,
+  type StoredDocument,
+} from "@/lib/documents";
+import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
+import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 
 type View = "home" | "library" | "reader";
 type LibraryFilter = "all" | "liked" | "local";
@@ -55,11 +67,6 @@ interface Track {
   src: string;
   coverClass: string;
   source: "device" | "local";
-}
-
-interface DocumentPage {
-  text: string;
-  label: string;
 }
 
 const COVER_PALETTES = [
@@ -208,8 +215,9 @@ export default function HomePage() {
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const localObjectUrls = React.useRef<string[]>([]);
 
-  const [documentName, setDocumentName] = React.useState<string | null>(null);
-  const [documentPages, setDocumentPages] = React.useState<DocumentPage[]>([]);
+  /** Knihovna dokumentů z disku - stejně jako knihovna hudby přežije restart. */
+  const [documents, setDocuments] = React.useState<StoredDocument[]>([]);
+  const [documentId_, setDocumentId] = React.useState<string | null>(null);
   const [documentPage, setDocumentPage] = React.useState(0);
   const [documentQuery, setDocumentQuery] = React.useState("");
   const [documentZoom, setDocumentZoom] = React.useState(100);
@@ -217,9 +225,23 @@ export default function HomePage() {
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
   const [isReadingDocument, setIsReadingDocument] = React.useState(false);
   const [documentError, setDocumentError] = React.useState<string | null>(null);
+  /** Kus věty, u kterého řeč stojí - odtud se po pauze pokračuje. */
+  const [speechChunk, setSpeechChunk] = React.useState(0);
+  /** Žádost o čtení: `null` = ticho. Nový objekt spustí čtení znovu. */
+  const [readRequest, setReadRequest] = React.useState<{ from: number } | null>(null);
+  const [speechRate, setSpeechRate] = React.useState<number>(1);
+  const speaker = React.useRef<Speaker | null>(null);
 
   const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? EMPTY_TRACK;
+  const activeDoc = documents.find((doc) => doc.id === documentId_) ?? null;
+  const documentPages: DocumentPage[] = activeDoc?.pages ?? [];
+  const documentName = activeDoc?.name ?? null;
   const activeDocument = documentPages[documentPage];
+  const readablePage = activeDoc !== null && !activeDoc.imageOnly && Boolean(activeDocument?.text);
+  const chunks = React.useMemo(
+    () => (readablePage ? speechChunks(activeDocument.text) : []),
+    [readablePage, activeDocument],
+  );
 
   const loadDeviceMusic = React.useCallback(async (requestPermission = false) => {
     if (!canReadDeviceMedia()) {
@@ -290,6 +312,16 @@ export default function HomePage() {
     setReaderAddon(localStorage.getItem("microwins:reader_addon") !== "false");
     setStorageReady(true);
     void loadDeviceMusic();
+
+    // Knihovna dokumentů z disku. Naposledy otevřený se rovnou nabídne
+    // a otevře se na stránce, kde uživatel skončil.
+    void listDocuments().then((stored) => {
+      if (!stored.length) return;
+      setDocuments(stored);
+      setDocumentId(stored[0].id);
+      setDocumentPage(stored[0].page);
+      setDocumentBookmarks(stored[0].bookmarks);
+    });
   }, [loadDeviceMusic]);
 
   React.useEffect(() => {
@@ -314,7 +346,7 @@ export default function HomePage() {
   React.useEffect(() => {
     return () => {
       localObjectUrls.current.forEach((url) => URL.revokeObjectURL(url));
-      window.speechSynthesis?.cancel();
+      speaker.current?.stop();
     };
   }, []);
 
@@ -329,6 +361,8 @@ export default function HomePage() {
 
   const playTrack = (trackId: string) => {
     if (trackId === EMPTY_TRACK.id) return;
+    // Hudba a předčítání se v jednom přehrávači nepřekřikují.
+    stopReading();
     if (trackId === currentTrackId) {
       if (isPlaying) {
         audioRef.current?.pause();
@@ -346,6 +380,7 @@ export default function HomePage() {
 
   const playNext = () => {
     if (!tracks.length) return;
+    stopReading();
     const index = tracks.findIndex((track) => track.id === currentTrackId);
     const nextIndex = isShuffled ? Math.floor(Math.random() * tracks.length) : (index + 1) % tracks.length;
     setCurrentTrackId(tracks[nextIndex].id);
@@ -354,6 +389,7 @@ export default function HomePage() {
 
   const playPrevious = () => {
     if (!tracks.length) return;
+    stopReading();
     if (audioRef.current && currentTime > 4) {
       audioRef.current.currentTime = 0;
       setCurrentTime(0);
@@ -405,14 +441,23 @@ export default function HomePage() {
     event.target.value = "";
   };
 
+  const openDocument = (doc: StoredDocument) => {
+    stopReading();
+    setDocumentId(doc.id);
+    setDocumentPage(clampPage(doc.page, doc.pages.length));
+    setDocumentBookmarks(doc.bookmarks);
+    setDocumentError(
+      doc.imageOnly
+        ? `${doc.name} je obrázkový dokument - jsou v něm jen naskenované stránky bez textu. Přečíst nahlas ani prohledat ho nejde.`
+        : null,
+    );
+  };
+
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setIsLoadingDocument(true);
     setDocumentError(null);
-    setDocumentName(file.name);
-    setDocumentPage(0);
-    setDocumentBookmarks([]);
     try {
       let pages: DocumentPage[] = [];
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
@@ -428,66 +473,146 @@ export default function HomePage() {
             .join(" ")
             .replace(/\s+/g, " ")
             .trim();
-          pages.push({ text: text || "Tato stránka neobsahuje strojově čitelný text.", label: `Strana ${index}` });
+          pages.push({ text: pageText(text), label: `Strana ${index}` });
         }
       } else {
-        const rawText = await file.text();
-        const pageSize = 3000;
-        for (let index = 0; index < rawText.length; index += pageSize) {
-          pages.push({ text: rawText.slice(index, index + pageSize).trim(), label: `Část ${pages.length + 1}` });
-        }
+        pages = buildTextPages(await file.text());
       }
-      if (!pages.length || !pages.some((page) => page.text)) throw new Error("Dokument neobsahuje čitelný text.");
-      setDocumentPages(pages);
-      toast({ tone: "win", title: "Dokument je připravený", description: `${pages.length} ${pages.length === 1 ? "stránka" : "stránky"} pro čtení offline.` });
+      if (!pages.length) throw new Error("Soubor je prázdný.");
+
+      const doc: StoredDocument = {
+        id: documentId(file.name, file.size),
+        name: file.name,
+        pages,
+        // Naskenovaná kniha se pozná hned tady, ne až u tlačítka „Číst nahlas".
+        imageOnly: isImageOnly(pages),
+        addedAt: new Date().toISOString(),
+        page: 0,
+        bookmarks: [],
+      };
+
+      await saveDocument(doc);
+      setDocuments((previous) => [doc, ...previous.filter((d) => d.id !== doc.id)]);
+      openDocument(doc);
+
+      toast(
+        doc.imageOnly
+          ? {
+              tone: "warn",
+              title: "Dokument je obrázkový",
+              description: "Stránky jsou naskenované, text v nich není. Čtení nahlas nepůjde.",
+            }
+          : {
+              tone: "win",
+              title: "Dokument je připravený",
+              description: `${pages.length} ${pages.length === 1 ? "stránka" : "stránek"} pro čtení offline.`,
+            },
+      );
     } catch (error) {
       console.error("Chyba při načítání dokumentu", error);
-      setDocumentPages([]);
-      setDocumentName(null);
-      setDocumentError("Dokument se nepodařilo načíst. Zkus PDF s textovou vrstvou nebo TXT soubor.");
+      setDocumentError("Soubor se nepodařilo otevřít. Čtečka umí PDF a textové soubory (TXT, MD).");
     } finally {
       setIsLoadingDocument(false);
       event.target.value = "";
     }
   };
 
-  const stopDocumentReading = async () => {
-    window.speechSynthesis?.cancel();
-    setIsReadingDocument(false);
-    try {
-      const { TextToSpeech } = await import("@capacitor-community/text-to-speech");
-      await TextToSpeech.stop();
-    } catch {
-      // The browser fallback does not expose the Capacitor plugin.
-    }
+  const forgetDocument = async (id: string) => {
+    stopReading();
+    await removeDocument(id);
+    const rest = documents.filter((doc) => doc.id !== id);
+    setDocuments(rest);
+    if (documentId_ !== id) return;
+    setDocumentError(null);
+    if (rest[0]) openDocument(rest[0]);
+    else setDocumentId(null);
   };
 
-  const toggleDocumentReading = async () => {
-    if (isReadingDocument) {
-      await stopDocumentReading();
+  // --- čtení nahlas ----------------------------------------------------------
+
+  const stopReading = () => setReadRequest(null);
+
+  /**
+   * Zapnout čtení znamená říct, od kterého kusu - samotné mluvení obstará
+   * efekt níž. Přes stav, ne přímým voláním: text stránky se mění (obrácený
+   * list, jiný dokument) a čtení musí vždycky jet z toho, co je na obrazovce.
+   */
+  const toggleDocumentReading = () => {
+    if (readRequest) {
+      // Pauza, ne konec: index rozečteného kusu zůstává, takže se pokračuje
+      // odtud, ne od začátku stránky.
+      stopReading();
       return;
     }
-    if (!activeDocument?.text) return;
-    setIsReadingDocument(true);
-    try {
-      const { TextToSpeech } = await import("@capacitor-community/text-to-speech");
-      await TextToSpeech.speak({ text: activeDocument.text, lang: "cs-CZ", rate: 1, pitch: 1, volume: 1 });
-      setIsReadingDocument(false);
-    } catch {
-      if ("speechSynthesis" in window) {
-        const utterance = new SpeechSynthesisUtterance(activeDocument.text);
-        utterance.lang = "cs-CZ";
-        utterance.rate = 0.95;
-        utterance.onend = () => setIsReadingDocument(false);
-        utterance.onerror = () => setIsReadingDocument(false);
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setIsReadingDocument(false);
-        toast({ tone: "warn", title: "Čtení nahlas není dostupné", description: "Zařízení nemá nainstalovaný hlasový modul." });
-      }
-    }
+    if (!readablePage) return;
+    setReadRequest({ from: speechChunk });
   };
+
+  const changeSpeechRate = (rate: number) => {
+    setSpeechRate(rate);
+    // Nová rychlost se chytne na rozečteném místě, ne na začátku stránky.
+    if (readRequest) setReadRequest({ from: speechChunk });
+  };
+
+  /** Obrátí stránku. Když se zrovna čte, čte se dál na nové stránce od začátku. */
+  const goToPage = (page: number) => {
+    const next = clampPage(page, documentPages.length);
+    if (next === documentPage) return;
+    setDocumentPage(next);
+    setSpeechChunk(0);
+    if (readRequest) setReadRequest({ from: 0 });
+  };
+
+  /**
+   * Vlastní mluvení. Řeč a hudba se nikdy nepřekrývají - dva zvuky přes sebe
+   * nedávají smysl a přehrávač je jeden, i když má dva zdroje.
+   */
+  React.useEffect(() => {
+    if (!readRequest) {
+      setIsReadingDocument(false);
+      return;
+    }
+    if (!chunks.length) {
+      setReadRequest(null);
+      return;
+    }
+
+    audioRef.current?.pause();
+    setIsPlaying(false);
+    setIsReadingDocument(true);
+
+    const engine = createSpeaker({
+      onChunk: setSpeechChunk,
+      onDone: () => {
+        setSpeechChunk(0);
+        // Konec stránky = obrátit list, stejně jako skladba přejde na další.
+        if (documentPage < documentPages.length - 1) {
+          setDocumentPage(documentPage + 1);
+          setReadRequest({ from: 0 });
+        } else {
+          setReadRequest(null);
+        }
+      },
+      onError: (message) => {
+        setReadRequest(null);
+        toast({ tone: "warn", title: "Čtení nahlas selhalo", description: message });
+      },
+    });
+    speaker.current = engine;
+    engine.speak(chunks, readRequest.from, speechRate);
+
+    return () => {
+      engine.stop();
+      if (speaker.current === engine) speaker.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readRequest, chunks, speechRate, documentPage, documentPages.length]);
+
+  // Postup ve čtení patří na disk: appka se zavírá i uprostřed stránky.
+  React.useEffect(() => {
+    if (!documentId_) return;
+    void saveProgress(documentId_, documentPage, documentBookmarks);
+  }, [documentId_, documentPage, documentBookmarks]);
 
   const toggleBookmark = () => {
     setDocumentBookmarks((previous) => previous.includes(documentPage) ? previous.filter((page) => page !== documentPage) : [...previous, documentPage]);
@@ -631,8 +756,155 @@ export default function HomePage() {
 
             {activeView === "reader" && readerAddon ? (
               <section className="animate-in-up">
-                <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300"><BookOpenText className="size-3.5" /> Addon · offline čtení</p><h1 className="text-4xl font-semibold tracking-[-0.05em]">Dokumenty</h1><p className="mt-2 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Pro dlouhé cesty může P/_ayer text i předčítat.</p></div><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label></div>
-                {!documentName ? <div className="reader-empty rounded-[1.75rem] border border-dashed border-orange-300/20 p-8 text-center sm:p-16"><div className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-orange-400/10 text-orange-300"><BookOpenText className="size-7" /></div><h2 className="mt-5 text-xl font-semibold">Tvoje klidná čítárna</h2><p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Nahraj první dokument. Zůstane jen v tomto zařízení, bez účtu a bez cloudu.</p><label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label><div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-orange-300" /> lokálně</span><span><Check className="mr-1 inline size-3 text-orange-300" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-orange-300" /> PDF / TXT</span></div></div> : <div className="grid gap-5 xl:grid-cols-[210px_minmax(0,1fr)]"><aside className="order-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 xl:order-1"><div className="flex items-start justify-between gap-3 px-2 pb-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{documentName}</p><p className="mt-1 text-xs text-muted-foreground">{documentPages.length} {documentPages.length === 1 ? "stránka" : "stránek"}</p></div><FileText className="size-4 shrink-0 text-orange-300" /></div><div className="space-y-1 border-t border-white/[0.07] pt-3">{documentPages.map((page, index) => <button key={index} type="button" onClick={() => setDocumentPage(index)} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors", index === documentPage ? "bg-orange-500/15 text-orange-200" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground")}><span className="w-5 text-[10px] tabular-nums opacity-60">{String(index + 1).padStart(2, "0")}</span><span className="truncate">{page.label}</span>{documentBookmarks.includes(index) ? <BookmarkCheck className="ml-auto size-3 shrink-0 text-orange-300" /> : null}</button>)}</div></aside><div className="order-1 min-w-0 xl:order-2"><div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><FileText className="size-4 shrink-0 text-orange-300" /><span className="truncate text-sm font-medium">{documentName}</span><span className="hidden rounded-md bg-white/[0.06] px-2 py-1 text-[10px] text-muted-foreground sm:block">{activeDocument?.label}</span></div><div className="relative sm:w-56"><Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" /></div></div><div className="reader-toolbar flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border border-white/[0.08] bg-white/[0.045] px-3 py-2"><div className="flex items-center gap-1"><button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.max(75, value - 10))} aria-label="Zmenšit"><ZoomOut className="size-4" /></button><span className="w-12 text-center text-xs tabular-nums text-muted-foreground">{documentZoom}%</span><button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.min(140, value + 10))} aria-label="Zvětšit"><ZoomIn className="size-4" /></button></div><div className="flex items-center gap-1"><button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-orange-300")} onClick={toggleBookmark} aria-label="Záložka">{documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}</button><button type="button" onClick={toggleDocumentReading} className={cn("flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors", isReadingDocument ? "bg-orange-500 text-white" : "hover:bg-white/10")}><Volume2 className="size-3.5" /> {isReadingDocument ? "Zastavit čtení" : "Číst nahlas"}</button></div></div><div className="reader-paper min-h-[520px] overflow-auto rounded-b-2xl border-x border-b border-white/[0.08] p-6 shadow-2xl sm:p-12"><article className="mx-auto max-w-2xl origin-top transition-transform" style={{ transform: `scale(${documentZoom / 100})`, transformOrigin: "top center", marginBottom: `${(documentZoom - 100) * 3}px` }}><p className="mb-8 text-xs font-semibold uppercase tracking-[0.18em] text-orange-700/70">{activeDocument?.label}</p><div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-slate-800">{activeDocument ? renderDocumentText(activeDocument.text) : ""}</div></article></div><div className="mt-4 flex items-center justify-between"><button type="button" disabled={documentPage === 0} onClick={() => setDocumentPage((page) => Math.max(0, page - 1))} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"><ChevronLeft className="size-4" /> Předchozí</button><span className="text-xs tabular-nums text-muted-foreground">{documentPage + 1} / {documentPages.length}</span><button type="button" disabled={documentPage === documentPages.length - 1} onClick={() => setDocumentPage((page) => Math.min(documentPages.length - 1, page + 1))} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30">Další <ChevronRight className="size-4" /></button></div></div></div>}
+                <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+                  <div>
+                    <p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300"><BookOpenText className="size-3.5" /> Addon · offline čtení</p>
+                    <h1 className="text-4xl font-semibold tracking-[-0.05em]">Dokumenty</h1>
+                    <p className="mt-2 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky a otevře se tam, kde jsi skončil.</p>
+                  </div>
+                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
+                </div>
+
+                {/* Knihovna dokumentů - přesně jako knihovna hudby: co se jednou
+                    otevřelo, zůstává po ruce, dokud se to nesmaže. */}
+                {documents.length > 0 ? (
+                  <div className="mb-5 flex flex-wrap gap-2">
+                    {documents.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className={cn(
+                          "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors",
+                          doc.id === documentId_ ? "border-orange-400/40 bg-orange-500/10 text-orange-200" : "border-white/[0.08] text-muted-foreground hover:bg-white/[0.05]",
+                        )}
+                      >
+                        <button type="button" onClick={() => openDocument(doc)} className="flex min-w-0 items-center gap-2 text-left">
+                          <FileText className="size-3.5 shrink-0" />
+                          <span className="max-w-[180px] truncate">{doc.name}</span>
+                          <span className="shrink-0 tabular-nums opacity-60">{clampPage(doc.page, doc.pages.length) + 1}/{doc.pages.length}</span>
+                        </button>
+                        <button type="button" onClick={() => void forgetDocument(doc.id)} className="shrink-0 rounded-md p-0.5 opacity-50 hover:opacity-100" aria-label={`Odebrat ${doc.name} z knihovny`}>
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {!activeDoc ? (
+                  <div className="reader-empty rounded-[1.75rem] border border-dashed border-orange-300/20 p-8 text-center sm:p-16">
+                    <div className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-orange-400/10 text-orange-300"><BookOpenText className="size-7" /></div>
+                    <h2 className="mt-5 text-xl font-semibold">Tvoje klidná čítárna</h2>
+                    <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Nahraj první dokument. Zůstane jen v tomto zařízení, bez účtu a bez cloudu.</p>
+                    <label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
+                    <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-orange-300" /> lokálně</span><span><Check className="mr-1 inline size-3 text-orange-300" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-orange-300" /> PDF / TXT</span></div>
+                  </div>
+                ) : (
+                  <div className="grid gap-5 xl:grid-cols-[210px_minmax(0,1fr)]">
+                    <aside className="order-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 xl:order-1">
+                      <div className="flex items-start justify-between gap-3 px-2 pb-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{documentName}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{documentPages.length} {documentPages.length === 1 ? "stránka" : "stránek"}</p>
+                        </div>
+                        <FileText className="size-4 shrink-0 text-orange-300" />
+                      </div>
+                      <div className="space-y-1 border-t border-white/[0.07] pt-3">
+                        {documentPages.map((page, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => goToPage(index)}
+                            className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors", index === documentPage ? "bg-orange-500/15 text-orange-200" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground")}
+                          >
+                            <span className="w-5 text-[10px] tabular-nums opacity-60">{String(index + 1).padStart(2, "0")}</span>
+                            <span className="truncate">{page.label}</span>
+                            {documentBookmarks.includes(index) ? <BookmarkCheck className="ml-auto size-3 shrink-0 text-orange-300" /> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+
+                    <div className="order-1 min-w-0 xl:order-2">
+                      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <FileText className="size-4 shrink-0 text-orange-300" />
+                          <span className="truncate text-sm font-medium">{documentName}</span>
+                          <span className="hidden rounded-md bg-white/[0.06] px-2 py-1 text-[10px] text-muted-foreground sm:block">{activeDocument?.label}</span>
+                        </div>
+                        <div className="relative sm:w-56">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" />
+                        </div>
+                      </div>
+
+                      {/* Obrázkový dokument: řekne se to rovnou a čtení se ani
+                          nenabídne - naskenované stránky se přečíst nedají. */}
+                      {activeDoc.imageOnly ? (
+                        <div className="mb-3 flex items-start gap-2 rounded-xl border border-orange-400/25 bg-orange-400/10 px-4 py-3 text-xs text-orange-100">
+                          <BookOpenText className="mt-0.5 size-4 shrink-0" />
+                          <span>Tenhle dokument je obrázkový - stránky jsou naskenované a text v nich není. Listovat jde, číst nahlas ani hledat ne. Pomůže PDF s textovou vrstvou.</span>
+                        </div>
+                      ) : null}
+
+                      <div className="reader-toolbar flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border border-white/[0.08] bg-white/[0.045] px-3 py-2">
+                        <div className="flex items-center gap-1">
+                          <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.max(75, value - 10))} aria-label="Zmenšit"><ZoomOut className="size-4" /></button>
+                          <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">{documentZoom}%</span>
+                          <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.min(140, value + 10))} aria-label="Zvětšit"><ZoomIn className="size-4" /></button>
+                        </div>
+
+                        {/* Čtení nahlas se ovládá jako přehrávač: stránka zpět,
+                            pauza, stránka vpřed a rychlost. */}
+                        <div className="flex items-center gap-1">
+                          <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-orange-300")} onClick={toggleBookmark} aria-label="Záložka">
+                            {documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+                          </button>
+                          {readablePage || isReadingDocument ? (
+                            <>
+                              <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} aria-label="Stránka zpět"><SkipBack className="size-4 fill-current" /></button>
+                              <button
+                                type="button"
+                                onClick={toggleDocumentReading}
+                                className={cn("flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors", isReadingDocument ? "bg-orange-500 text-white" : "hover:bg-white/10")}
+                                aria-label={isReadingDocument ? "Pozastavit čtení" : "Číst nahlas"}
+                              >
+                                {isReadingDocument ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}
+                                {isReadingDocument ? "Pauza" : speechChunk > 0 ? "Pokračovat" : "Číst nahlas"}
+                              </button>
+                              <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage >= documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} aria-label="Stránka vpřed"><SkipForward className="size-4 fill-current" /></button>
+                              <select
+                                value={speechRate}
+                                onChange={(event) => changeSpeechRate(Number(event.target.value))}
+                                aria-label="Rychlost čtení"
+                                className="h-8 rounded-lg border border-white/10 bg-transparent px-1.5 text-xs text-muted-foreground outline-none"
+                              >
+                                {SPEECH_RATES.map((rate) => (
+                                  <option key={rate} value={rate} className="bg-[#1e1d22]">{rate}×</option>
+                                ))}
+                              </select>
+                            </>
+                          ) : (
+                            <span className="px-2 text-[11px] text-muted-foreground">čtení nahlas nejde</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="reader-paper min-h-[520px] overflow-auto rounded-b-2xl border-x border-b border-white/[0.08] p-6 shadow-2xl sm:p-12">
+                        <article className="mx-auto max-w-2xl origin-top transition-transform" style={{ transform: `scale(${documentZoom / 100})`, transformOrigin: "top center", marginBottom: `${(documentZoom - 100) * 3}px` }}>
+                          <p className="mb-8 text-xs font-semibold uppercase tracking-[0.18em] text-orange-700/70">{activeDocument?.label}</p>
+                          <div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-slate-800">{activeDocument ? renderDocumentText(activeDocument.text) : ""}</div>
+                        </article>
+                      </div>
+
+                      <div className="mt-4 flex items-center justify-between">
+                        <button type="button" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"><ChevronLeft className="size-4" /> Předchozí</button>
+                        <span className="text-xs tabular-nums text-muted-foreground">{documentPage + 1} / {documentPages.length}</span>
+                        <button type="button" disabled={documentPage === documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30">Další <ChevronRight className="size-4" /></button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {isLoadingDocument ? <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 backdrop-blur-sm"><div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-card px-5 py-4 text-sm shadow-xl"><Loader2 className="size-4 animate-spin text-orange-300" /> Zpracovávám dokument…</div></div> : null}
                 {documentError ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-xs text-red-200"><X className="size-4" /> {documentError}</div> : null}
               </section>
