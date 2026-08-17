@@ -4,8 +4,10 @@
   "private": true,
   "description": "MicroWins - stromová evidence denních rekordů a microwinů",
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run pdf:worker && next dev",
+    "prebuild": "npm run pdf:worker",
     "build": "next build",
+    "pdf:worker": "node scripts/copy-pdf-worker.mjs",
     "start": "next start",
     "type-check": "tsc --noEmit",
     "test": "vitest run",

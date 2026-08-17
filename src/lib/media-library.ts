@@ -14,11 +14,31 @@ export interface NativeAudioTrack {
   addedAt?: number;
 }
 
+/** Video ze zařízení. Stejná cesta jako u hudby, jen jiná tabulka MediaStore. */
+export interface NativeVideo {
+  id: string;
+  title: string;
+  fileName: string;
+  durationSeconds: number;
+  sizeBytes: number;
+  src: string;
+  addedAt: number;
+  mimeType: string;
+}
+
 interface MediaLibraryPlugin {
   checkPermission(): Promise<{ granted: boolean }>;
   requestPermission(): Promise<{ granted: boolean }>;
   openAppSettings(): Promise<void>;
   listAudio(): Promise<{ tracks: NativeAudioTrack[] }>;
+  /**
+   * Video se od Androidu 13 povoluje zvlášť od hudby, takže má vlastní
+   * dvojici check/request - jinak by si appka řekla o obojí naráz i u toho,
+   * kdo video vůbec nezapnul.
+   */
+  checkVideoPermission(): Promise<{ granted: boolean }>;
+  requestVideoPermission(): Promise<{ granted: boolean }>;
+  listVideo(): Promise<{ videos: NativeVideo[] }>;
 }
 
 export const MediaLibrary = registerPlugin<MediaLibraryPlugin>("MediaLibrary");

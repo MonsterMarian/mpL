@@ -11,6 +11,7 @@ import {
   ChevronRight,
   FileText,
   FileUp,
+  Film,
   Heart,
   Library,
   ListMusic,
@@ -34,7 +35,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { SettingsDialog } from "@/components/settings-dialog";
+import { SettingsDialog, loadAddons, type AddonId, type Addons } from "@/components/settings-dialog";
+import { VideoLibrary } from "@/components/video-library";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -55,7 +57,7 @@ import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 
-type View = "library" | "reader";
+type View = "library" | "reader" | "video";
 type LibraryFilter = "all" | "liked" | "local";
 type RepeatMode = "off" | "all" | "one";
 type SortKey = "added" | "played" | "title" | "titleDesc" | "artist" | "duration";
@@ -331,7 +333,8 @@ export default function HomePage() {
   /** Statistika poslechu podle id skladby - živí řazení „Nejposlouchanější". */
   const [playStats, setPlayStats] = React.useState<Record<string, PlayStat>>({});
   const [storageReady, setStorageReady] = React.useState(false);
-  const [readerAddon, setReaderAddon] = React.useState(true);
+  /** Zapnuté addony. Seznam i klíče v úložišti drží `settings-dialog`. */
+  const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true });
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -511,7 +514,7 @@ export default function HomePage() {
       }
     }
 
-    setReaderAddon(localStorage.getItem("microwins:reader_addon") !== "false");
+    setAddons(loadAddons());
     setStorageReady(true);
     void loadDeviceMusic();
 
@@ -863,7 +866,9 @@ export default function HomePage() {
       let pages: DocumentPage[] = [];
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+        // Worker se vozí v public/ a odkazuje se absolutně z kořene - jediná
+        // adresa, která sedí v prohlížeči i v appce. Viz scripts/copy-pdf-worker.mjs.
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
         const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
         for (let index = 1; index <= pdf.numPages; index += 1) {
           const page = await pdf.getPage(index);
@@ -1019,17 +1024,35 @@ export default function HomePage() {
     setDocumentBookmarks((previous) => previous.includes(documentPage) ? previous.filter((page) => page !== documentPage) : [...previous, documentPage]);
   };
 
-  const handleAddonChange = (enabled: boolean) => {
-    setReaderAddon(enabled);
-    if (!enabled && activeView === "reader") setActiveView("library");
+  /**
+   * Ztiší všechno ostatní. Volá se, když se rozjíždí video - hudba, předčítání
+   * a video jsou tři zdroje zvuku v jedné appce a přes sebe nedávají smysl.
+   */
+  const silenceEverything = () => {
+    stopReading();
+    audioRef.current?.pause();
+    setIsPlaying(false);
   };
+
+  const handleAddonChange = (id: AddonId, enabled: boolean) => {
+    setAddons((previous) => ({ ...previous, [id]: enabled }));
+    // Vypnutý addon nesmí zůstat na obrazovce, na kterou se pak nedá vrátit.
+    if (!enabled && activeView === id) setActiveView("library");
+  };
+
+  /** Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne. */
+  const views: { id: View; label: string; icon: typeof Library }[] = [
+    { id: "library", label: "Skladby", icon: Library },
+    ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
+    ...(addons.video ? [{ id: "video" as const, label: "Video", icon: Film }] : []),
+  ];
 
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
   const librarySeconds = tracks.reduce((total, track) => total + track.durationSeconds, 0);
   const sleepActive = sleepAt !== null || sleepAfterTrack;
 
   const goToView = (view: View) => {
-    if (view === "reader" && !readerAddon) return;
+    if (!views.some((v) => v.id === view)) return;
     setActiveView(view);
   };
 
@@ -1050,10 +1073,7 @@ export default function HomePage() {
           </button>
 
           <nav className="hidden items-center gap-1 sm:flex">
-            {[
-              { id: "library" as const, label: "Skladby", icon: Library },
-              ...(readerAddon ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
-            ].map((item) => {
+            {views.map((item) => {
               const Icon = item.icon;
               const active = activeView === item.id;
               return (
@@ -1197,7 +1217,7 @@ export default function HomePage() {
           </section>
         ) : null}
 
-        {activeView === "reader" && readerAddon ? (
+        {activeView === "reader" && addons.reader ? (
           <section className="animate-in-up">
             <div className="mb-6">
               <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Dokumenty</h1>
@@ -1343,14 +1363,15 @@ export default function HomePage() {
             {documentError ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-xs text-brand"><X className="size-4" /> {documentError}</div> : null}
           </section>
         ) : null}
+
+        {activeView === "video" && addons.video ? (
+          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} />
+        ) : null}
       </main>
 
       <nav className="mw-safe-bottom mw-safe-x fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
         <div className="mx-auto flex w-full max-w-4xl">
-          {[
-            { id: "library" as const, label: "Skladby", icon: Library },
-            ...(readerAddon ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
-          ].map((item) => {
+          {views.map((item) => {
             const Icon = item.icon;
             const active = activeView === item.id;
             return (
@@ -1418,8 +1439,8 @@ export default function HomePage() {
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        addonEnabled={readerAddon}
-        onAddonEnabledChange={handleAddonChange}
+        addons={addons}
+        onAddonChange={handleAddonChange}
         mediaPermission={mediaPermission}
         onRequestMediaAccess={requestMediaAccess}
       />

@@ -16,11 +16,56 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "addons", label: "Addony" },
 ];
 
+/**
+ * Vypínatelné části appky. Přidání dalšího addonu je jeden řádek tady -
+ * obrazovka nastavení i záložky v appce jedou z tohohle seznamu.
+ */
+export type AddonId = "reader" | "video";
+
+export const ADDONS: { id: AddonId; label: string; hint: string; storageKey: string }[] = [
+  {
+    id: "reader",
+    label: "Čtečka dokumentů",
+    hint: "PDF a TXT soubory, offline čtení",
+    storageKey: "microwins:reader_addon",
+  },
+  {
+    id: "video",
+    label: "Video",
+    hint: "MP4 ze zařízení i z vybraného souboru",
+    storageKey: "microwins:video_addon",
+  },
+];
+
+export type Addons = Record<AddonId, boolean>;
+
+/** Chybějící volba = zapnuto. Nový addon nemá uživateli zhasnout sám od sebe. */
+export function loadAddons(): Addons {
+  const read = (key: string) => {
+    try {
+      return localStorage.getItem(key) !== "false";
+    } catch {
+      return true;
+    }
+  };
+  return Object.fromEntries(ADDONS.map((a) => [a.id, read(a.storageKey)])) as Addons;
+}
+
+export function saveAddon(id: AddonId, enabled: boolean): void {
+  const addon = ADDONS.find((a) => a.id === id);
+  if (!addon) return;
+  try {
+    localStorage.setItem(addon.storageKey, enabled ? "true" : "false");
+  } catch {
+    // soukromý režim - volba vydrží do zavření appky
+  }
+}
+
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  addonEnabled?: boolean;
-  onAddonEnabledChange?: (enabled: boolean) => void;
+  addons?: Addons;
+  onAddonChange?: (id: AddonId, enabled: boolean) => void;
   mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
   onRequestMediaAccess?: () => Promise<void> | void;
 }
@@ -28,8 +73,8 @@ interface SettingsDialogProps {
 export function SettingsDialog({
   open,
   onOpenChange,
-  addonEnabled = true,
-  onAddonEnabledChange,
+  addons = { reader: true, video: true },
+  onAddonChange,
   mediaPermission = "unknown",
   onRequestMediaAccess,
 }: SettingsDialogProps) {
@@ -78,10 +123,7 @@ export function SettingsDialog({
         ) : (
           <div className="flex flex-col gap-5 animate-in-up">
             <Section title="Addony" hint="Vypnutá část zmizí i se svou záložkou; data zůstanou.">
-              <AddonChoice 
-                addonEnabled={addonEnabled} 
-                onAddonEnabledChange={onAddonEnabledChange} 
-              />
+              <AddonChoice addons={addons} onAddonChange={onAddonChange} />
             </Section>
           </div>
         )}
@@ -151,49 +193,50 @@ function MediaSection({
 }
 
 function AddonChoice({
-  addonEnabled, 
-  onAddonEnabledChange 
-}: { 
-  addonEnabled: boolean;
-  onAddonEnabledChange?: (enabled: boolean) => void;
+  addons,
+  onAddonChange,
+}: {
+  addons: Addons;
+  onAddonChange?: (id: AddonId, enabled: boolean) => void;
 }) {
-  const toggle = () => {
-    const next = !addonEnabled;
-    try {
-      localStorage.setItem("microwins:reader_addon", next ? "true" : "false");
-    } catch {}
-    onAddonEnabledChange?.(next);
-  };
-
   return (
     <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-pressed={addonEnabled}
-        className={cn(
-          "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-          addonEnabled ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
-        )}
-      >
-        <span className="min-w-0">
-          <span className="block text-sm font-medium">Čtečka dokumentů</span>
-          <span className="block text-xs text-muted-foreground">PDF a TXT soubory, offline čtení</span>
-        </span>
-        <span
-          className={cn(
-            "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-            addonEnabled ? "bg-brand" : "bg-muted-foreground/30",
-          )}
-        >
-          <span
+      {ADDONS.map((addon) => {
+        const on = addons[addon.id];
+        return (
+          <button
+            key={addon.id}
+            type="button"
+            onClick={() => {
+              saveAddon(addon.id, !on);
+              onAddonChange?.(addon.id, !on);
+            }}
+            aria-pressed={on}
             className={cn(
-              "absolute top-1 size-4 rounded-full bg-black shadow transition-[left] duration-200",
-              addonEnabled ? "left-6" : "left-1",
+              "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+              on ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
             )}
-          />
-        </span>
-      </button>
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{addon.label}</span>
+              <span className="block text-xs text-muted-foreground">{addon.hint}</span>
+            </span>
+            <span
+              className={cn(
+                "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+                on ? "bg-brand" : "bg-muted-foreground/30",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-1 size-4 rounded-full bg-black shadow transition-[left] duration-200",
+                  on ? "left-6" : "left-1",
+                )}
+              />
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

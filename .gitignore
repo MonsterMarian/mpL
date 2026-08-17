@@ -15,6 +15,10 @@ next-env.d.ts
 android/.gradle/
 android/app/build/
 android/build/
+# Kopie workeru pdf.js z node_modules - vyrobí ho `npm run pdf:worker`
+# před každým buildem, takže v gitu být nemusí.
+public/pdf.worker.min.mjs
+
 # Buildy z android/, ale hotové APK v kořeni verzujeme - stáhne se
 # z GitHubu rovnou do telefonu.
 *.apk
