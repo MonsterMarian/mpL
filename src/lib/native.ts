@@ -49,12 +49,12 @@ export async function winFeedback(): Promise<void> {
   }
 }
 
-/** Stavová lišta v barvě appky, ikony podle světlosti tématu. */
-export async function syncStatusBar(dark: boolean): Promise<void> {
+/** Stavová lišta v barvě appky: černá pod bílými ikonami, jiné téma není. */
+export async function syncStatusBar(): Promise<void> {
   if (!isNative()) return;
   try {
-    await StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light });
-    await StatusBar.setBackgroundColor({ color: dark ? "#09090B" : "#FDFDFD" });
+    await StatusBar.setStyle({ style: Style.Dark });
+    await StatusBar.setBackgroundColor({ color: "#000000" });
   } catch {
     // starší Android bez podpory barvy lišty
   }

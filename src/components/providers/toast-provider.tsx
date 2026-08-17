@@ -64,7 +64,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 "animate-in-up pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border p-3 shadow-lg",
                 t.tone === "win"
                   ? "border-win/40 bg-win-muted text-win-muted-foreground"
-                  : "bg-card text-card-foreground",
+                  : "bg-popover text-popover-foreground",
               )}
             >
               <Icon className="mt-0.5 size-4 shrink-0" />

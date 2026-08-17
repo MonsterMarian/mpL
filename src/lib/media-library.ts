@@ -8,6 +8,10 @@ export interface NativeAudioTrack {
   durationSeconds: number;
   src: string;
   mimeType: string;
+  /** Obal alba z MediaStore. Chybí, když ho album nemá. */
+  artwork?: string | null;
+  /** Kdy soubor přibyl do zařízení, v milisekundách. */
+  addedAt?: number;
 }
 
 interface MediaLibraryPlugin {

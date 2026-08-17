@@ -1,105 +1,54 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
+/*
+ * Tři barvy, nic víc. Černá je pozadí, bílá je text, žlutá je jediný akcent -
+ * všechno ostatní (okraje, ztlumený text, plochy karet) je jen průhlednost
+ * bílé nebo žluté nad černou, takže do appky nepřibude žádný další odstín.
+ */
 :root {
   --radius: 0.625rem;
 
-  --background: oklch(0.995 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
+  --black: #000000;
+  --white: #ffffff;
+  --brand: #f5a33a;
 
-  /* Jediný barevný akcent v appce: jantar = microwin/rekord. */
-  --win: oklch(0.72 0.16 62);
-  --win-foreground: oklch(0.99 0 0);
-  --win-muted: oklch(0.96 0.035 75);
-  --win-muted-foreground: oklch(0.46 0.11 55);
+  --background: var(--black);
+  --foreground: var(--white);
+  /* Karta je jen o kousek světlejší černá - průsvit bílé, ne nový odstín. */
+  --card: rgb(255 255 255 / 3.5%);
+  --card-foreground: var(--white);
+  /* Dialogy a bubliny musí být neprůhledné, jinak přes ně prosvítá obsah. */
+  --popover: var(--black);
+  --popover-foreground: var(--white);
+  --primary: var(--brand);
+  --primary-foreground: var(--black);
+  --secondary: rgb(255 255 255 / 9%);
+  --secondary-foreground: var(--white);
+  --muted: rgb(255 255 255 / 6%);
+  --muted-foreground: rgb(255 255 255 / 58%);
+  --accent: rgb(255 255 255 / 8%);
+  --accent-foreground: var(--white);
+  /* I chyba mluví žlutě - červená by byla čtvrtá barva. */
+  --destructive: var(--brand);
+  --destructive-foreground: var(--black);
+  --border: rgb(255 255 255 / 11%);
+  --input: rgb(255 255 255 / 16%);
+  --ring: var(--brand);
 
-  /*
-   * Postup má vlastní barvu: zelenou. Odstín 145° je od jantaru winů (62°)
-   * dost daleko, aby se obě barvy na obrazovce nepletly, a leží tam, kde má
-   * gamut zelené špičku - proto snese vysokou sytost, aniž by se v sRGB
-   * usekla. Komu dvě barvy vadí, přepne v Nastavení na bílou (`data-accent`).
-   */
-  --progress: oklch(0.66 0.19 145);
-  --progress-foreground: oklch(0.99 0 0);
-  --progress-muted: oklch(0.95 0.05 145);
-  --progress-muted-foreground: oklch(0.46 0.13 145);
-  --track: oklch(0.9 0.004 286.32);
-}
+  --win: var(--brand);
+  --win-foreground: var(--black);
+  --win-muted: color-mix(in oklab, var(--brand) 16%, var(--black));
+  --win-muted-foreground: var(--brand);
 
-.dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.19 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.19 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.552 0.016 285.938);
-
-  --win: oklch(0.78 0.15 68);
-  --win-foreground: oklch(0.17 0.02 60);
-  --win-muted: oklch(0.32 0.06 66);
-  --win-muted-foreground: oklch(0.88 0.09 75);
-
-  --progress: oklch(0.82 0.2 145);
-  --progress-foreground: oklch(0.17 0.04 145);
-  --progress-muted: oklch(0.31 0.08 145);
-  --progress-muted-foreground: oklch(0.89 0.16 145);
-  --track: oklch(1 0 0 / 14%);
-}
-
-/*
- * Bílý postup. Bere si stejnou dvojici jako tlačítka (`--primary`), takže bílé
- * „Nový úkol" a pruh postupu mluví stejným jazykem a barevný akcent zbyde
- * v appce jediný - jantar u microwinů.
- *
- * Pořadí je tady nosné: `.dark` a `[data-accent]` mají stejnou váhu, takže
- * přepis musí stát níž. Kombinace obojího pak přebije obě.
- */
-[data-accent="white"] {
-  --progress: oklch(0.21 0.006 285.885);
-  --progress-foreground: oklch(0.985 0 0);
-  --progress-muted: oklch(0.967 0.001 286.375);
-  --progress-muted-foreground: oklch(0.45 0.008 286);
-}
-
-.dark[data-accent="white"] {
-  --progress: oklch(0.92 0.004 286.32);
-  --progress-foreground: oklch(0.21 0.006 285.885);
-  --progress-muted: oklch(0.274 0.006 286.033);
-  --progress-muted-foreground: oklch(0.75 0.008 286);
+  --progress: var(--brand);
+  --progress-foreground: var(--black);
+  --progress-muted: color-mix(in oklab, var(--brand) 16%, var(--black));
+  --progress-muted-foreground: var(--brand);
+  --track: rgb(255 255 255 / 14%);
 }
 
 @theme inline {
+  --color-brand: var(--brand);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -278,26 +227,6 @@
 
   .slider-input::-moz-range-track {
     background: transparent;
-  }
-
-  /*
-   * Vzorky barvy v Nastavení. Nesmí jít přes --progress: obě dlaždice by pak
-   * ukazovaly právě zvolenou barvu a nebylo by z čeho vybírat.
-   */
-  .mw-swatch-green {
-    background: oklch(0.66 0.19 145);
-  }
-
-  .dark .mw-swatch-green {
-    background: oklch(0.82 0.2 145);
-  }
-
-  .mw-swatch-white {
-    background: oklch(0.21 0.006 285.885);
-  }
-
-  .dark .mw-swatch-white {
-    background: oklch(0.92 0.004 286.32);
   }
 }
 
@@ -495,49 +424,7 @@
   background: var(--background);
 }
 
-.brand-mark {
-  position: relative;
-  display: flex;
-  width: 2.1rem;
-  height: 2.1rem;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border-radius: 0.75rem;
-  background: var(--win);
-  box-shadow: none;
-}
-
-.brand-mark::before,
-.brand-mark::after,
-.brand-mark span {
-  position: absolute;
-  display: block;
-  width: 0.18rem;
-  border-radius: 99px;
-  background: white;
-  content: "";
-}
-
-.brand-mark::before {
-  height: 0.7rem;
-  transform: translateX(-0.3rem);
-}
-
-.brand-mark::after {
-  height: 1.05rem;
-}
-
-.brand-mark span {
-  height: 0.5rem;
-  transform: translateX(0.3rem);
-}
-
-.brand-mark-small {
-  width: 1.8rem;
-  height: 1.8rem;
-  border-radius: 0.6rem;
-}
+/* Značku v hlavičce kreslí public/logo-brand.png, ne CSS. */
 
 .sidebar-link {
   display: flex;
@@ -563,8 +450,8 @@
 }
 
 .sidebar-link-active {
-  background: color-mix(in oklab, #f48645 13%, transparent);
-  color: #ffc092;
+  background: color-mix(in oklab, var(--brand) 13%, transparent);
+  color: var(--brand);
 }
 
 .hero-card {
@@ -574,18 +461,19 @@
 
 .reader-empty {
   background:
-    radial-gradient(circle at 50% 0%, color-mix(in oklab, #ef7d32 14%, transparent), transparent 23rem),
-    color-mix(in oklab, var(--card) 45%, transparent);
+    radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--brand) 10%, transparent), transparent 23rem),
+    var(--card);
 }
 
 .player-dock {
-  background: color-mix(in oklab, var(--card) 96%, transparent);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
+  background: var(--black);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 60%);
 }
 
+/* Stránka dokumentu drží stejný pár jako zbytek appky: černá pod bílým textem. */
 .reader-paper {
-  background: #eee9df;
-  color: #1f2937;
+  background: var(--black);
+  color: var(--white);
 }
 
 .reader-tool {
@@ -620,18 +508,18 @@
 .volume-range::-webkit-slider-runnable-track {
   height: 0.22rem;
   border-radius: 999px;
-  background: linear-gradient(to right, #f28b4b var(--range-progress, 50%), rgb(255 255 255 / 14%) var(--range-progress, 50%));
+  background: linear-gradient(to right, var(--brand) var(--range-progress, 50%), var(--track) var(--range-progress, 50%));
 }
 
 .volume-range::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, #f28b4b var(--range-progress, 70%), rgb(255 255 255 / 14%) var(--range-progress, 70%));
+  background: linear-gradient(to right, var(--brand) var(--range-progress, 70%), var(--track) var(--range-progress, 70%));
 }
 
 .player-range::-moz-range-track,
 .volume-range::-moz-range-track {
   height: 0.22rem;
   border-radius: 999px;
-  background: rgb(255 255 255 / 14%);
+  background: var(--track);
 }
 
 .player-range::-webkit-slider-thumb,
@@ -640,9 +528,9 @@
   height: 0.68rem;
   margin-top: -0.22rem;
   appearance: none;
-  border: 2px solid #f28b4b;
+  border: 2px solid var(--brand);
   border-radius: 50%;
-  background: #fff;
+  background: var(--white);
   box-shadow: 0 1px 5px rgb(0 0 0 / 35%);
 }
 
@@ -650,9 +538,9 @@
 .volume-range::-moz-range-thumb {
   width: 0.55rem;
   height: 0.55rem;
-  border: 2px solid #f28b4b;
+  border: 2px solid var(--brand);
   border-radius: 50%;
-  background: #fff;
+  background: var(--white);
 }
 
 .equalizer-active i {

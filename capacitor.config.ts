@@ -10,20 +10,20 @@ const config: CapacitorConfig = {
   webDir: "out",
   android: {
     // Vlastní pozadí, ať mezi splash screenem a appkou neprobleskne bílá.
-    backgroundColor: "#09090B",
+    backgroundColor: "#000000",
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 600,
       launchAutoHide: true,
-      backgroundColor: "#09090B",
+      backgroundColor: "#000000",
       androidSplashResourceName: "splash",
       androidScaleType: "CENTER_CROP",
       showSpinner: false,
     },
     StatusBar: {
       style: "DARK",
-      backgroundColor: "#09090B",
+      backgroundColor: "#000000",
     },
     // Android 15+ kreslí edge-to-edge. Capacitor pak vstřikuje
     // --safe-area-inset-*, na které sahá globals.css.

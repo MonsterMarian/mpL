@@ -1,18 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenText, Check, ChevronRight, Download, Moon, Music2, RefreshCw, RotateCcw, Sun } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
 import { cn } from "@/lib/utils";
 
-type Tab = "main" | "appearance" | "addons";
+type Tab = "main" | "addons";
 
+// Vzhled se nenastavuje: appka má jediné téma - černá, bílá, žlutá.
 const TABS: { id: Tab; label: string }[] = [
   { id: "main", label: "Hlavní" },
-  { id: "appearance", label: "Vzhled" },
   { id: "addons", label: "Addony" },
 ];
 
@@ -74,12 +74,6 @@ export function SettingsDialog({
               onRequestMediaAccess={onRequestMediaAccess} 
             />
             <UpdateSection />
-          </div>
-        ) : activeTab === "appearance" ? (
-          <div className="flex flex-col gap-5 animate-in-up">
-            <Section title="Vzhled">
-              <ThemeChoice />
-            </Section>
           </div>
         ) : (
           <div className="flex flex-col gap-5 animate-in-up">
@@ -156,47 +150,7 @@ function MediaSection({
   );
 }
 
-function ThemeChoice() {
-  const [dark, setDark] = React.useState(true);
-
-  React.useEffect(() => setDark(document.documentElement.classList.contains("dark")), []);
-
-  const set = (next: boolean) => {
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("microwins:theme", next ? "dark" : "light");
-    } catch {}
-  };
-
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {[
-        { value: true, label: "Tmavé", icon: Moon },
-        { value: false, label: "Světlé", icon: Sun },
-      ].map(({ value, label, icon: Icon }) => (
-        <button
-          key={label}
-          type="button"
-          onClick={() => set(value)}
-          aria-pressed={dark === value}
-          className={cn(
-            "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors",
-            dark === value
-              ? "border-foreground/40 bg-accent font-medium"
-              : "text-muted-foreground hover:bg-accent/50",
-          )}
-        >
-          <Icon className="size-4" />
-          {label}
-          {dark === value ? <ChevronRight className="ml-auto size-3.5 opacity-40" /> : null}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function AddonChoice({ 
+function AddonChoice({
   addonEnabled, 
   onAddonEnabledChange 
 }: { 
@@ -229,12 +183,12 @@ function AddonChoice({
         <span
           className={cn(
             "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-            addonEnabled ? "bg-orange-500" : "bg-muted-foreground/30",
+            addonEnabled ? "bg-brand" : "bg-muted-foreground/30",
           )}
         >
           <span
             className={cn(
-              "absolute top-1 size-4 rounded-full bg-card shadow transition-[left] duration-200",
+              "absolute top-1 size-4 rounded-full bg-black shadow transition-[left] duration-200",
               addonEnabled ? "left-6" : "left-1",
             )}
           />
@@ -336,7 +290,7 @@ function UpdateSection() {
         </span>
       </div>
       
-      {statusMsg && <div className="text-xs text-orange-400 mt-1">{statusMsg}</div>}
+      {statusMsg && <div className="text-xs text-brand mt-1">{statusMsg}</div>}
 
       {current || pending ? (
         <button

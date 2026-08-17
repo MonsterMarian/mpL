@@ -29,6 +29,9 @@ import org.json.JSONArray;
 )
 public class MediaLibraryPlugin extends Plugin {
 
+    /** Obaly alb má MediaStore pod vlastní adresou, ne u samotné skladby. */
+    private static final Uri ALBUM_ART_URI = Uri.parse("content://media/external/audio/albumart");
+
     private String permissionAlias() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ? "media" : "storage";
     }
@@ -87,7 +90,9 @@ public class MediaLibraryPlugin extends Plugin {
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DATE_ADDED,
             MediaStore.Audio.Media.MIME_TYPE,
             MediaStore.Audio.Media.DISPLAY_NAME
         };
@@ -108,7 +113,9 @@ public class MediaLibraryPlugin extends Plugin {
                 int titleIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
                 int artistIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
                 int albumIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
+                int albumIdIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);
                 int durationIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+                int addedIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
                 int mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE);
                 int displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME);
 
@@ -120,6 +127,13 @@ public class MediaLibraryPlugin extends Plugin {
                     long duration = cursor.getLong(durationIndex);
                     Uri contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
 
+                    // Obal alba. Když album obal nemá, adresa se prostě nenačte
+                    // a webová vrstva místo něj ukáže svoji tichou notu.
+                    long albumId = cursor.getLong(albumIdIndex);
+                    String artwork = albumId > 0
+                        ? ContentUris.withAppendedId(ALBUM_ART_URI, albumId).toString()
+                        : null;
+
                     JSObject track = new JSObject();
                     track.put("id", String.valueOf(id));
                     track.put("title", title);
@@ -127,6 +141,9 @@ public class MediaLibraryPlugin extends Plugin {
                     track.put("album", album);
                     track.put("durationSeconds", Math.max(0, duration / 1000.0));
                     track.put("src", contentUri.toString());
+                    track.put("artwork", artwork);
+                    // MediaStore počítá datum v sekundách, JavaScript v milisekundách.
+                    track.put("addedAt", cursor.getLong(addedIndex) * 1000L);
                     track.put("mimeType", valueOrFallback(cursor.getString(mimeIndex), "audio/*"));
                     tracks.put(track);
                 }

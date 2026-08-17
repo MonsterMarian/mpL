@@ -8,18 +8,15 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#FDFDFD" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090B" },
-  ],
+  // Appka má jediné téma: černé pozadí, bílý text, žlutý akcent.
+  themeColor: "#000000",
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
 };
-
-const themeScript = `try{var d=document.documentElement;var t=localStorage.getItem("microwins:theme");if(t!=="light")d.classList.add("dark");var a=localStorage.getItem("microwins:accent");if(a)d.setAttribute("data-accent",a)}catch(e){}`;
 
 const rescueScript = `try{
 if(localStorage.getItem("microwins:ota:booting")){
@@ -43,7 +40,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="cs" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <script dangerouslySetInnerHTML={{ __html: rescueScript }} />
       </head>
       <body className="min-h-screen antialiased flex flex-col bg-background text-foreground">
