@@ -212,6 +212,7 @@ export default function HomePage() {
   const [readerAddon, setReaderAddon] = React.useState(true);
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const localObjectUrls = React.useRef<string[]>([]);
 
@@ -642,19 +643,15 @@ export default function HomePage() {
   };
 
   return (
-    <div className="app-shell min-h-screen text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-[1540px]">
-        <aside className="hidden w-64 shrink-0 flex-col border-r border-white/[0.07] px-5 py-7 lg:flex">
-          <div className="flex items-center gap-3 px-2">
-            <div className="brand-mark"><span /></div>
-            <div>
-              <div className="font-black tracking-[0.16em] text-foreground">P/_AYER</div>
-              <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">offline player</div>
-            </div>
-          </div>
+    <div className="flex min-h-screen flex-col select-none text-foreground bg-background">
+      <header className="mw-safe-top mw-safe-x sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
+        <div className="mx-auto flex h-16 w-full max-w-4xl items-center gap-3 px-4">
+          <button type="button" onClick={() => goToView("home")} className="mr-2 flex items-center gap-2.5 text-lg font-semibold tracking-tight">
+            <div className="brand-mark brand-mark-small"><span /></div>
+            P/_AYER
+          </button>
 
-          <div className="mt-12 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Procházet</div>
-          <nav className="mt-3 space-y-1">
+          <nav className="hidden items-center gap-1 sm:flex">
             {[
               { id: "home" as const, label: "Přehled", icon: Home },
               { id: "library" as const, label: "Knihovna", icon: Library },
@@ -663,261 +660,281 @@ export default function HomePage() {
               const Icon = item.icon;
               const active = activeView === item.id;
               return (
-                <button key={item.id} type="button" onClick={() => goToView(item.id)} className={cn("sidebar-link", active && "sidebar-link-active")}>
-                  <Icon className="size-[18px]" />
-                  {item.label}
-                  {item.id === "reader" && documentName ? <span className="ml-auto size-1.5 rounded-full bg-orange-400" /> : null}
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => goToView(item.id)}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors",
+                    active
+                      ? "bg-secondary font-medium text-secondary-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <Icon className="size-4" />
+                  <span>{item.label}</span>
+                  {item.id === "reader" && documentName && <span className="ml-1 size-1.5 rounded-full bg-orange-400" />}
                 </button>
               );
             })}
           </nav>
 
-          <div className="mt-10 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Tvoje hudba</div>
-          <nav className="mt-3 space-y-1">
-            <button type="button" onClick={() => { setLibraryFilter("liked"); goToView("library"); }} className={cn("sidebar-link", activeView === "library" && libraryFilter === "liked" && "sidebar-link-active")}><Heart className="size-[18px]" /> Oblíbené <span className="ml-auto text-xs text-muted-foreground">{liked.size}</span></button>
-            <button type="button" onClick={() => { setLibraryFilter("local"); goToView("library"); }} className={cn("sidebar-link", activeView === "library" && libraryFilter === "local" && "sidebar-link-active")}><ListMusic className="size-[18px]" /> Stažená hudba</button>
-          </nav>
-
-          <div className="mt-auto space-y-2">
-            <div className="mb-6 rounded-xl border bg-card/50 p-4">
-              <p className="text-sm font-semibold">Lokální poslech</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Žádné demo skladby. Jen to, co máš v telefonu.</p>
-            </div>
-            <SettingsDialog
-              addonEnabled={readerAddon}
-              onAddonEnabledChange={handleAddonChange}
-              mediaPermission={mediaPermission}
-              onRequestMediaAccess={requestMediaAccess}
-              trigger={<button type="button" className="sidebar-link w-full"><Settings2 className="size-[18px]" /> Nastavení</button>}
-            />
-            <div className="px-3 pt-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">P/_ayer 1.0 · offline ready</div>
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Nastavení"
+              title="Nastavení"
+              onClick={() => setSettingsOpen(true)}
+              className="size-10 rounded-full"
+            >
+              <Settings2 className="size-5" />
+            </Button>
           </div>
-        </aside>
+        </div>
+      </header>
 
-        <main className="min-w-0 flex-1 pb-32">
-          <header className="flex items-center justify-between px-5 pb-2 pt-6 sm:px-8 lg:hidden">
-            <button type="button" onClick={() => goToView("home")} className="flex items-center gap-2">
-              <div className="brand-mark brand-mark-small"><span /></div>
-              <span className="text-sm font-black tracking-[0.16em]">P/_AYER</span>
-            </button>
-            <div className="flex items-center gap-1">
-              <button type="button" className="rounded-xl p-2.5 text-muted-foreground hover:bg-white/10" onClick={() => setQuery("")} aria-label="Menu"><Menu className="size-5" /></button>
-              <SettingsDialog
-                addonEnabled={readerAddon}
-                onAddonEnabledChange={handleAddonChange}
-                mediaPermission={mediaPermission}
-                onRequestMediaAccess={requestMediaAccess}
-                trigger={<button type="button" className="rounded-xl p-2.5 text-muted-foreground hover:bg-white/10" aria-label="Nastavení"><Settings2 className="size-5" /></button>}
-              />
+      <main className="mw-pad-nav mx-auto w-full max-w-4xl flex-1 px-4 pt-6 pb-32">
+        {activeView === "home" ? (
+          <section className="animate-in-up">
+            <div className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+              <div>
+                <p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-win-muted-foreground"><span className="size-1.5 rounded-full bg-win" /> Hudba v zařízení</p>
+                <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Přehled</h1>
+                <p className="mt-2 text-sm text-muted-foreground">Jednoduchý poslech toho, co už máš stažené.</p>
+              </div>
+              <div className="relative w-full sm:max-w-[260px]">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) goToView("library"); }} placeholder="Hledat v hudbě" className="h-10 rounded-lg border-input bg-card pl-10 pr-4" />
+              </div>
             </div>
-          </header>
 
-          <div className="mx-auto max-w-[1240px] px-5 pt-8 sm:px-8 lg:px-10 lg:pt-12">
-            {activeView === "home" ? (
-              <section className="animate-in-up">
-                <div className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-                  <div>
-                    <p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-win-muted-foreground"><span className="size-1.5 rounded-full bg-win" /> Hudba v zařízení</p>
-                    <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Přehled</h1>
-                    <p className="mt-2 text-sm text-muted-foreground">Jednoduchý poslech toho, co už máš stažené.</p>
-                  </div>
-                  <div className="relative w-full sm:max-w-[260px]">
-                    <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) goToView("library"); }} placeholder="Hledat v hudbě" className="h-10 rounded-lg border-input bg-card pl-10 pr-4" />
-                  </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <section className="rounded-xl border bg-card p-5 sm:p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Knihovna</p><h2 className="mt-2 text-xl font-semibold">Stažená hudba</h2><p className="mt-1 text-sm text-muted-foreground">{tracks.length ? `${tracks.length} ${tracks.length === 1 ? "skladba" : "skladeb"} připravených k poslechu` : "Zatím tu nejsou žádné skladby"}</p></div>
+                  <div className="flex size-11 items-center justify-center rounded-xl bg-win-muted text-win-muted-foreground"><Music2 className="size-5" /></div>
                 </div>
+                {tracks.length ? <div className="mt-5 divide-y divide-border">{tracks.slice(0, 5).map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="mt-6 rounded-lg border border-dashed p-6 text-center"><Music2 className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{mediaPermission === "denied" ? "Přístup k hudbě je vypnutý" : "Povol přístup k médiím"}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{mediaPermission === "denied" ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio." : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}</p><button type="button" onClick={requestMediaAccess} className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-win px-3 text-xs font-semibold text-win-foreground hover:bg-win/90">{mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}</button><label className="mx-auto mt-3 flex h-9 w-fit cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Vybrat soubory<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>}
+              </section>
+              <section className="rounded-xl border bg-card p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Stav zařízení</p>
+                <div className="mt-5 space-y-4"><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Přístup k médiím</span><span className={cn("font-medium", mediaPermission === "granted" ? "text-progress" : "text-win-muted-foreground")}>{mediaPermission === "granted" ? "Povolený" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Skladby</span><span className="tabular">{tracks.length}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Oblíbené</span><span className="tabular">{liked.size}</span></div></div>
+                <button type="button" onClick={requestMediaAccess} disabled={isLoadingMedia || mediaPermission === "unavailable"} className="mt-7 flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-accent disabled:opacity-50">{isLoadingMedia ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} {isLoadingMedia ? "Načítám…" : mediaPermission === "denied" ? "Otevřít nastavení" : "Obnovit knihovnu"}</button>
+              </section>
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-xl border bg-card px-5 py-4"><div className="flex items-center gap-3"><div className="flex size-8 items-center justify-center rounded-lg bg-muted"><ListMusic className="size-4 text-muted-foreground" /></div><div><p className="text-sm font-medium">Chceš jiný soubor?</p><p className="text-xs text-muted-foreground">Vyber MP3 přímo ze Stažených souborů.</p></div></div><label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Přidat<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>
+          </section>
+        ) : null}
 
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                  <section className="rounded-xl border bg-card p-5 sm:p-6">
-                    <div className="flex items-start justify-between gap-4">
-                      <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Knihovna</p><h2 className="mt-2 text-xl font-semibold">Stažená hudba</h2><p className="mt-1 text-sm text-muted-foreground">{tracks.length ? `${tracks.length} ${tracks.length === 1 ? "skladba" : "skladeb"} připravených k poslechu` : "Zatím tu nejsou žádné skladby"}</p></div>
-                      <div className="flex size-11 items-center justify-center rounded-xl bg-win-muted text-win-muted-foreground"><Music2 className="size-5" /></div>
+        {activeView === "library" ? (
+          <section className="animate-in-up">
+            <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300">Tvoje kolekce</p><h1 className="text-4xl font-semibold tracking-[-0.05em]">Knihovna</h1><p className="mt-2 text-sm text-muted-foreground">{tracks.length} skladeb · připraveno k poslechu offline</p></div><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><Upload className="size-4" /> Přidat hudbu<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1 rounded-xl bg-white/[0.04] p-1">{(["all", "liked", "local"] as const).map((filter) => <button key={filter} type="button" onClick={() => setLibraryFilter(filter)} className={cn("rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", libraryFilter === filter ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground")}>{filter === "all" ? "Vše" : filter === "liked" ? "Oblíbené" : "Moje soubory"}</button>)}</div><div className="relative sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat skladbu nebo interpreta" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" /></div></div>
+            {visibleTracks.length ? <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-2 sm:p-3 divide-y divide-border/40">{visibleTracks.map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-center"><div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-white/[0.05] text-muted-foreground"><Heart className="size-5" /></div><p className="font-medium">Tady je zatím ticho.</p><p className="mt-1 text-sm text-muted-foreground">Zkus změnit filtr nebo přidat vlastní hudbu.</p></div>}
+            <div className="mt-8 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{tracks.length}</p><p className="mt-1 text-xs text-muted-foreground">celkem skladeb</p></div><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{liked.size}</p><p className="mt-1 text-xs text-muted-foreground">v oblíbených</p></div><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{tracks.filter((track) => track.source === "device" || track.source === "local").length}</p><p className="mt-1 text-xs text-muted-foreground">v zařízení</p></div></div>
+          </section>
+        ) : null}
+
+        {activeView === "reader" && readerAddon ? (
+          <section className="animate-in-up">
+            <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+              <div>
+                <p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300"><BookOpenText className="size-3.5" /> Addon · offline čtení</p>
+                <h1 className="text-4xl font-semibold tracking-[-0.05em]">Dokumenty</h1>
+                <p className="mt-2 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky a otevře se tam, kde jsi skončil.</p>
+              </div>
+              <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
+            </div>
+
+            {documents.length > 0 ? (
+              <div className="mb-5 flex flex-wrap gap-2">
+                {documents.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className={cn(
+                      "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors",
+                      doc.id === documentId_ ? "border-orange-400/40 bg-orange-500/10 text-orange-200" : "border-white/[0.08] text-muted-foreground hover:bg-white/[0.05]",
+                    )}
+                  >
+                    <button type="button" onClick={() => openDocument(doc)} className="flex min-w-0 items-center gap-2 text-left">
+                      <FileText className="size-3.5 shrink-0" />
+                      <span className="max-w-[180px] truncate">{doc.name}</span>
+                      <span className="shrink-0 tabular-nums opacity-60">{clampPage(doc.page, doc.pages.length) + 1}/{doc.pages.length}</span>
+                    </button>
+                    <button type="button" onClick={() => void forgetDocument(doc.id)} className="shrink-0 rounded-md p-0.5 opacity-50 hover:opacity-100" aria-label={`Odebrat ${doc.name} z knihovny`}>
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!activeDoc ? (
+              <div className="reader-empty rounded-[1.75rem] border border-dashed border-orange-300/20 p-8 text-center sm:p-16">
+                <div className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-orange-400/10 text-orange-300"><BookOpenText className="size-7" /></div>
+                <h2 className="mt-5 text-xl font-semibold">Tvoje klidná čítárna</h2>
+                <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Nahraj první dokument. Zůstane jen v tomto zařízení, bez účtu a bez cloudu.</p>
+                <label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
+                <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-orange-300" /> lokálně</span><span><Check className="mr-1 inline size-3 text-orange-300" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-orange-300" /> PDF / TXT</span></div>
+              </div>
+            ) : (
+              <div className="grid gap-5 xl:grid-cols-[210px_minmax(0,1fr)]">
+                <aside className="order-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 xl:order-1">
+                  <div className="flex items-start justify-between gap-3 px-2 pb-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{documentName}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{documentPages.length} {documentPages.length === 1 ? "stránka" : "stránek"}</p>
                     </div>
-                    {tracks.length ? <div className="mt-5 divide-y divide-border">{tracks.slice(0, 5).map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="mt-6 rounded-lg border border-dashed p-6 text-center"><Music2 className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{mediaPermission === "denied" ? "Přístup k hudbě je vypnutý" : "Povol přístup k médiím"}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{mediaPermission === "denied" ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio." : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}</p><button type="button" onClick={requestMediaAccess} className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-win px-3 text-xs font-semibold text-win-foreground hover:bg-win/90">{mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}</button><label className="mx-auto mt-3 flex h-9 w-fit cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Vybrat soubory<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>}
-                  </section>
-                  <section className="rounded-xl border bg-card p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Stav zařízení</p>
-                    <div className="mt-5 space-y-4"><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Přístup k médiím</span><span className={cn("font-medium", mediaPermission === "granted" ? "text-progress" : "text-win-muted-foreground")}>{mediaPermission === "granted" ? "Povolený" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Skladby</span><span className="tabular">{tracks.length}</span></div><div className="h-px bg-border" /><div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Oblíbené</span><span className="tabular">{liked.size}</span></div></div>
-                    <button type="button" onClick={requestMediaAccess} disabled={isLoadingMedia || mediaPermission === "unavailable"} className="mt-7 flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-accent disabled:opacity-50">{isLoadingMedia ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} {isLoadingMedia ? "Načítám…" : mediaPermission === "denied" ? "Otevřít nastavení" : "Obnovit knihovnu"}</button>
-                  </section>
-                </div>
-                <div className="mt-4 flex items-center justify-between rounded-xl border bg-card px-5 py-4"><div className="flex items-center gap-3"><div className="flex size-8 items-center justify-center rounded-lg bg-muted"><ListMusic className="size-4 text-muted-foreground" /></div><div><p className="text-sm font-medium">Chceš jiný soubor?</p><p className="text-xs text-muted-foreground">Vyber MP3 přímo ze Stažených souborů.</p></div></div><label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Přidat<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>
-              </section>
-            ) : null}
-
-            {activeView === "library" ? (
-              <section className="animate-in-up">
-                <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300">Tvoje kolekce</p><h1 className="text-4xl font-semibold tracking-[-0.05em]">Knihovna</h1><p className="mt-2 text-sm text-muted-foreground">{tracks.length} skladeb · připraveno k poslechu offline</p></div><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><Upload className="size-4" /> Přidat hudbu<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label></div>
-                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-1 rounded-xl bg-white/[0.04] p-1">{(["all", "liked", "local"] as const).map((filter) => <button key={filter} type="button" onClick={() => setLibraryFilter(filter)} className={cn("rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", libraryFilter === filter ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground")}>{filter === "all" ? "Vše" : filter === "liked" ? "Oblíbené" : "Moje soubory"}</button>)}</div><div className="relative sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat skladbu nebo interpreta" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" /></div></div>
-                {visibleTracks.length ? <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-2 sm:p-3">{visibleTracks.map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div> : <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-center"><div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-white/[0.05] text-muted-foreground"><Heart className="size-5" /></div><p className="font-medium">Tady je zatím ticho.</p><p className="mt-1 text-sm text-muted-foreground">Zkus změnit filtr nebo přidat vlastní hudbu.</p></div>}
-                <div className="mt-8 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{tracks.length}</p><p className="mt-1 text-xs text-muted-foreground">celkem skladeb</p></div><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{liked.size}</p><p className="mt-1 text-xs text-muted-foreground">v oblíbených</p></div><div className="rounded-2xl border bg-card p-4"><p className="text-2xl font-semibold">{tracks.filter((track) => track.source === "device" || track.source === "local").length}</p><p className="mt-1 text-xs text-muted-foreground">v zařízení</p></div></div>
-              </section>
-            ) : null}
-
-            {activeView === "reader" && readerAddon ? (
-              <section className="animate-in-up">
-                <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-                  <div>
-                    <p className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-300"><BookOpenText className="size-3.5" /> Addon · offline čtení</p>
-                    <h1 className="text-4xl font-semibold tracking-[-0.05em]">Dokumenty</h1>
-                    <p className="mt-2 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky a otevře se tam, kde jsi skončil.</p>
+                    <FileText className="size-4 shrink-0 text-orange-300" />
                   </div>
-                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-orange-400"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
-                </div>
-
-                {/* Knihovna dokumentů - přesně jako knihovna hudby: co se jednou
-                    otevřelo, zůstává po ruce, dokud se to nesmaže. */}
-                {documents.length > 0 ? (
-                  <div className="mb-5 flex flex-wrap gap-2">
-                    {documents.map((doc) => (
-                      <div
-                        key={doc.id}
-                        className={cn(
-                          "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors",
-                          doc.id === documentId_ ? "border-orange-400/40 bg-orange-500/10 text-orange-200" : "border-white/[0.08] text-muted-foreground hover:bg-white/[0.05]",
-                        )}
+                  <div className="space-y-1 border-t border-white/[0.07] pt-3">
+                    {documentPages.map((page, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => goToPage(index)}
+                        className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors", index === documentPage ? "bg-orange-500/15 text-orange-200" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground")}
                       >
-                        <button type="button" onClick={() => openDocument(doc)} className="flex min-w-0 items-center gap-2 text-left">
-                          <FileText className="size-3.5 shrink-0" />
-                          <span className="max-w-[180px] truncate">{doc.name}</span>
-                          <span className="shrink-0 tabular-nums opacity-60">{clampPage(doc.page, doc.pages.length) + 1}/{doc.pages.length}</span>
-                        </button>
-                        <button type="button" onClick={() => void forgetDocument(doc.id)} className="shrink-0 rounded-md p-0.5 opacity-50 hover:opacity-100" aria-label={`Odebrat ${doc.name} z knihovny`}>
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
+                        <span className="w-5 text-[10px] tabular-nums opacity-60">{String(index + 1).padStart(2, "0")}</span>
+                        <span className="truncate">{page.label}</span>
+                        {documentBookmarks.includes(index) ? <BookmarkCheck className="ml-auto size-3 shrink-0 text-orange-300" /> : null}
+                      </button>
                     ))}
                   </div>
-                ) : null}
+                </aside>
 
-                {!activeDoc ? (
-                  <div className="reader-empty rounded-[1.75rem] border border-dashed border-orange-300/20 p-8 text-center sm:p-16">
-                    <div className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-orange-400/10 text-orange-300"><BookOpenText className="size-7" /></div>
-                    <h2 className="mt-5 text-xl font-semibold">Tvoje klidná čítárna</h2>
-                    <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Nahraj první dokument. Zůstane jen v tomto zařízení, bez účtu a bez cloudu.</p>
-                    <label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
-                    <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-orange-300" /> lokálně</span><span><Check className="mr-1 inline size-3 text-orange-300" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-orange-300" /> PDF / TXT</span></div>
-                  </div>
-                ) : (
-                  <div className="grid gap-5 xl:grid-cols-[210px_minmax(0,1fr)]">
-                    <aside className="order-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 xl:order-1">
-                      <div className="flex items-start justify-between gap-3 px-2 pb-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{documentName}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{documentPages.length} {documentPages.length === 1 ? "stránka" : "stránek"}</p>
-                        </div>
-                        <FileText className="size-4 shrink-0 text-orange-300" />
-                      </div>
-                      <div className="space-y-1 border-t border-white/[0.07] pt-3">
-                        {documentPages.map((page, index) => (
-                          <button
-                            key={index}
-                            type="button"
-                            onClick={() => goToPage(index)}
-                            className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors", index === documentPage ? "bg-orange-500/15 text-orange-200" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground")}
-                          >
-                            <span className="w-5 text-[10px] tabular-nums opacity-60">{String(index + 1).padStart(2, "0")}</span>
-                            <span className="truncate">{page.label}</span>
-                            {documentBookmarks.includes(index) ? <BookmarkCheck className="ml-auto size-3 shrink-0 text-orange-300" /> : null}
-                          </button>
-                        ))}
-                      </div>
-                    </aside>
-
-                    <div className="order-1 min-w-0 xl:order-2">
-                      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <FileText className="size-4 shrink-0 text-orange-300" />
-                          <span className="truncate text-sm font-medium">{documentName}</span>
-                          <span className="hidden rounded-md bg-white/[0.06] px-2 py-1 text-[10px] text-muted-foreground sm:block">{activeDocument?.label}</span>
-                        </div>
-                        <div className="relative sm:w-56">
-                          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                          <Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" />
-                        </div>
-                      </div>
-
-                      {/* Obrázkový dokument: řekne se to rovnou a čtení se ani
-                          nenabídne - naskenované stránky se přečíst nedají. */}
-                      {activeDoc.imageOnly ? (
-                        <div className="mb-3 flex items-start gap-2 rounded-xl border border-orange-400/25 bg-orange-400/10 px-4 py-3 text-xs text-orange-100">
-                          <BookOpenText className="mt-0.5 size-4 shrink-0" />
-                          <span>Tenhle dokument je obrázkový - stránky jsou naskenované a text v nich není. Listovat jde, číst nahlas ani hledat ne. Pomůže PDF s textovou vrstvou.</span>
-                        </div>
-                      ) : null}
-
-                      <div className="reader-toolbar flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border border-white/[0.08] bg-white/[0.045] px-3 py-2">
-                        <div className="flex items-center gap-1">
-                          <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.max(75, value - 10))} aria-label="Zmenšit"><ZoomOut className="size-4" /></button>
-                          <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">{documentZoom}%</span>
-                          <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.min(140, value + 10))} aria-label="Zvětšit"><ZoomIn className="size-4" /></button>
-                        </div>
-
-                        {/* Čtení nahlas se ovládá jako přehrávač: stránka zpět,
-                            pauza, stránka vpřed a rychlost. */}
-                        <div className="flex items-center gap-1">
-                          <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-orange-300")} onClick={toggleBookmark} aria-label="Záložka">
-                            {documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
-                          </button>
-                          {readablePage || isReadingDocument ? (
-                            <>
-                              <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} aria-label="Stránka zpět"><SkipBack className="size-4 fill-current" /></button>
-                              <button
-                                type="button"
-                                onClick={toggleDocumentReading}
-                                className={cn("flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors", isReadingDocument ? "bg-orange-500 text-white" : "hover:bg-white/10")}
-                                aria-label={isReadingDocument ? "Pozastavit čtení" : "Číst nahlas"}
-                              >
-                                {isReadingDocument ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}
-                                {isReadingDocument ? "Pauza" : speechChunk > 0 ? "Pokračovat" : "Číst nahlas"}
-                              </button>
-                              <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage >= documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} aria-label="Stránka vpřed"><SkipForward className="size-4 fill-current" /></button>
-                              <select
-                                value={speechRate}
-                                onChange={(event) => changeSpeechRate(Number(event.target.value))}
-                                aria-label="Rychlost čtení"
-                                className="h-8 rounded-lg border border-white/10 bg-transparent px-1.5 text-xs text-muted-foreground outline-none"
-                              >
-                                {SPEECH_RATES.map((rate) => (
-                                  <option key={rate} value={rate} className="bg-[#1e1d22]">{rate}×</option>
-                                ))}
-                              </select>
-                            </>
-                          ) : (
-                            <span className="px-2 text-[11px] text-muted-foreground">čtení nahlas nejde</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="reader-paper min-h-[520px] overflow-auto rounded-b-2xl border-x border-b border-white/[0.08] p-6 shadow-2xl sm:p-12">
-                        <article className="mx-auto max-w-2xl origin-top transition-transform" style={{ transform: `scale(${documentZoom / 100})`, transformOrigin: "top center", marginBottom: `${(documentZoom - 100) * 3}px` }}>
-                          <p className="mb-8 text-xs font-semibold uppercase tracking-[0.18em] text-orange-700/70">{activeDocument?.label}</p>
-                          <div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-slate-800">{activeDocument ? renderDocumentText(activeDocument.text) : ""}</div>
-                        </article>
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between">
-                        <button type="button" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"><ChevronLeft className="size-4" /> Předchozí</button>
-                        <span className="text-xs tabular-nums text-muted-foreground">{documentPage + 1} / {documentPages.length}</span>
-                        <button type="button" disabled={documentPage === documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30">Další <ChevronRight className="size-4" /></button>
-                      </div>
+                <div className="order-1 min-w-0 xl:order-2">
+                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileText className="size-4 shrink-0 text-orange-300" />
+                      <span className="truncate text-sm font-medium">{documentName}</span>
+                      <span className="hidden rounded-md bg-white/[0.06] px-2 py-1 text-[10px] text-muted-foreground sm:block">{activeDocument?.label}</span>
+                    </div>
+                    <div className="relative sm:w-56">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" />
                     </div>
                   </div>
-                )}
 
-                {isLoadingDocument ? <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 backdrop-blur-sm"><div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-card px-5 py-4 text-sm shadow-xl"><Loader2 className="size-4 animate-spin text-orange-300" /> Zpracovávám dokument…</div></div> : null}
-                {documentError ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-xs text-red-200"><X className="size-4" /> {documentError}</div> : null}
-              </section>
-            ) : null}
-          </div>
-        </main>
-      </div>
+                  {activeDoc.imageOnly ? (
+                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-orange-400/25 bg-orange-400/10 px-4 py-3 text-xs text-orange-100">
+                      <BookOpenText className="mt-0.5 size-4 shrink-0" />
+                      <span>Tenhle dokument je obrázkový - stránky jsou naskenované a text v nich není. Listovat jde, číst nahlas ani hledat ne. Pomůže PDF s textovou vrstvou.</span>
+                    </div>
+                  ) : null}
+
+                  <div className="reader-toolbar flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border border-white/[0.08] bg-white/[0.045] px-3 py-2">
+                    <div className="flex items-center gap-1">
+                      <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.max(75, value - 10))} aria-label="Zmenšit"><ZoomOut className="size-4" /></button>
+                      <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">{documentZoom}%</span>
+                      <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.min(140, value + 10))} aria-label="Zvětšit"><ZoomIn className="size-4" /></button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-orange-300")} onClick={toggleBookmark} aria-label="Záložka">
+                        {documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+                      </button>
+                      {readablePage || isReadingDocument ? (
+                        <>
+                          <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} aria-label="Stránka zpět"><SkipBack className="size-4 fill-current" /></button>
+                          <button
+                            type="button"
+                            onClick={toggleDocumentReading}
+                            className={cn("flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors", isReadingDocument ? "bg-orange-500 text-white" : "hover:bg-white/10")}
+                            aria-label={isReadingDocument ? "Pozastavit čtení" : "Číst nahlas"}
+                          >
+                            {isReadingDocument ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}
+                            {isReadingDocument ? "Pauza" : speechChunk > 0 ? "Pokračovat" : "Číst nahlas"}
+                          </button>
+                          <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage >= documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} aria-label="Stránka vpřed"><SkipForward className="size-4 fill-current" /></button>
+                          <select
+                            value={speechRate}
+                            onChange={(event) => changeSpeechRate(Number(event.target.value))}
+                            aria-label="Rychlost čtení"
+                            className="h-8 rounded-lg border border-white/10 bg-transparent px-1.5 text-xs text-muted-foreground outline-none"
+                          >
+                            {SPEECH_RATES.map((rate) => (
+                              <option key={rate} value={rate} className="bg-[#1e1d22]">{rate}×</option>
+                            ))}
+                          </select>
+                        </>
+                      ) : (
+                        <span className="px-2 text-[11px] text-muted-foreground">čtení nahlas nejde</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="reader-paper min-h-[520px] overflow-auto rounded-b-2xl border-x border-b border-white/[0.08] p-6 shadow-2xl sm:p-12">
+                    <article className="mx-auto max-w-2xl origin-top transition-transform" style={{ transform: `scale(${documentZoom / 100})`, transformOrigin: "top center", marginBottom: `${(documentZoom - 100) * 3}px` }}>
+                      <p className="mb-8 text-xs font-semibold uppercase tracking-[0.18em] text-orange-700/70">{activeDocument?.label}</p>
+                      <div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-slate-800">{activeDocument ? renderDocumentText(activeDocument.text) : ""}</div>
+                    </article>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between">
+                    <button type="button" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"><ChevronLeft className="size-4" /> Předchozí</button>
+                    <span className="text-xs tabular-nums text-muted-foreground">{documentPage + 1} / {documentPages.length}</span>
+                    <button type="button" disabled={documentPage === documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30">Další <ChevronRight className="size-4" /></button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isLoadingDocument ? <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 backdrop-blur-sm"><div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-card px-5 py-4 text-sm shadow-xl"><Loader2 className="size-4 animate-spin text-orange-300" /> Zpracovávám dokument…</div></div> : null}
+            {documentError ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-xs text-red-200"><X className="size-4" /> {documentError}</div> : null}
+          </section>
+        ) : null}
+      </main>
+
+      <nav className="mw-safe-bottom mw-safe-x fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
+        <div className="mx-auto flex w-full max-w-4xl">
+          {[
+            { id: "home" as const, label: "Přehled", icon: Home },
+            { id: "library" as const, label: "Knihovna", icon: Library },
+            ...(readerAddon ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
+          ].map((item) => {
+            const Icon = item.icon;
+            const active = activeView === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => goToView(item.id)}
+                aria-label={item.label}
+                className={cn(
+                  "flex flex-1 items-center justify-center py-3 transition-colors",
+                  active ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-9 w-16 items-center justify-center rounded-full transition-colors",
+                    active && "bg-secondary text-secondary-foreground",
+                  )}
+                >
+                  <Icon className="size-5" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } }} onEnded={handleEnded} onError={() => { if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
 
-      <div className="player-dock fixed inset-x-3 bottom-3 z-30 mx-auto max-w-[1170px] rounded-2xl border border-white/[0.11] bg-[#1e1d22]/[0.94] shadow-2xl shadow-black/30 backdrop-blur-xl sm:inset-x-5 lg:bottom-5">
+      <div className="player-dock fixed inset-x-3 bottom-16 z-30 mx-auto max-w-4xl rounded-2xl border border-white/[0.11] bg-[#1e1d22]/[0.94] shadow-2xl shadow-black/30 backdrop-blur-xl sm:inset-x-5 sm:bottom-5">
         <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4"><div className="flex min-w-0 flex-1 items-center gap-3 sm:min-w-[190px]"><Cover track={currentTrack} className="size-11 rounded-xl" /><div className="min-w-0"><p className="truncate text-sm font-medium">{currentTrack.title}</p><p className="truncate text-xs text-muted-foreground">{currentTrack.artist}</p></div><button type="button" onClick={() => toggleLike(currentTrack.id)} className={cn("ml-1 hidden rounded-lg p-1.5 text-muted-foreground hover:text-orange-300 sm:block", liked.has(currentTrack.id) && "text-orange-400")} aria-label="Oblíbené"><Heart className={cn("size-4", liked.has(currentTrack.id) && "fill-current")} /></button></div><div className="order-3 w-full sm:order-none sm:flex sm:flex-1 sm:flex-col sm:gap-1.5"><div className="hidden items-center justify-center gap-5 sm:flex"><button type="button" onClick={() => setIsShuffled((value) => !value)} className={cn("p-1 text-muted-foreground hover:text-foreground", isShuffled && "text-orange-300")} aria-label="Náhodné pořadí"><Shuffle className="size-4" /></button><button type="button" onClick={playPrevious} className="p-1 text-muted-foreground hover:text-foreground" aria-label="Předchozí"><SkipBack className="size-4 fill-current" /></button><button type="button" onClick={() => playTrack(currentTrack.id)} className="flex size-9 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105" aria-label={isPlaying ? "Pozastavit" : "Přehrát"}>{isPlaying ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}</button><button type="button" onClick={playNext} className="p-1 text-muted-foreground hover:text-foreground" aria-label="Další"><SkipForward className="size-4 fill-current" /></button><button type="button" onClick={() => setRepeatMode((mode) => mode === "off" ? "all" : mode === "all" ? "one" : "off")} className={cn("p-1 text-muted-foreground hover:text-foreground", repeatMode !== "off" && "text-orange-300")} aria-label="Opakování"><Repeat2 className="size-4" /></button></div><div className="flex items-center gap-2"><span className="hidden w-9 text-right text-[10px] tabular-nums text-muted-foreground sm:block">{formatTime(currentTime)}</span><input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => { const value = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = value; setCurrentTime(value); }} className="player-range" aria-label="Pozice ve skladbě" style={{ "--range-progress": `${progress}%` } as React.CSSProperties} /><span className="w-9 text-[10px] tabular-nums text-muted-foreground">{formatTime(duration)}</span></div></div><div className="flex items-center gap-1 sm:min-w-[190px] sm:justify-end"><button type="button" className="flex size-9 items-center justify-center rounded-full bg-foreground text-background sm:hidden" onClick={() => playTrack(currentTrack.id)} aria-label={isPlaying ? "Pozastavit" : "Přehrát"}>{isPlaying ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}</button><button type="button" onClick={() => setIsMuted((value) => !value)} className="rounded-lg p-2 text-muted-foreground hover:text-foreground" aria-label={isMuted ? "Zapnout zvuk" : "Ztlumit"}>{isMuted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}</button><input type="range" min="0" max="1" step="0.01" value={isMuted ? 0 : volume} onChange={(event) => { setVolume(Number(event.target.value)); setIsMuted(false); }} className="volume-range hidden w-20 sm:block" aria-label="Hlasitost" style={{ "--range-progress": `${(isMuted ? 0 : volume) * 100}%` } as React.CSSProperties} /><button type="button" onClick={() => goToView("library")} className="hidden rounded-lg p-2 text-muted-foreground hover:text-foreground sm:block" aria-label="Knihovna"><ListMusic className="size-4" /></button></div></div><div className="absolute left-0 right-0 top-0 h-0.5 overflow-hidden rounded-full"><div className="h-full bg-orange-400 transition-[width]" style={{ width: `${progress}%` }} /></div>
       </div>
+
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        addonEnabled={readerAddon}
+        onAddonEnabledChange={handleAddonChange}
+        mediaPermission={mediaPermission}
+        onRequestMediaAccess={requestMediaAccess}
+      />
     </div>
   );
 }

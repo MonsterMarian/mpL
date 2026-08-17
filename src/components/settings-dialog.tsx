@@ -1,53 +1,127 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenText, Check, Download, Moon, Music2, RotateCcw, Settings, Sun } from "lucide-react";
+import { BookOpenText, Check, ChevronRight, Download, Moon, Music2, RefreshCw, RotateCcw, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
+import { cn } from "@/lib/utils";
+
+type Tab = "main" | "appearance" | "addons";
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "main", label: "Hlavní" },
+  { id: "appearance", label: "Vzhled" },
+  { id: "addons", label: "Addony" },
+];
 
 interface SettingsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   addonEnabled?: boolean;
   onAddonEnabledChange?: (enabled: boolean) => void;
   mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
   onRequestMediaAccess?: () => Promise<void> | void;
-  trigger?: React.ReactNode;
 }
 
 export function SettingsDialog({
+  open,
+  onOpenChange,
   addonEnabled = true,
   onAddonEnabledChange,
   mediaPermission = "unknown",
   onRequestMediaAccess,
-  trigger,
 }: SettingsDialogProps) {
-  const [open, setOpen] = React.useState(false);
-  const [url, setUrl] = React.useState("");
-  const [documentAddon, setDocumentAddon] = React.useState(addonEnabled);
-  const [theme, setTheme] = React.useState<"dark" | "light">("dark");
-  const [isRequestingMedia, setIsRequestingMedia] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<Tab>("main");
   
-  const [updateStatus, setUpdateStatus] = React.useState<string | null>(null);
-  const [currentVersion, setCurrentVersion] = React.useState<string | null>(null);
-
   React.useEffect(() => {
-    if (open) {
-      setUrl(liveUpdate.getUpdateUrl());
-      setCurrentVersion(liveUpdate.currentBundleVersion() || "APK verze");
-      setDocumentAddon(localStorage.getItem("microwins:reader_addon") !== "false");
-      setTheme(localStorage.getItem("microwins:theme") === "light" ? "light" : "dark");
+    if (!open) {
+      setActiveTab("main");
     }
   }, [open]);
 
-  const handleSave = () => {
-    liveUpdate.setUpdateUrl(url);
-    localStorage.setItem("microwins:reader_addon", documentAddon ? "true" : "false");
-    localStorage.setItem("microwins:theme", theme);
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    onAddonEnabledChange?.(documentAddon);
-    setOpen(false);
-  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Nastavení"
+      description="Úprava P/_ayer podle tvého poslechu."
+    >
+      <div className="flex flex-col gap-5">
+        <div className="flex gap-1 border-b">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
+                activeTab === tab.id
+                  ? "border-foreground font-medium text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "main" ? (
+          <div className="flex flex-col gap-5 animate-in-up">
+            <MediaSection 
+              mediaPermission={mediaPermission} 
+              onRequestMediaAccess={onRequestMediaAccess} 
+            />
+            <UpdateSection />
+          </div>
+        ) : activeTab === "appearance" ? (
+          <div className="flex flex-col gap-5 animate-in-up">
+            <Section title="Vzhled">
+              <ThemeChoice />
+            </Section>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-5 animate-in-up">
+            <Section title="Addony" hint="Vypnutá část zmizí i se svou záložkou; data zůstanou.">
+              <AddonChoice 
+                addonEnabled={addonEnabled} 
+                onAddonEnabledChange={onAddonEnabledChange} 
+              />
+            </Section>
+          </div>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      {children}
+      {hint ? <p className="px-1 text-xs text-muted-foreground">{hint}</p> : null}
+    </section>
+  );
+}
+
+function MediaSection({ 
+  mediaPermission, 
+  onRequestMediaAccess 
+}: { 
+  mediaPermission: string;
+  onRequestMediaAccess?: () => Promise<void> | void;
+}) {
+  const [isRequestingMedia, setIsRequestingMedia] = React.useState(false);
 
   const handleRequestMediaAccess = async () => {
     if (!onRequestMediaAccess || isRequestingMedia) return;
@@ -59,155 +133,227 @@ export function SettingsDialog({
     }
   };
 
-  const handleCheckUpdate = async () => {
-    setUpdateStatus("Hledám aktualizace...");
-    const res = await liveUpdate.checkForUpdate();
-    if (res.kind === "up-to-date") setUpdateStatus("Aplikace je aktuální.");
-    else if (res.kind === "downloaded") setUpdateStatus("Aktualizace stažena. Projeví se po restartu.");
-    else if (res.kind === "failed") setUpdateStatus("Chyba: " + res.message);
-    else setUpdateStatus("Nelze zkontrolovat (může běžet v prohlížeči).");
+  return (
+    <Section title="Hudba ze zařízení" hint="Povol přístup, ať P/_ayer najde stažené skladby v telefonu.">
+      <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium text-foreground">Lokální poslech</span>
+          <span className={cn("text-xs font-medium", mediaPermission === "granted" ? "text-win" : "text-muted-foreground")}>
+             {mediaPermission === "granted" ? "Povolený" : mediaPermission === "denied" ? "Zamítnutý" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}
+          </span>
+        </div>
+        <Button 
+          type="button" 
+          variant={mediaPermission === "granted" ? "outline" : "default"} 
+          disabled={isRequestingMedia || mediaPermission === "unavailable"} 
+          onClick={handleRequestMediaAccess}
+          className="mt-2"
+        >
+          {isRequestingMedia ? "Čekám…" : mediaPermission === "denied" ? "Otevřít nastavení" : mediaPermission === "granted" ? "Obnovit" : "Povolit přístup"}
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+function ThemeChoice() {
+  const [dark, setDark] = React.useState(true);
+
+  React.useEffect(() => setDark(document.documentElement.classList.contains("dark")), []);
+
+  const set = (next: boolean) => {
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem("microwins:theme", next ? "dark" : "light");
+    } catch {}
   };
 
-  const handleRevert = async () => {
-    if (confirm("Opravdu chcete zahodit všechny stažené aktualizace a vrátit se k původní verzi?")) {
-      await liveUpdate.revertToBundled();
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {[
+        { value: true, label: "Tmavé", icon: Moon },
+        { value: false, label: "Světlé", icon: Sun },
+      ].map(({ value, label, icon: Icon }) => (
+        <button
+          key={label}
+          type="button"
+          onClick={() => set(value)}
+          aria-pressed={dark === value}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors",
+            dark === value
+              ? "border-foreground/40 bg-accent font-medium"
+              : "text-muted-foreground hover:bg-accent/50",
+          )}
+        >
+          <Icon className="size-4" />
+          {label}
+          {dark === value ? <ChevronRight className="ml-auto size-3.5 opacity-40" /> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AddonChoice({ 
+  addonEnabled, 
+  onAddonEnabledChange 
+}: { 
+  addonEnabled: boolean;
+  onAddonEnabledChange?: (enabled: boolean) => void;
+}) {
+  const toggle = () => {
+    const next = !addonEnabled;
+    try {
+      localStorage.setItem("microwins:reader_addon", next ? "true" : "false");
+    } catch {}
+    onAddonEnabledChange?.(next);
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-pressed={addonEnabled}
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+          addonEnabled ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
+        )}
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">Čtečka dokumentů</span>
+          <span className="block text-xs text-muted-foreground">PDF a TXT soubory, offline čtení</span>
+        </span>
+        <span
+          className={cn(
+            "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+            addonEnabled ? "bg-orange-500" : "bg-muted-foreground/30",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-1 size-4 rounded-full bg-card shadow transition-[left] duration-200",
+              addonEnabled ? "left-6" : "left-1",
+            )}
+          />
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function UpdateSection() {
+  const [url, setUrl] = React.useState("");
+  const [current, setCurrent] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState<string | null>(null);
+  const [checking, setChecking] = React.useState(false);
+  const [statusMsg, setStatusMsg] = React.useState("");
+
+  const DEFAULT_URL = liveUpdate.DEFAULT_UPDATE_URL || "";
+
+  React.useEffect(() => {
+    setUrl(liveUpdate.getUpdateUrl());
+    setCurrent(liveUpdate.currentBundleVersion());
+    setPending(liveUpdate.pendingBundleVersion());
+  }, []);
+
+  const onApply = async () => {
+    const res = await liveUpdate.applyPendingUpdate();
+    if (res.error) {
+      setStatusMsg("Nasazení selhalo: " + res.error);
+      setPending(liveUpdate.pendingBundleVersion());
+      setCurrent(liveUpdate.currentBundleVersion());
+    } else if (!res.applied) {
+      setStatusMsg("Tahle verze už běží");
+      setPending(null);
+    }
+  };
+
+  const onCheck = async () => {
+    liveUpdate.setUpdateUrl(url);
+    setChecking(true);
+    const res = await liveUpdate.checkForUpdate();
+    setChecking(false);
+    setPending(liveUpdate.pendingBundleVersion());
+
+    if (res.kind === "downloaded") {
+      setStatusMsg("Aktualizace stažena. Změny se projeví po restartu.");
+    } else if (res.kind === "up-to-date") {
+      setStatusMsg("Máš nejnovější verzi.");
+    } else if (res.kind === "disabled") {
+      setStatusMsg("Chybí adresa aktualizací.");
+    } else {
+      setStatusMsg("Chyba: " + res.message);
     }
   };
 
   return (
-    <>
-      {trigger ? (
-        <span className="contents" onClick={() => setOpen(true)}>
-          {trigger}
-        </span>
-      ) : (
-        /* Záložní tlačítko sedí v toku stránky, ne absolutně - dřív padalo
-           pod status bar. 44px cíl, ať se do něj trefí prst. */
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Nastavení"
-          title="Nastavení"
-          className="size-11 rounded-full"
-          onClick={() => setOpen(true)}
-        >
-          <Settings className="size-5" />
+    <Section
+      title="Aktualizace z GitHubu"
+      hint="Appka si při startu sama stáhne novou verzi."
+    >
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          Adresa manifestu {url === DEFAULT_URL ? "(výchozí)" : "(vlastní)"}
+        </summary>
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onBlur={() => liveUpdate.setUpdateUrl(url)}
+          placeholder={DEFAULT_URL}
+          autoComplete="off"
+          spellCheck={false}
+          className="mt-2 font-mono text-xs"
+        />
+        {url !== DEFAULT_URL && (DEFAULT_URL as string) !== "" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setUrl(DEFAULT_URL);
+              liveUpdate.setUpdateUrl(DEFAULT_URL);
+            }}
+            className="mt-1.5 text-muted-foreground hover:text-foreground"
+          >
+            Vrátit výchozí adresu
+          </button>
+        ) : null}
+      </details>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" disabled={checking} onClick={onCheck}>
+          <RefreshCw className={cn("size-4 mr-2", checking && "animate-spin")} />
+          {checking ? "Hledám…" : "Zkontrolovat teď"}
         </Button>
-      )}
-      <Dialog 
-        open={open} 
-        onOpenChange={setOpen} 
-        title="Nastavení"
-        description="Uprav si P/_ayer podle svého poslechu."
-        className="max-w-lg"
-      >
-        <div className="flex flex-col gap-5">
-          <section className="rounded-2xl border bg-background/50 p-4">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
-                <Music2 className="size-4" />
-              </div>
-              <div>
-                <h3 className="font-semibold">Hudba v zařízení</h3>
-                <p className="text-xs text-muted-foreground">Skladby ze složky Hudba a Stažené</p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-4 rounded-xl border bg-card/70 p-3">
-              <div>
-                <p className="text-sm font-medium">Přístup k médiím</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {mediaPermission === "granted" ? "Přístup je povolený." : mediaPermission === "denied" ? "Přístup byl zamítnutý. Otevři nastavení aplikace." : mediaPermission === "unavailable" ? "V prohlížeči použij výběr souboru." : "Povol načtení lokální hudby."}
-                </p>
-              </div>
-              <Button type="button" size="sm" variant={mediaPermission === "granted" ? "secondary" : "win"} disabled={isRequestingMedia || mediaPermission === "unavailable"} onClick={handleRequestMediaAccess}>
-                {isRequestingMedia ? "Čekám…" : mediaPermission === "denied" ? "Nastavení" : mediaPermission === "granted" ? "Obnovit" : "Povolit"}
-              </Button>
-            </div>
-          </section>
+        {pending ? (
+          <Button size="sm" onClick={onApply}>
+            Nasadit {pending}
+          </Button>
+        ) : null}
+        <span className="tabular text-xs text-muted-foreground">
+          {pending ? `čeká ${pending}` : current ? `verze ${current}` : "verze z APK"}
+        </span>
+      </div>
+      
+      {statusMsg && <div className="text-xs text-orange-400 mt-1">{statusMsg}</div>}
 
-          <section className="rounded-2xl border bg-background/50 p-4">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
-                <BookOpenText className="size-4" />
-              </div>
-              <div>
-                <h3 className="font-semibold">Addony</h3>
-                <p className="text-xs text-muted-foreground">Rozšiř si Sonoru o čtení dokumentů</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={documentAddon}
-              onClick={() => setDocumentAddon((enabled) => !enabled)}
-              className="flex w-full items-center justify-between gap-4 rounded-xl border bg-card/70 p-3 text-left transition-colors hover:bg-accent"
-            >
-              <span>
-                <span className="block text-sm font-medium">Čtečka dokumentů</span>
-                <span className="text-xs text-muted-foreground">
-                  {documentAddon ? "PDF a TXT knihovna je zapnutá" : "Čtečka bude skrytá z navigace"}
-                </span>
-              </span>
-              <span className={"relative h-6 w-11 rounded-full transition-colors " + (documentAddon ? "bg-orange-500" : "bg-muted")}>
-                <span className={"absolute top-1 size-4 rounded-full bg-white shadow-sm transition-transform " + (documentAddon ? "translate-x-6" : "translate-x-1")} />
-              </span>
-            </button>
-          </section>
-
-          <section className="rounded-2xl border bg-background/50 p-4">
-            <div className="mb-3 flex items-center gap-3">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
-                {theme === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
-              </div>
-              <div>
-                <h3 className="font-semibold">Vzhled</h3>
-                <p className="text-xs text-muted-foreground">Klidný režim pro dlouhý poslech</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-1">
-              {(["dark", "light"] as const).map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  onClick={() => setTheme(option)}
-                  className={"flex h-9 items-center justify-center gap-2 rounded-lg text-xs font-medium transition-colors " + (theme === option ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-                >
-                  {option === "dark" ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
-                  {option === "dark" ? "Tmavý" : "Světlý"}
-                  {theme === option ? <Check className="size-3.5 text-orange-400" /> : null}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border bg-background/50 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold">Aktualizace z GitHubu</h3>
-                <p className="text-xs text-muted-foreground">Verze: {currentVersion}</p>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-medium text-muted-foreground">Adresa manifestu OTA</label>
-              <Input 
-                value={url} 
-                onChange={(e) => setUrl(e.target.value)} 
-              />
-            </div>
-            
-            <Button onClick={handleCheckUpdate} variant="secondary" className="mt-3 w-full">
-              <Download className="w-4 h-4" /> Zkontrolovat aktualizace
-            </Button>
-            {updateStatus && <div className="mt-2 text-xs font-medium text-orange-400">{updateStatus}</div>}
-            
-            <Button onClick={handleRevert} variant="ghost" className="mt-2 w-full text-destructive hover:text-destructive">
-              <RotateCcw className="w-4 h-4" /> Vrátit na výchozí APK
-            </Button>
-          </section>
-
-          <Button onClick={handleSave} className="h-11 w-full bg-orange-500 text-white hover:bg-orange-400">Uložit nastavení</Button>
-        </div>
-      </Dialog>
-    </>
+      {current || pending ? (
+        <button
+          type="button"
+          onClick={async () => {
+            if (confirm("Opravdu vrátit aplikaci na původní APK?")) {
+               await liveUpdate.revertToBundled();
+               setCurrent(null);
+               setPending(null);
+               setStatusMsg("Bude nasazena verze z APK po restartu.");
+            }
+          }}
+          className="self-start px-1 py-1 text-xs text-destructive hover:text-destructive/80"
+        >
+          Vrátit se k verzi z APK
+        </button>
+      ) : null}
+    </Section>
   );
 }
