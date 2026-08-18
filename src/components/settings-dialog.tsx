@@ -7,6 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
 import { clearErrors, readErrors, type LoggedError } from "@/lib/diagnostics";
+import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { cn } from "@/lib/utils";
 
 type Tab = "main" | "addons";
@@ -120,6 +121,7 @@ export function SettingsDialog({
               mediaPermission={mediaPermission} 
               onRequestMediaAccess={onRequestMediaAccess} 
             />
+            <SystemPlaybackSection open={open} />
             <UpdateSection />
             <ErrorSection open={open} />
           </div>
@@ -241,6 +243,66 @@ function AddonChoice({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Ovládání v notifikaci a na zamykací obrazovce.
+ *
+ * Nativní část přijde jen s novým APK - živá aktualizace veze pouze web. Bez
+ * téhle sekce se to pozná jedině tak, že „to nefunguje": volání do pluginu,
+ * který v APK není, tiše spadne a nikde se neukáže nic.
+ */
+function SystemPlaybackSection({ open }: { open: boolean }) {
+  const [support, setSupport] = React.useState<PlaybackSupport | null>(null);
+  const refresh = React.useCallback(() => {
+    void playbackSupport().then(setSupport);
+  }, []);
+
+  React.useEffect(() => {
+    if (open) refresh();
+  }, [open, refresh]);
+
+  if (!support || !support.native) return null;
+
+  if (!support.plugin) {
+    return (
+      <Section title="Ovládání v systému" hint="Nativní část se vyměňuje jen instalací APK, živá aktualizace ji nepřenese.">
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Chybí v téhle instalaci.</span> Přehrávač se v notifikaci
+            ani na zámku neukáže, dokud nenainstaluješ novější APK.
+          </p>
+        </div>
+      </Section>
+    );
+  }
+
+  const granted = support.notifications === "granted";
+  return (
+    <Section title="Ovládání v systému" hint="Název, obal, posuvník a tlačítka v notifikaci i na zamykací obrazovce.">
+      <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium text-foreground">Notifikace</span>
+          <span className={cn("text-xs font-medium", granted ? "text-win" : "text-muted-foreground")}>
+            {granted ? "Povolené" : support.notifications === "denied" ? "Zamítnuté" : "Čeká"}
+          </span>
+        </div>
+        {granted ? null : (
+          <Button
+            type="button"
+            className="mt-1"
+            onClick={async () => {
+              await askForNotifications();
+              refresh();
+            }}
+          >
+            Povolit notifikace
+          </Button>
+        )}
+      </div>
+    </Section>
   );
 }
 

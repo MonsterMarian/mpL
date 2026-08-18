@@ -31,6 +31,8 @@ interface PlaybackPlugin {
   update(options: NowPlaying): Promise<void>;
   stop(): Promise<void>;
   requestNotifications(): Promise<void>;
+  /** Dodává Capacitor sám podle deklarovaných oprávnění pluginu. */
+  checkPermissions(): Promise<{ notifications: "granted" | "denied" | "prompt" | "prompt-with-rationale" }>;
   addListener(
     event: "command",
     handler: (data: { action: string; positionMs?: number }) => void,
@@ -40,6 +42,51 @@ interface PlaybackPlugin {
 const Playback = registerPlugin<PlaybackPlugin>("Playback");
 
 let notificationsAsked = false;
+
+/**
+ * Co z ovládání v systému je vůbec k mání.
+ *
+ * Nativní část se do telefonu dostane jen s novým APK - živá aktualizace veze
+ * pouze web. Bez tohohle by se to poznalo jedině tak, že „to nefunguje":
+ * volání do neexistujícího pluginu tiše spadne a nikde se nic neukáže.
+ */
+export interface PlaybackSupport {
+  /** Běžíme v telefonu, ne v prohlížeči. */
+  native: boolean;
+  /** APK zná plugin Playback. */
+  plugin: boolean;
+  notifications: "granted" | "denied" | "prompt" | "unknown";
+}
+
+export async function playbackSupport(): Promise<PlaybackSupport> {
+  const native = Capacitor.isNativePlatform();
+  if (!native) return { native: false, plugin: false, notifications: "unknown" };
+
+  const plugin = Capacitor.isPluginAvailable("Playback");
+  if (!plugin) return { native: true, plugin: false, notifications: "unknown" };
+
+  try {
+    const state = await Playback.checkPermissions();
+    return {
+      native: true,
+      plugin: true,
+      notifications: state.notifications === "prompt-with-rationale" ? "prompt" : state.notifications,
+    };
+  } catch {
+    return { native: true, plugin: true, notifications: "unknown" };
+  }
+}
+
+/** Řekne si o notifikace na vyžádání - z Nastavení, ne mimochodem při přehrání. */
+export async function askForNotifications(): Promise<void> {
+  if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable("Playback")) return;
+  try {
+    notificationsAsked = true;
+    await Playback.requestNotifications();
+  } catch {
+    // Starší balík bez pluginu - není o co si říct.
+  }
+}
 
 export async function updateNowPlaying(state: NowPlaying): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
