@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  ArrowDownUp,
   BookOpenText,
   Bookmark,
   BookmarkCheck,
@@ -12,37 +11,65 @@ import {
   FileText,
   FileUp,
   Film,
-  Heart,
   Library,
-  ListMusic,
   Loader2,
-  Music2,
   Pause,
   Play,
   Plus,
-  Repeat2,
   Search,
   Settings,
-  Shuffle,
   SkipBack,
   SkipForward,
   Timer,
   TimerReset,
-  Upload,
-  Volume2,
-  VolumeX,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { SettingsDialog, loadAddons, type AddonId, type Addons } from "@/components/settings-dialog";
 import { VideoLibrary } from "@/components/video-library";
+import { LibraryView, type Browse, type LibraryTab } from "@/components/music/library-view";
+import { NowPlaying } from "@/components/music/now-playing";
+import { PlayerDock } from "@/components/music/player-dock";
+import { TrackMenu } from "@/components/music/track-menu";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
 import { MediaLibrary, NativeAudioTrack, canReadDeviceMedia, playableMediaSource } from "@/lib/media-library";
+import {
+  EMPTY_QUEUE,
+  appendToQueue,
+  buildQueue,
+  dropFromQueue,
+  filterTracks,
+  formatTime,
+  insertNext,
+  isSortKey,
+  nextTrackId,
+  previousTrackId,
+  reshuffleQueue,
+  sortTracks,
+  upcomingIds,
+  type LibraryFilter,
+  type PlayStats,
+  type Queue,
+  type RepeatMode,
+  type SortKey,
+  type Track,
+} from "@/lib/library";
+import {
+  addToPlaylist,
+  createPlaylist,
+  deletePlaylist,
+  forgetTrack as forgetTrackInPlaylists,
+  loadPlaylists,
+  removeFromPlaylist,
+  renamePlaylist,
+  savePlaylists,
+  type Playlist,
+} from "@/lib/playlists";
 import {
   buildTextPages,
   clampPage,
@@ -56,41 +83,12 @@ import {
 import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
+import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
+import { keepAlive, releaseKeepAlive } from "@/lib/playback-service";
+import { installErrorCapture } from "@/lib/diagnostics";
+import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
 
 type View = "library" | "reader" | "video";
-type LibraryFilter = "all" | "liked" | "local";
-type RepeatMode = "off" | "all" | "one";
-type SortKey = "added" | "played" | "title" | "titleDesc" | "artist" | "duration";
-
-interface Track {
-  id: string;
-  title: string;
-  artist: string;
-  album: string;
-  duration: string;
-  durationSeconds: number;
-  src: string;
-  /** Obal skladby, když nějaký má. Jinak `null` a nastoupí značka appky. */
-  artwork: string | null;
-  /** Kdy skladba přibyla do zařízení - podle toho řadí „Naposledy přidané". */
-  addedAt: number;
-  source: "device" | "local";
-}
-
-/** Kolikrát a kdy naposledy skladba hrála. Drží se na disku, přežije restart. */
-interface PlayStat {
-  count: number;
-  at: number;
-}
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: "played", label: "Nejposlouchanější" },
-  { key: "added", label: "Naposledy přidané" },
-  { key: "title", label: "Název A–Z" },
-  { key: "titleDesc", label: "Název Z–A" },
-  { key: "artist", label: "Interpret A–Z" },
-  { key: "duration", label: "Nejdelší" },
-];
 
 /** Volby časovače v minutách; 0 = dohrát rozjetou skladbu a skončit. */
 const SLEEP_OPTIONS = [15, 30, 45, 60, 0];
@@ -108,22 +106,6 @@ const EMPTY_TRACK: Track = {
   source: "device",
 };
 
-function formatTime(value: number) {
-  if (!Number.isFinite(value) || value < 0) return "0:00";
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.floor(value % 60).toString().padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
-
-/** Souhrn délky celé knihovny - v hlavičce dává smysl v hodinách, ne v sekundách. */
-function formatTotal(seconds: number) {
-  if (seconds <= 0) return null;
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  if (!hours) return `${minutes} min`;
-  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
-}
-
 function mapNativeTrack(track: NativeAudioTrack): Track {
   return {
     id: `device-${track.id}`,
@@ -139,180 +121,6 @@ function mapNativeTrack(track: NativeAudioTrack): Track {
   };
 }
 
-/**
- * Obal skladby. Když ho skladba má, je vidět on. Když ne, nastoupí u všech
- * skladeb stejně značka appky - tichá, aby v seznamu nepřebíjela názvy.
- */
-function Cover({ track, className }: { track: Track | null; className?: string }) {
-  const artwork = track?.artwork ?? null;
-  const [broken, setBroken] = React.useState(false);
-
-  // Obal alba nemusí jít načíst (soubor zmizel, prázdný záznam v MediaStore).
-  // Nová adresa dostane novou šanci, jinak by značka zůstala i tam, kde obal je.
-  React.useEffect(() => setBroken(false), [artwork]);
-
-  if (!artwork || broken) {
-    return (
-      <div
-        className={cn("flex shrink-0 items-center justify-center overflow-hidden bg-white/[0.05]", className)}
-        aria-hidden="true"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/, optimalizace Next.js tu nemá co dělat */}
-        <img src="/logo-mark.png" alt="" className="size-[62%] opacity-90" />
-      </div>
-    );
-  }
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element -- blob:/content: adresy, optimalizace Next.js tu nemá co dělat
-    <img
-      src={artwork}
-      alt=""
-      aria-hidden="true"
-      onError={() => setBroken(true)}
-      className={cn("shrink-0 overflow-hidden bg-white/[0.05] object-cover", className)}
-    />
-  );
-}
-
-/**
- * Výběr řazení. Nabídka visí u tlačítka, ne v dialogu - řazení se přepíná
- * často a plné okno přes celý displej by kvůli jednomu kliknutí bylo moc.
- */
-function SortMenu({
-  value,
-  open,
-  onOpenChange,
-  onChange,
-}: {
-  value: SortKey;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChange: (key: SortKey) => void;
-}) {
-  const holder = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const onPointer = (event: MouseEvent) => {
-      if (!holder.current?.contains(event.target as Node)) onOpenChange(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onOpenChange(false);
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, onOpenChange]);
-
-  const active = SORT_OPTIONS.find((option) => option.key === value) ?? SORT_OPTIONS[0];
-
-  return (
-    <div ref={holder} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Řazení: ${active.label}`}
-        title={`Řazení: ${active.label}`}
-        className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowDownUp className="size-3.5 shrink-0" />
-        <span className="hidden whitespace-nowrap sm:inline">{active.label}</span>
-      </button>
-      {open ? (
-        <div role="listbox" className="animate-in-up absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border bg-popover p-1 shadow-xl">
-          {SORT_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              role="option"
-              aria-selected={option.key === value}
-              onClick={() => {
-                onChange(option.key);
-                onOpenChange(false);
-              }}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/[0.06]",
-                option.key === value ? "text-brand" : "text-muted-foreground",
-              )}
-            >
-              <Check className={cn("size-3.5 shrink-0", option.key === value ? "opacity-100" : "opacity-0")} />
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function Equalizer({ active = false }: { active?: boolean }) {
-  return (
-    <span className={cn("flex h-4 items-end gap-0.5", active && "equalizer-active")} aria-hidden="true">
-      <i className="h-2 w-0.5 rounded-full bg-brand" />
-      <i className="h-4 w-0.5 rounded-full bg-brand" />
-      <i className="h-3 w-0.5 rounded-full bg-brand" />
-      <i className="h-1.5 w-0.5 rounded-full bg-brand" />
-    </span>
-  );
-}
-
-function TrackRow({
-  track,
-  active,
-  liked,
-  plays,
-  onPlay,
-  onLike,
-}: {
-  track: Track;
-  active: boolean;
-  liked: boolean;
-  plays: number;
-  onPlay: () => void;
-  onLike: () => void;
-}) {
-  return (
-    <div className="group flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]">
-      <button type="button" onClick={onPlay} className="relative shrink-0" aria-label={`Přehrát ${track.title}`}>
-        <Cover track={track} className="size-12 rounded-xl" />
-        <span className={cn("absolute inset-0 flex items-center justify-center rounded-xl bg-black/50 text-white transition-opacity", active ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
-          {active ? <Pause className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-        </span>
-      </button>
-      <button type="button" onClick={onPlay} className="min-w-0 flex-1 text-left">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className={cn("truncate text-sm", active ? "font-medium text-brand" : "font-medium")}>{track.title}</span>
-          {active ? <Equalizer active /> : null}
-        </span>
-        <span className="block truncate text-xs text-muted-foreground">
-          {track.artist}
-          {plays > 0 ? <span className="tabular-nums"> · {plays}× přehráno</span> : null}
-        </span>
-      </button>
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{track.duration}</span>
-      <button
-        type="button"
-        onClick={onLike}
-        className={cn(
-          "shrink-0 rounded-lg p-2 transition-colors hover:text-brand",
-          // Srdce se drží zpátky, dokud na něj uživatel nesáhne - v klidném
-          // seznamu nemá co dělat řada stejných ikon.
-          liked ? "text-brand" : "text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
-        )}
-        aria-label={liked ? "Odebrat z oblíbených" : "Přidat do oblíbených"}
-      >
-        <Heart className={cn("size-4", liked && "fill-current")} />
-      </button>
-    </div>
-  );
-}
-
 export default function HomePage() {
   const { toast } = useToast();
   const [activeView, setActiveView] = React.useState<View>("library");
@@ -321,18 +129,30 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
-  const [volume, setVolume] = React.useState(0.78);
-  const [isMuted, setIsMuted] = React.useState(false);
   const [isShuffled, setIsShuffled] = React.useState(false);
   const [repeatMode, setRepeatMode] = React.useState<RepeatMode>("off");
   const [query, setQuery] = React.useState("");
   const [libraryFilter, setLibraryFilter] = React.useState<LibraryFilter>("all");
   const [sortKey, setSortKey] = React.useState<SortKey>("added");
-  const [sortOpen, setSortOpen] = React.useState(false);
   const [liked, setLiked] = React.useState<Set<string>>(new Set());
   /** Statistika poslechu podle id skladby - živí řazení „Nejposlouchanější". */
-  const [playStats, setPlayStats] = React.useState<Record<string, PlayStat>>({});
+  const [playStats, setPlayStats] = React.useState<PlayStats>({});
   const [storageReady, setStorageReady] = React.useState(false);
+  /**
+   * Fronta přehrávání. Vzniká z toho, na co uživatel klepl - ze seznamu,
+   * z alba, z playlistu - a dál žije vlastním životem: „přehrát jako další"
+   * ji mění, aniž by se pod tím musel měnit seznam na obrazovce.
+   */
+  const [queue, setQueue] = React.useState<Queue>(EMPTY_QUEUE);
+  const [playlists, setPlaylists] = React.useState<Playlist[]>([]);
+  /** Skladba přes celou obrazovku - otevírá ji klepnutí na to, co hraje. */
+  const [nowPlayingOpen, setNowPlayingOpen] = React.useState(false);
+  /** Nabídka u skladby; `null` = zavřená. */
+  const [menuTrack, setMenuTrack] = React.useState<Track | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
+  const [libraryTab, setLibraryTab] = React.useState<LibraryTab>("tracks");
+  /** Otevřené album, interpret nebo playlist. */
+  const [browse, setBrowse] = React.useState<Browse | null>(null);
   /** Zapnuté addony. Seznam i klíče v úložišti drží `settings-dialog`. */
   const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true });
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
@@ -371,44 +191,21 @@ export default function HomePage() {
   const speaker = React.useRef<Speaker | null>(null);
 
   const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? EMPTY_TRACK;
+  const hasTrack = currentTrack.id !== EMPTY_TRACK.id;
 
-  /**
-   * Co je vidět v seznamu - a zároveň fronta přehrávání. Když si uživatel
-   * pustí Oblíbené, „další skladba" musí zůstat v oblíbených; jinak by
-   * tlačítko vpřed hrálo něco, co na obrazovce vůbec není.
-   */
-  const visibleTracks = React.useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const filtered = tracks.filter((track) => {
-      const matchesQuery = !needle || `${track.title} ${track.artist} ${track.album}`.toLowerCase().includes(needle);
-      const matchesFilter =
-        libraryFilter === "all" || (libraryFilter === "liked" ? liked.has(track.id) : track.source === "local");
-      return matchesQuery && matchesFilter;
-    });
+  /** Co je vidět v seznamu skladeb - po hledání, filtru a řazení. */
+  const visibleTracks = React.useMemo(
+    () => sortTracks(filterTracks(tracks, query, libraryFilter, liked), sortKey, playStats),
+    [tracks, query, libraryFilter, liked, sortKey, playStats],
+  );
 
-    const byTitle = (a: Track, b: Track) => a.title.localeCompare(b.title, "cs");
-    // Druhé kritérium je vždycky název, ať se seznam při shodě neházel sem tam.
-    return filtered.sort((a, b) => {
-      switch (sortKey) {
-        case "played":
-          return (playStats[b.id]?.count ?? 0) - (playStats[a.id]?.count ?? 0) || byTitle(a, b);
-        case "added":
-          return b.addedAt - a.addedAt || byTitle(a, b);
-        case "titleDesc":
-          return byTitle(b, a);
-        case "artist":
-          return a.artist.localeCompare(b.artist, "cs") || byTitle(a, b);
-        case "duration":
-          return b.durationSeconds - a.durationSeconds || byTitle(a, b);
-        default:
-          return byTitle(a, b);
-      }
-    });
-  }, [tracks, query, libraryFilter, liked, sortKey, playStats]);
-
-  // Hledání frontu zužuje jen zdánlivě - když je puštěná skladba mimo výběr,
-  // pokračuje se celou knihovnou, aby přehrávání neuvázlo.
-  const queue = visibleTracks.some((track) => track.id === currentTrackId) ? visibleTracks : tracks;
+  /** Co ve frontě čeká. Skladby, které mezitím ze zařízení zmizely, se přeskočí. */
+  const upcoming = React.useMemo(() => {
+    const byId = new Map(tracks.map((track) => [track.id, track]));
+    return upcomingIds(queue, currentTrackId)
+      .map((id) => byId.get(id))
+      .filter((track): track is Track => Boolean(track));
+  }, [queue, currentTrackId, tracks]);
 
   const activeDoc = documents.find((doc) => doc.id === documentId_) ?? null;
   const documentPages: DocumentPage[] = activeDoc?.pages ?? [];
@@ -491,14 +288,16 @@ export default function HomePage() {
     if (savedStats) {
       try {
         const parsed: unknown = JSON.parse(savedStats);
-        if (parsed && typeof parsed === "object") setPlayStats(parsed as Record<string, PlayStat>);
+        if (parsed && typeof parsed === "object") setPlayStats(parsed as PlayStats);
       } catch {
         // Rozbitá statistika se zahodí, poslech kvůli ní stát nebude.
       }
     }
 
     const savedSort = localStorage.getItem("microwins:sort");
-    if (SORT_OPTIONS.some((option) => option.key === savedSort)) setSortKey(savedSort as SortKey);
+    if (isSortKey(savedSort)) setSortKey(savedSort);
+
+    setPlaylists(loadPlaylists());
 
     // Kde uživatel skončil. Skladba se jen připraví a nastaví čas - hrát začne
     // až na jeho pokyn, prohlížeč sám od sebe zvuk stejně nepustí.
@@ -541,6 +340,10 @@ export default function HomePage() {
     if (storageReady) localStorage.setItem("microwins:sort", sortKey);
   }, [sortKey, storageReady]);
 
+  React.useEffect(() => {
+    if (storageReady) savePlaylists(playlists);
+  }, [playlists, storageReady]);
+
   /** Návrat tam, kde se skončilo. Jde jen o skladby, které v zařízení pořád jsou. */
   React.useEffect(() => {
     const resume = resumeRef.current;
@@ -582,6 +385,23 @@ export default function HomePage() {
     }
   }, [currentTrackId]);
 
+  /**
+   * Dokud hraje hudba, drží appku naživu služba v popředí. Bez ní Android
+   * proces na pozadí sestřelí a poslech skončí uprostřed skladby.
+   */
+  React.useEffect(() => {
+    // Se zpožděním schválně: Android hlídá, že služba naskočí do popředí do
+    // pěti vteřin, a rozklepané pauza/přehrát by ji spouštělo a rušilo naráz.
+    // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
+    const timer = window.setTimeout(() => {
+      if (isPlaying && hasTrack) void keepAlive(currentTrack.title, currentTrack.artist);
+      else void releaseKeepAlive();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [isPlaying, hasTrack, currentTrack.title, currentTrack.artist]);
+
+  React.useEffect(() => () => void releaseKeepAlive(), []);
+
   /** Odpočet časovače. Vteřinový tik stačí - vyšší přesnost by nikdo nepoznal. */
   React.useEffect(() => {
     if (sleepAt === null) {
@@ -622,7 +442,7 @@ export default function HomePage() {
       artist: currentTrack.artist,
       album: currentTrack.album,
       // Bez obalu jde do notifikace značka appky, ne prázdné místo.
-      artwork: [{ src: currentTrack.artwork ?? "/logo-mark.png", sizes: "512x512", type: "image/png" }],
+      artwork: [{ src: currentTrack.artwork ?? "/logo-brand.png", sizes: "512x512", type: "image/png" }],
     });
     session.playbackState = isPlaying ? "playing" : "paused";
   }, [currentTrack, isPlaying]);
@@ -664,10 +484,6 @@ export default function HomePage() {
   }, []);
 
   React.useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = isMuted ? 0 : volume;
-  }, [volume, isMuted]);
-
-  React.useEffect(() => {
     return () => {
       localObjectUrls.current.forEach((url) => URL.revokeObjectURL(url));
       speaker.current?.stop();
@@ -687,7 +503,7 @@ export default function HomePage() {
       const audio = audioRef.current;
       if (event.code === "Space") {
         event.preventDefault();
-        playTrack(currentTrack.id);
+        togglePlayback();
         return;
       }
       if (!audio || currentTrack.id === EMPTY_TRACK.id) return;
@@ -708,6 +524,63 @@ export default function HomePage() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  /**
+   * Nativní start appky: splash pryč, lišta v barvě appky a živá aktualizace.
+   * Nejdřív se nasadí balík stažený minule, teprve pak se kouká po novém -
+   * po nasazení se stejně překresluje celé WebView.
+   */
+  React.useEffect(() => {
+    // Odchyt chyb jako první: cokoliv, co spadne pod ním, má být kde přečíst.
+    installErrorCapture();
+    void hideSplash();
+    void syncStatusBar();
+    markBootSucceeded();
+    void applyPendingUpdate().then((result) => {
+      if (!result.applied) void checkForUpdate();
+    });
+  }, []);
+
+  /**
+   * Hardwarové Zpět zavírá to, co je zrovna navrchu. Na knihovně se nechá
+   * systém appku ukončit - tak se chová každá Android appka.
+   */
+  const handleBack = React.useRef<() => boolean>(() => false);
+  handleBack.current = () => {
+    if (menuTrack) {
+      setMenuTrack(null);
+      return true;
+    }
+    if (sleepOpen) {
+      setSleepOpen(false);
+      return true;
+    }
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return true;
+    }
+    if (nowPlayingOpen) {
+      setNowPlayingOpen(false);
+      return true;
+    }
+    if (browse) {
+      setBrowse(null);
+      return true;
+    }
+    if (activeView !== "library") {
+      setActiveView("library");
+      return true;
+    }
+    return false;
+  };
+
+  React.useEffect(() => {
+    let cleanup = () => {};
+    void registerBackButton(() => handleBack.current()).then((fn) => {
+      cleanup = fn;
+    });
+    return () => cleanup();
+  }, []);
+
   const toggleLike = (trackId: string) => {
     setLiked((previous) => {
       const next = new Set(previous);
@@ -719,6 +592,8 @@ export default function HomePage() {
 
   /** Nová skladba se počítá do statistiky - z ní žije řazení podle poslechu. */
   const startTrack = (trackId: string) => {
+    // Hudba a předčítání se v jednom přehrávači nepřekřikují.
+    stopReading();
     setCurrentTrackId(trackId);
     setIsPlaying(true);
     setPlayStats((previous) => ({
@@ -727,42 +602,91 @@ export default function HomePage() {
     }));
   };
 
-  const playTrack = (trackId: string) => {
-    if (trackId === EMPTY_TRACK.id) return;
-    // Hudba a předčítání se v jednom přehrávači nepřekřikují.
-    stopReading();
-    if (trackId === currentTrackId) {
-      if (isPlaying) {
-        audioRef.current?.pause();
-        setIsPlaying(false);
-      } else {
-        audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {
-          toast({ tone: "warn", title: "Skladbu se nepodařilo spustit", description: "Soubor už nemusí být dostupný v zařízení." });
-        });
-      }
+  const togglePlayback = () => {
+    if (!hasTrack) return;
+    if (isPlaying) {
+      audioRef.current?.pause();
+      setIsPlaying(false);
       return;
     }
+    stopReading();
+    audioRef.current
+      ?.play()
+      .then(() => setIsPlaying(true))
+      .catch(() => {
+        toast({ tone: "warn", title: "Skladbu se nepodařilo spustit", description: "Soubor už nemusí být dostupný v zařízení." });
+      });
+  };
+
+  /**
+   * Klepnutí na řádek v seznamu. Cizí skladba se pustí a seznam se stane
+   * frontou; ta rozehraná se místo toho otevře přes celou obrazovku - jinak
+   * by klepnutí na to, co zrovna hraje, nemělo kam vést.
+   */
+  const pressTrack = (trackId: string, queueIds: string[]) => {
+    if (trackId === currentTrackId) {
+      setNowPlayingOpen(true);
+      return;
+    }
+    setQueue(buildQueue(queueIds, trackId, isShuffled));
     startTrack(trackId);
   };
 
+  /** Přehrát celé album, interpreta nebo playlist. */
+  const playCollection = (trackIds: string[], shuffle: boolean) => {
+    if (!trackIds.length) return;
+    const startId = shuffle ? trackIds[Math.floor(Math.random() * trackIds.length)] : trackIds[0];
+    if (shuffle) setIsShuffled(true);
+    setQueue(buildQueue(trackIds, startId, shuffle || isShuffled));
+    startTrack(startId);
+  };
+
+  /**
+   * Fronta je prázdná jen do prvního kliknutí - do té doby (a po restartu, kdy
+   * se vrací jen poslední skladba) zastoupí seznam na obrazovce. Přes `useMemo`
+   * schválně: náhradní frontu při zapnutém náhodném pořadí míchá `buildQueue`
+   * a při každém překreslení by vyšla jinak.
+   */
+  const activeQueue = React.useMemo(
+    () => (queue.ids.length ? queue : buildQueue(visibleTracks.map((track) => track.id), currentTrackId ?? "", isShuffled)),
+    [queue, visibleTracks, currentTrackId, isShuffled],
+  );
+
   const playNext = () => {
-    if (!queue.length) return;
-    stopReading();
-    const index = queue.findIndex((track) => track.id === currentTrackId);
-    const nextIndex = isShuffled ? Math.floor(Math.random() * queue.length) : (index + 1) % queue.length;
-    startTrack(queue[nextIndex].id);
+    const next = nextTrackId(activeQueue, currentTrackId, true);
+    if (!next) return;
+    if (!queue.ids.length) setQueue(activeQueue);
+    startTrack(next);
   };
 
   const playPrevious = () => {
-    if (!queue.length) return;
-    stopReading();
+    // Po pár vteřinách znamená „zpět" skok na začátek skladby, ne o skladbu dřív.
     if (audioRef.current && currentTime > 4) {
       audioRef.current.currentTime = 0;
       setCurrentTime(0);
       return;
     }
-    const index = queue.findIndex((track) => track.id === currentTrackId);
-    startTrack(queue[(index - 1 + queue.length) % queue.length].id);
+    const previous = previousTrackId(activeQueue, currentTrackId);
+    if (!previous) return;
+    if (!queue.ids.length) setQueue(activeQueue);
+    startTrack(previous);
+  };
+
+  const toggleShuffle = () => {
+    const next = !isShuffled;
+    setIsShuffled(next);
+    setQueue((previous) => reshuffleQueue(previous, currentTrackId, next));
+  };
+
+  const seekTo = (seconds: number) => {
+    if (audioRef.current) audioRef.current.currentTime = seconds;
+    setCurrentTime(seconds);
+  };
+
+  const skipBy = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    seekTo(Math.min(Math.max(0, audio.currentTime + seconds), audio.duration || duration || 0));
   };
 
   const handleEnded = () => {
@@ -781,15 +705,112 @@ export default function HomePage() {
       }
       return;
     }
-    if (repeatMode === "off" && queue.findIndex((track) => track.id === currentTrackId) === queue.length - 1) {
+    // Doběhnutá skladba se ptá opakování: na konci fronty se bez něj končí.
+    const next = nextTrackId(activeQueue, currentTrackId, repeatMode === "all");
+    if (!next) {
       setIsPlaying(false);
       setCurrentTime(0);
       return;
     }
-    playNext();
+    if (!queue.ids.length) setQueue(activeQueue);
+    startTrack(next);
   };
 
   controls.current = { next: playNext, previous: playPrevious };
+
+  // --- fronta, playlisty a mazání --------------------------------------------
+
+  const queueAction = (track: Track, where: "next" | "end") => {
+    setQueue((previous) => {
+      const base = previous.ids.length ? previous : activeQueue;
+      return where === "next"
+        ? insertNext(base, [track.id], currentTrackId)
+        : appendToQueue(base, [track.id], currentTrackId);
+    });
+    setMenuTrack(null);
+    toast({
+      tone: "info",
+      title: where === "next" ? "Zařazeno jako další" : "Přidáno do fronty",
+      description: track.title,
+    });
+  };
+
+  const addTrackToPlaylist = (playlistId: string, track: Track) => {
+    setPlaylists((previous) => addToPlaylist(previous, playlistId, [track.id]));
+    setMenuTrack(null);
+    const name = playlists.find((playlist) => playlist.id === playlistId)?.name;
+    toast({ tone: "win", title: "Přidáno do playlistu", description: name ?? track.title });
+  };
+
+  const createPlaylistWith = (name: string, track?: Track) => {
+    setPlaylists((previous) => createPlaylist(previous, name, track ? [track.id] : []));
+    if (track) setMenuTrack(null);
+    toast({ tone: "win", title: "Playlist založen", description: name });
+  };
+
+  /**
+   * Skladba pryč z knihovny.
+   *
+   * Rozehraná skladba nejdřív předá štafetu další ve frontě - kdyby se jen
+   * vymazala, přehrávač by zůstal viset na něčem, co už neexistuje.
+   */
+  const forgetTrack = (trackId: string) => {
+    if (trackId === currentTrackId) {
+      const next = nextTrackId(activeQueue, currentTrackId, false);
+      if (next) startTrack(next);
+      else {
+        audioRef.current?.pause();
+        setIsPlaying(false);
+        setCurrentTrackId(null);
+        setNowPlayingOpen(false);
+      }
+    }
+    setTracks((previous) => previous.filter((track) => track.id !== trackId));
+    setQueue((previous) => dropFromQueue(previous, trackId));
+    setPlaylists((previous) => forgetTrackInPlaylists(previous, trackId));
+    setLiked((previous) => {
+      if (!previous.has(trackId)) return previous;
+      const next = new Set(previous);
+      next.delete(trackId);
+      return next;
+    });
+    setPlayStats((previous) => {
+      if (!previous[trackId]) return previous;
+      const next = { ...previous };
+      delete next[trackId];
+      return next;
+    });
+  };
+
+  /**
+   * Smazání souboru ze zařízení. Od Androidu 11 se ptá systém vlastním oknem,
+   * takže odmítnutí není chyba - skladba prostě zůstane, kde byla.
+   */
+  const deleteTrack = async (track: Track) => {
+    const fromDevice = track.source === "device" && canReadDeviceMedia();
+    setDeleting(true);
+    try {
+      if (fromDevice) {
+        const result = await MediaLibrary.deleteAudio({ id: track.id.replace(/^device-/, "") });
+        if (!result?.deleted) {
+          toast({ tone: "info", title: "Skladba zůstává", description: "Mazání nebylo potvrzené." });
+          return;
+        }
+      }
+      forgetTrack(track.id);
+      toast({
+        tone: "win",
+        title: fromDevice ? "Skladba smazána" : "Odebráno z knihovny",
+        description: track.title,
+      });
+    } catch (error) {
+      console.error("Skladbu se nepodařilo smazat", error);
+      toast({ tone: "warn", title: "Smazání selhalo", description: "Soubor se nepodařilo odstranit ze zařízení." });
+    } finally {
+      setDeleting(false);
+      setMenuTrack(null);
+    }
+  };
 
   const startSleepTimer = (minutes: number) => {
     setSleepOpen(false);
@@ -841,6 +862,7 @@ export default function HomePage() {
 
     setTracks((previous) => [...addedTracks, ...previous]);
     // Přes startTrack, ať se i tenhle poslech počítá do statistiky.
+    setQueue(buildQueue(addedTracks.map((track) => track.id), addedTracks[0].id, isShuffled));
     startTrack(addedTracks[0].id);
     toast({ tone: "win", title: `${addedTracks.length} ${addedTracks.length === 1 ? "skladba přidána" : "skladby přidány"}`, description: "Najdeš je mezi skladbami." });
   };
@@ -1042,14 +1064,13 @@ export default function HomePage() {
 
   /** Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne. */
   const views: { id: View; label: string; icon: typeof Library }[] = [
-    { id: "library", label: "Skladby", icon: Library },
+    { id: "library", label: "Knihovna", icon: Library },
     ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
     ...(addons.video ? [{ id: "video" as const, label: "Video", icon: Film }] : []),
   ];
 
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const librarySeconds = tracks.reduce((total, track) => total + track.durationSeconds, 0);
   const sleepActive = sleepAt !== null || sleepAfterTrack;
+  const sleepLabel = sleepAt !== null ? `${Math.ceil(sleepLeft / 60000)} min` : sleepAfterTrack ? "do konce" : null;
 
   const goToView = (view: View) => {
     if (!views.some((v) => v.id === view)) return;
@@ -1124,97 +1145,41 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="mw-pad-nav mx-auto w-full max-w-4xl flex-1 px-4 pt-6 pb-32">
+      <main className="mw-pad-nav mx-auto w-full max-w-4xl flex-1 px-4 pt-6">
         {activeView === "library" ? (
-          <section className="animate-in-up">
-            <div className="mb-6">
-              <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Skladby</h1>
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                {tracks.length} {tracks.length === 1 ? "skladba" : "skladeb"}
-                {formatTotal(librarySeconds) ? ` · ${formatTotal(librarySeconds)}` : ""}
-              </p>
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => visibleTracks[0] && startTrack(visibleTracks[0].id)}
-                  disabled={!visibleTracks.length}
-                  className="flex h-11 items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
-                >
-                  <Play className="size-4 fill-current" /> Přehrát
-                </button>
-                <label className="flex h-11 cursor-pointer items-center gap-2 rounded-full border px-5 text-sm font-medium transition-colors hover:bg-accent">
-                  <Plus className="size-4" /> Přidat
-                  <input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" />
-                </label>
-                {mediaPermission !== "unavailable" ? (
-                  <button
-                    type="button"
-                    onClick={requestMediaAccess}
-                    disabled={isLoadingMedia}
-                    aria-label={mediaPermission === "denied" ? "Otevřít nastavení oprávnění" : "Obnovit knihovnu"}
-                    title={mediaPermission === "denied" ? "Otevřít nastavení oprávnění" : "Obnovit knihovnu"}
-                    className="flex size-11 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-                  >
-                    {isLoadingMedia ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex gap-1 rounded-full bg-white/[0.04] p-1">
-                {(["all", "liked", "local"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setLibraryFilter(filter)}
-                    className={cn(
-                      "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                      libraryFilter === filter ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {filter === "all" ? "Vše" : filter === "liked" ? "Oblíbené" : "Moje soubory"}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1 sm:w-56">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat" className="h-9 rounded-full border-white/10 bg-white/[0.04] pl-9 text-xs" />
-                </div>
-                <SortMenu value={sortKey} open={sortOpen} onOpenChange={setSortOpen} onChange={setSortKey} />
-              </div>
-            </div>
-            {visibleTracks.length ? (
-              <div className="-mx-2">{visibleTracks.map((track) => <TrackRow key={track.id} track={track} active={track.id === currentTrackId && isPlaying} liked={liked.has(track.id)} plays={playStats[track.id]?.count ?? 0} onPlay={() => playTrack(track.id)} onLike={() => toggleLike(track.id)} />)}</div>
-            ) : (
-              <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 px-6 text-center">
-                <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-white/[0.05] text-muted-foreground">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/ */}
-                  {tracks.length ? <Heart className="size-5" /> : <img src="/logo-mark.png" alt="" className="size-8 opacity-90" />}
-                </div>
-                <p className="font-medium">{tracks.length ? "Tady je zatím ticho." : mediaPermission === "denied" ? "Přístup k hudbě je vypnutý" : "Zatím tu nejsou žádné skladby"}</p>
-                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                  {tracks.length
-                    ? "Zkus změnit filtr nebo přidat vlastní hudbu."
-                    : mediaPermission === "denied"
-                      ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio."
-                      : mediaPermission === "unavailable"
-                        ? "V prohlížeči hudbu v telefonu nevidím - vyber soubory ručně."
-                        : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}
-                </p>
-                {/* Bez skladeb je tohle jediná cesta dál - proto tu obě tlačítka zůstávají. */}
-                {tracks.length ? null : (
-                  <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-                    {mediaPermission !== "unavailable" ? (
-                      <button type="button" onClick={requestMediaAccess} className="inline-flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-xs font-semibold text-black transition-opacity hover:opacity-90">{mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}</button>
-                    ) : null}
-                    <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"><Upload className="size-3.5" /> Vybrat soubory<input type="file" accept="audio/*" multiple onChange={handleAudioUpload} className="hidden" /></label>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
+          <LibraryView
+            tracks={tracks}
+            visibleTracks={visibleTracks}
+            liked={liked}
+            playStats={playStats}
+            currentTrackId={currentTrackId}
+            isPlaying={isPlaying}
+            query={query}
+            onQueryChange={setQuery}
+            sortKey={sortKey}
+            onSortChange={setSortKey}
+            filter={libraryFilter}
+            onFilterChange={setLibraryFilter}
+            tab={libraryTab}
+            onTabChange={setLibraryTab}
+            browse={browse}
+            onBrowseChange={setBrowse}
+            playlists={playlists}
+            mediaPermission={mediaPermission}
+            isLoadingMedia={isLoadingMedia}
+            onRequestMediaAccess={() => void requestMediaAccess()}
+            onUpload={handleAudioUpload}
+            onPressTrack={pressTrack}
+            onToggleTrack={togglePlayback}
+            onMenu={setMenuTrack}
+            onPlayCollection={playCollection}
+            onCreatePlaylist={(name) => createPlaylistWith(name)}
+            onRenamePlaylist={(id, name) => setPlaylists((previous) => renamePlaylist(previous, id, name))}
+            onDeletePlaylist={(id) => setPlaylists((previous) => deletePlaylist(previous, id))}
+            onRemoveFromPlaylist={(playlistId, trackId) =>
+              setPlaylists((previous) => removeFromPlaylist(previous, playlistId, trackId))
+            }
+          />
         ) : null}
 
         {activeView === "reader" && addons.reader ? (
@@ -1401,9 +1366,68 @@ export default function HomePage() {
 
       <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={handleEnded} onError={() => { if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
 
-      <div className="player-dock fixed inset-x-3 bottom-16 z-30 mx-auto max-w-4xl rounded-2xl border border-white/[0.11] shadow-2xl shadow-black/30 backdrop-blur-xl sm:inset-x-5 sm:bottom-5">
-        <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4"><div className="flex min-w-0 flex-1 items-center gap-3 sm:min-w-[190px]"><Cover track={currentTrack} className="size-11 rounded-xl" /><div className="min-w-0"><p className="truncate text-sm font-medium">{currentTrack.title}</p><p className="truncate text-xs text-muted-foreground">{currentTrack.artist}</p></div><button type="button" onClick={() => toggleLike(currentTrack.id)} className={cn("ml-1 hidden rounded-lg p-1.5 text-muted-foreground hover:text-brand sm:block", liked.has(currentTrack.id) && "text-brand")} aria-label="Oblíbené"><Heart className={cn("size-4", liked.has(currentTrack.id) && "fill-current")} /></button></div><div className="order-3 w-full sm:order-none sm:flex sm:flex-1 sm:flex-col sm:gap-1.5"><div className="hidden items-center justify-center gap-5 sm:flex"><button type="button" onClick={() => setIsShuffled((value) => !value)} className={cn("p-1 text-muted-foreground hover:text-foreground", isShuffled && "text-brand")} aria-label="Náhodné pořadí"><Shuffle className="size-4" /></button><button type="button" onClick={playPrevious} className="p-1 text-muted-foreground hover:text-foreground" aria-label="Předchozí"><SkipBack className="size-4 fill-current" /></button><button type="button" onClick={() => playTrack(currentTrack.id)} className="flex size-9 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105" aria-label={isPlaying ? "Pozastavit" : "Přehrát"}>{isPlaying ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}</button><button type="button" onClick={playNext} className="p-1 text-muted-foreground hover:text-foreground" aria-label="Další"><SkipForward className="size-4 fill-current" /></button><button type="button" onClick={() => setRepeatMode((mode) => mode === "off" ? "all" : mode === "all" ? "one" : "off")} className={cn("p-1 text-muted-foreground hover:text-foreground", repeatMode !== "off" && "text-brand")} aria-label="Opakování"><Repeat2 className="size-4" /></button></div><div className="flex items-center gap-2"><span className="hidden w-9 text-right text-[10px] tabular-nums text-muted-foreground sm:block">{formatTime(currentTime)}</span><input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => { const value = Number(event.target.value); if (audioRef.current) audioRef.current.currentTime = value; setCurrentTime(value); }} className="player-range" aria-label="Pozice ve skladbě" style={{ "--range-progress": `${progress}%` } as React.CSSProperties} /><span className="w-9 text-[10px] tabular-nums text-muted-foreground">{formatTime(duration)}</span></div></div><div className="flex items-center gap-1 sm:min-w-[190px] sm:justify-end"><button type="button" className="flex size-9 items-center justify-center rounded-full bg-foreground text-background sm:hidden" onClick={() => playTrack(currentTrack.id)} aria-label={isPlaying ? "Pozastavit" : "Přehrát"}>{isPlaying ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}</button><button type="button" onClick={() => setIsMuted((value) => !value)} className="rounded-lg p-2 text-muted-foreground hover:text-foreground" aria-label={isMuted ? "Zapnout zvuk" : "Ztlumit"}>{isMuted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}</button><input type="range" min="0" max="1" step="0.01" value={isMuted ? 0 : volume} onChange={(event) => { setVolume(Number(event.target.value)); setIsMuted(false); }} className="volume-range hidden w-20 sm:block" aria-label="Hlasitost" style={{ "--range-progress": `${(isMuted ? 0 : volume) * 100}%` } as React.CSSProperties} /><button type="button" onClick={() => goToView("library")} className="hidden rounded-lg p-2 text-muted-foreground hover:text-foreground sm:block" aria-label="Skladby"><ListMusic className="size-4" /></button></div></div><div className="absolute left-0 right-0 top-0 h-0.5 overflow-hidden rounded-full"><div className="h-full bg-brand transition-[width]" style={{ width: `${progress}%` }} /></div>
-      </div>
+      <PlayerDock
+        track={currentTrack}
+        hasTrack={hasTrack}
+        isPlaying={isPlaying}
+        currentTime={currentTime}
+        duration={duration}
+        shuffle={isShuffled}
+        repeat={repeatMode}
+        onOpen={() => setNowPlayingOpen(true)}
+        onToggle={togglePlayback}
+        onNext={playNext}
+        onPrevious={playPrevious}
+        onSeek={seekTo}
+        onShuffle={toggleShuffle}
+        onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
+      />
+
+      <NowPlaying
+        open={nowPlayingOpen && hasTrack}
+        track={currentTrack}
+        isPlaying={isPlaying}
+        currentTime={currentTime}
+        duration={duration}
+        liked={liked.has(currentTrack.id)}
+        shuffle={isShuffled}
+        repeat={repeatMode}
+        upcoming={upcoming}
+        sleepActive={sleepActive}
+        sleepLabel={sleepLabel}
+        onClose={() => setNowPlayingOpen(false)}
+        onToggle={togglePlayback}
+        onNext={playNext}
+        onPrevious={playPrevious}
+        onSeek={seekTo}
+        onSkip={skipBy}
+        onLike={() => toggleLike(currentTrack.id)}
+        onShuffle={toggleShuffle}
+        onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
+        onMenu={() => setMenuTrack(currentTrack)}
+        onSleep={() => setSleepOpen(true)}
+        onPlayFromQueue={(trackId) => startTrack(trackId)}
+        onRemoveFromQueue={(trackId) => setQueue((previous) => dropFromQueue(previous, trackId))}
+      />
+
+      <TrackMenu
+        track={menuTrack}
+        liked={menuTrack ? liked.has(menuTrack.id) : false}
+        playlists={playlists}
+        fromDevice={menuTrack?.source === "device" && canReadDeviceMedia()}
+        deleting={deleting}
+        onClose={() => setMenuTrack(null)}
+        onPlayNext={() => menuTrack && queueAction(menuTrack, "next")}
+        onQueue={() => menuTrack && queueAction(menuTrack, "end")}
+        onLike={() => {
+          if (!menuTrack) return;
+          toggleLike(menuTrack.id);
+          setMenuTrack(null);
+        }}
+        onAddToPlaylist={(playlistId) => menuTrack && addTrackToPlaylist(playlistId, menuTrack)}
+        onCreatePlaylist={(name) => menuTrack && createPlaylistWith(name, menuTrack)}
+        onDelete={() => menuTrack && void deleteTrack(menuTrack)}
+      />
 
       <Dialog
         open={sleepOpen}

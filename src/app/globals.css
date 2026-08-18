@@ -155,12 +155,21 @@
    * pevné číslo poslední řádek uřízne.
    */
   .mw-pad-nav {
-    padding-bottom: calc(7.5rem + var(--mw-safe-bottom));
+    padding-bottom: calc(8.75rem + var(--mw-safe-bottom));
+  }
+
+  /* Bubliny hlásek patří nad lištu přehrávače, ne přes ni. */
+  .mw-above-dock {
+    bottom: calc(8.25rem + var(--mw-safe-bottom));
   }
 
   @media (min-width: 640px) {
     .mw-pad-nav {
-      padding-bottom: 1.5rem;
+      padding-bottom: 5.5rem;
+    }
+
+    .mw-above-dock {
+      bottom: 4.5rem;
     }
   }
 
@@ -465,9 +474,22 @@
     var(--card);
 }
 
+/*
+ * Lišta přehrávače sedí na celé šířce těsně nad spodní navigací. Plovoucí
+ * karta s okraji vypadala jako cizí okno položené na appku - přes celou šířku
+ * je z ní součást zařízení, jako je systémová lišta.
+ */
 .player-dock {
   background: var(--black);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 60%);
+  bottom: calc(3.8125rem + var(--mw-safe-bottom));
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 55%);
+}
+
+@media (min-width: 640px) {
+  /* Na širokém okně spodní navigace není, lišta klesne až k hraně. */
+  .player-dock {
+    bottom: 0;
+  }
 }
 
 /* Stránka dokumentu drží stejný pár jako zbytek appky: černá pod bílým textem. */
@@ -543,19 +565,40 @@
   background: var(--white);
 }
 
-.equalizer-active i {
-  animation: sonora-eq 0.8s ease-in-out infinite alternate;
+/*
+ * Značka „tohle hraje". Pruhy rostou ode dna nahoru - když se škálovaly od
+ * středu, ubývaly na obě strany naráz a vypadalo to jako chyba vykreslení.
+ * V pauze zůstanou stát nízko, takže je pořád poznat, kde přehrávač stojí.
+ */
+.equalizer {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 0.7rem;
 }
 
-.equalizer-active i:nth-child(2) { animation-delay: -0.25s; }
-.equalizer-active i:nth-child(3) { animation-delay: -0.5s; }
-.equalizer-active i:nth-child(4) { animation-delay: -0.12s; }
+.equalizer i {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand);
+  transform: scaleY(0.3);
+  transform-origin: bottom;
+  transition: transform 200ms ease-out;
+}
+
+.equalizer-playing i {
+  animation: sonora-eq 0.9s ease-in-out infinite alternate;
+}
+
+.equalizer-playing i:nth-child(2) { animation-delay: -0.3s; }
+.equalizer-playing i:nth-child(3) { animation-delay: -0.6s; }
 
 @keyframes sonora-eq {
-  from { transform: scaleY(0.55); }
+  from { transform: scaleY(0.3); }
   to { transform: scaleY(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .equalizer-active i { animation: none; }
+  .equalizer-playing i { animation: none; transform: scaleY(0.7); }
 }

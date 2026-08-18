@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ToastProvider } from "@/components/providers/toast-provider";
+import { ErrorBoundary } from "@/components/providers/error-boundary";
 
 export const metadata: Metadata = {
   title: "P/_ayer | Hudba offline",
@@ -44,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased flex flex-col bg-background text-foreground">
         <ToastProvider>
-          {children}
+          <ErrorBoundary>{children}</ErrorBoundary>
         </ToastProvider>
       </body>
     </html>

@@ -32,6 +32,11 @@ interface MediaLibraryPlugin {
   openAppSettings(): Promise<void>;
   listAudio(): Promise<{ tracks: NativeAudioTrack[] }>;
   /**
+   * Smaže soubor ze zařízení. Od Androidu 11 se ptá systém vlastním oknem,
+   * takže `deleted: false` znamená „uživatel to odklikl pryč", ne chybu.
+   */
+  deleteAudio(options: { id: string }): Promise<{ deleted: boolean }>;
+  /**
    * Video se od Androidu 13 povoluje zvlášť od hudby, takže má vlastní
    * dvojici check/request - jinak by si appka řekla o obojí naráz i u toho,
    * kdo video vůbec nezapnul.

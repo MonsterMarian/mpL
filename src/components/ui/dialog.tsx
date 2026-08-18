@@ -14,6 +14,8 @@ export interface DialogProps {
   children?: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
+  /** Přes celý displej. Pro obrazovky, kde se dlouho čte a nastavuje. */
+  fullScreen?: boolean;
 }
 
 /** Otevřené dialogy v pořadí, jak přišly - kvůli Escape u vnořených oken. */
@@ -31,6 +33,7 @@ export function Dialog({
   children,
   footer,
   className,
+  fullScreen,
 }: DialogProps) {
   const [mounted, setMounted] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -68,9 +71,18 @@ export function Dialog({
   if (!mounted || !open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+    <div
+      className={cn(
+        // Okno roste odshora dolů, ne od spodní hrany: na telefonu se čte
+        // shora a poslední volba nemá končit pod prstem u kraje displeje.
+        "fixed inset-0 z-50 flex items-start justify-center",
+        fullScreen
+          ? "sm:items-center"
+          : "px-2 pt-[calc(2rem+var(--mw-safe-top))] sm:items-center sm:px-0 sm:pt-0",
+      )}
+    >
       <div
-        className="absolute inset-0 bg-black/40"
+        className={cn("absolute inset-0 bg-black/40", fullScreen && "hidden sm:block")}
         onClick={() => onOpenChange(false)}
         aria-hidden
       />
@@ -80,11 +92,13 @@ export function Dialog({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "animate-in-up relative z-10 w-full max-w-md rounded-t-xl border bg-popover text-popover-foreground p-5 shadow-lg sm:rounded-xl",
+          "animate-in-up relative z-10 w-full bg-popover text-popover-foreground shadow-lg",
           // Dlouhý obsah (typicky Nastavení) se musí dát doscrollovat, jinak
           // konec zůstane pod okrajem obrazovky. Spodní odsazení počítá
           // s pruhem gest, aby poslední tlačítko nekončilo pod ním.
-          "max-h-[88dvh] overflow-y-auto pb-[calc(2rem+var(--mw-safe-bottom))] sm:max-h-[85dvh] sm:pb-5",
+          fullScreen
+            ? "min-h-[100dvh] overflow-y-auto px-5 pb-[calc(2rem+var(--mw-safe-bottom))] pt-[calc(1.5rem+var(--mw-safe-top))] sm:min-h-0 sm:max-h-[85dvh] sm:max-w-md sm:rounded-xl sm:border sm:p-5 sm:pb-8"
+            : "max-h-[calc(100dvh-4rem-var(--mw-safe-top)-var(--mw-safe-bottom))] max-w-md overflow-y-auto rounded-xl border p-5 pb-10 sm:max-h-[85dvh] sm:pb-8",
           className,
         )}
       >

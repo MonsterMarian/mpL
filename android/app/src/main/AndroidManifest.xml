@@ -21,6 +21,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Drží proces naživu, dokud hraje hudba. Sama nic nepřehrává. -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -33,9 +39,17 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Přehrávání na pozadí: bez služby v popředí Android proces s appkou
+         na pozadí sestřelí a hudba uprostřed skladby ztichne. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- Video addon. Od Androidu 13 se povoluje zvlášť od hudby, takže si appka
          o přístup k videím řekne, teprve když si addon uživatel zapne. -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Mazání skladby ze zařízení. Od Androidu 10 se na to místo oprávnění
+         ptá systém vlastním oknem, tam už tohle právo nic neznamená. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>

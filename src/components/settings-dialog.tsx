@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
+import { clearErrors, readErrors, type LoggedError } from "@/lib/diagnostics";
 import { cn } from "@/lib/utils";
 
 type Tab = "main" | "addons";
@@ -92,6 +93,7 @@ export function SettingsDialog({
       onOpenChange={onOpenChange}
       title="Nastavení"
       description="Úprava P/_ayer podle tvého poslechu."
+      fullScreen
     >
       <div className="flex flex-col gap-5">
         <div className="flex gap-1 border-b">
@@ -119,6 +121,7 @@ export function SettingsDialog({
               onRequestMediaAccess={onRequestMediaAccess} 
             />
             <UpdateSection />
+            <ErrorSection open={open} />
           </div>
         ) : (
           <div className="flex flex-col gap-5 animate-in-up">
@@ -238,6 +241,63 @@ function AddonChoice({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Co appku naposledy položilo.
+ *
+ * V telefonu není konzole a bílá obrazovka neřekne nic - tohle je jediné
+ * místo, odkud se dá pád popsat, aniž by se telefon připojoval kabelem.
+ * Když je čisto, sekce se vůbec nekreslí.
+ */
+function ErrorSection({ open }: { open: boolean }) {
+  const [errors, setErrors] = React.useState<LoggedError[]>([]);
+
+  React.useEffect(() => {
+    if (open) setErrors(readErrors());
+  }, [open]);
+
+  if (!errors.length) return null;
+
+  return (
+    <Section title="Poslední chyby" hint="Zkopíruj a pošli, když appka spadne - jinak není podle čeho hledat.">
+      <div className="flex flex-col gap-2">
+        {errors.map((error) => (
+          <div key={error.at} className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-destructive">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <span className="tabular-nums">{new Date(error.at).toLocaleString("cs")}</span>
+            </div>
+            <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">{error.message}</p>
+            {error.source ? <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground/70">{error.source}</p> : null}
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void navigator.clipboard?.writeText(
+              errors.map((e) => `${new Date(e.at).toISOString()} ${e.message}${e.source ? ` (${e.source})` : ""}`).join("\n"),
+            );
+          }}
+        >
+          Zkopírovat
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            clearErrors();
+            setErrors([]);
+          }}
+        >
+          Vymazat
+        </Button>
+      </div>
+    </Section>
   );
 }
 

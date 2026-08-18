@@ -1,6 +1,7 @@
 import { WebView } from "@capacitor/core";
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import { isNative } from "./native";
+import { bundledVersion, isNewerVersion } from "./versions";
 
 /**
  * Živé aktualizace.
@@ -91,7 +92,23 @@ export function setUpdateUrl(url: string): void {
  * appka pokaždé stáhla balík, který už uvnitř má.
  */
 export function currentBundleVersion(): string | null {
-  return read(CURRENT_KEY) ?? process.env.NEXT_PUBLIC_BUNDLE_VERSION ?? null;
+  return read(CURRENT_KEY) ?? bundledVersion();
+}
+
+/**
+ * Zahodí záznam o balíku, který je starší než web zabalený v APK.
+ *
+ * Do telefonu se mezitím nainstalovala novější appka a ta má vyhrát. Bez
+ * tohohle si appka po instalaci nového APK při prvním startu sama nasadí
+ * starý balík a všechny novinky zmizí - přesně to se stalo 18. 8. 2026.
+ * Vrací verzi, se kterou se smí dál počítat.
+ */
+function withoutStale(key: string, version: string | null): string | null {
+  if (!version) return null;
+  const apk = bundledVersion();
+  if (!apk || isNewerVersion(version, apk)) return version;
+  write(key, null);
+  return null;
 }
 
 export function pendingBundleVersion(): string | null {
@@ -199,12 +216,14 @@ export async function applyPendingUpdate(): Promise<ApplyResult> {
   try {
     if (!isNative()) return { applied: null };
 
-    const raw = read(PENDING_KEY);
-    const pending = raw ? (JSON.parse(raw) as { version: string }).version : null;
+    // Balík starší než appka v APK je vždycky omyl, ať už čeká na nasazení,
+    // nebo je nasazený - Capacitor po instalaci nového APK stejně startuje
+    // z jeho vlastních souborů a tohle mu ten návrat zpátky nedovolí.
+    const pending = withoutStale(PENDING_KEY, pendingBundleVersion());
     // Když nic nečeká, stejně zkontrolujeme, jestli sedí nasazená verze:
     // uložení cesty na nativní straně se nemusí povést a appka by se po
     // restartu tiše vrátila k verzi z APK.
-    const target = pending ?? read(CURRENT_KEY);
+    const target = pending ?? withoutStale(CURRENT_KEY, read(CURRENT_KEY));
     if (!target) return { applied: null };
 
     const dir = await bundleDir(target);
@@ -313,8 +332,11 @@ export async function checkForUpdate(): Promise<UpdateCheck> {
       return { kind: "failed", message: "Manifest nemá version nebo bundle." };
     }
 
+    // Jen dopředu. Když se porovnávalo na „jiná verze = novější", stačilo
+    // zapomenout pushnout balík a appka si přes nové APK sama nasadila ten
+    // starý z GitHubu.
     const current = currentBundleVersion();
-    if (manifest.version === current || manifest.version === pendingBundleVersion()) {
+    if (!isNewerVersion(manifest.version, current) || !isNewerVersion(manifest.version, pendingBundleVersion())) {
       return { kind: "up-to-date", version: current };
     }
 

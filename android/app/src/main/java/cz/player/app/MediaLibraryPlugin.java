@@ -1,9 +1,12 @@
 package cz.player.app;
 
 import android.Manifest;
+import android.app.PendingIntent;
+import android.app.RecoverableSecurityException;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -18,6 +21,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.util.Collections;
 import org.json.JSONArray;
 
 @CapacitorPlugin(
@@ -25,7 +29,8 @@ import org.json.JSONArray;
     permissions = {
         @Permission(alias = "media", strings = { Manifest.permission.READ_MEDIA_AUDIO }),
         @Permission(alias = "video", strings = { Manifest.permission.READ_MEDIA_VIDEO }),
-        @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE })
+        @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }),
+        @Permission(alias = "write", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE })
     }
 )
 public class MediaLibraryPlugin extends Plugin {
@@ -199,6 +204,124 @@ public class MediaLibraryPlugin extends Plugin {
 
         JSObject result = new JSObject();
         result.put("tracks", tracks);
+        call.resolve(result);
+    }
+
+    /**
+     * Smaže skladbu ze zařízení, ne jen z knihovny appky.
+     *
+     * Soubor patří tomu, kdo ho stáhl, ne přehrávači - proto se od Androidu 11
+     * ptá systém sám vlastním oknem (`createDeleteRequest`) a na Androidu 10
+     * to samé zařídí `RecoverableSecurityException`. Starší systémy stačí
+     * s právem na zápis. Odmítnuté potvrzení není chyba: vrátí se
+     * `deleted: false` a appka nechá skladbu být.
+     */
+    @PluginMethod
+    public void deleteAudio(PluginCall call) {
+        Long id = trackId(call);
+        if (id == null) return;
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !hasWritePermission()) {
+            requestPermissionForAlias("write", call, "writePermissionCallback");
+            return;
+        }
+        deleteTrack(call, id);
+    }
+
+    @PermissionCallback
+    private void writePermissionCallback(PluginCall call) {
+        if (!hasWritePermission()) {
+            call.reject("Mazání souborů nebylo povoleno.", "MEDIA_PERMISSION_DENIED");
+            return;
+        }
+        Long id = trackId(call);
+        if (id != null) deleteTrack(call, id);
+    }
+
+    /** Id skladby z volání. Když chybí nebo je nesmyslné, volání se rovnou odmítne. */
+    private Long trackId(PluginCall call) {
+        String raw = call.getString("id");
+        if (raw == null || raw.trim().isEmpty()) {
+            call.reject("Chybí id skladby.", "MEDIA_BAD_REQUEST");
+            return null;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException error) {
+            call.reject("Skladba není ze zařízení.", "MEDIA_BAD_REQUEST");
+            return null;
+        }
+    }
+
+    private boolean hasWritePermission() {
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void deleteTrack(PluginCall call, long id) {
+        Uri uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+        ContentResolver resolver = getContext().getContentResolver();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+: mazání obstará systém, appka jen ukáže jeho okno.
+            try {
+                PendingIntent request = MediaStore.createDeleteRequest(resolver, Collections.singletonList(uri));
+                confirmWithUser(call, request.getIntentSender(), null);
+            } catch (Exception error) {
+                call.reject("Skladbu se nepodařilo smazat.", "MEDIA_DELETE_FAILED", error);
+            }
+            return;
+        }
+
+        try {
+            resolveDeleted(call, resolver.delete(uri, null, null) > 0);
+        } catch (SecurityException error) {
+            IntentSender sender = recoverableSender(error);
+            if (sender == null) {
+                call.reject("Skladbu se nepodařilo smazat.", "MEDIA_DELETE_FAILED", error);
+                return;
+            }
+            // Android 10: po svolení se maže znovu, systém sám nic nesmaže.
+            confirmWithUser(call, sender, uri);
+        }
+    }
+
+    private IntentSender recoverableSender(SecurityException error) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null;
+        if (!(error instanceof RecoverableSecurityException)) return null;
+        return ((RecoverableSecurityException) error).getUserAction().getActionIntent().getIntentSender();
+    }
+
+    /**
+     * Systémové okno s otázkou. `retryUri` je vyplněné tam, kde se po svolení
+     * musí smazat ještě jednou (Android 10) - jinak systém smaže sám.
+     */
+    private void confirmWithUser(PluginCall call, IntentSender sender, Uri retryUri) {
+        if (!(getActivity() instanceof MainActivity)) {
+            call.reject("Mazání není v tomhle prostředí dostupné.", "MEDIA_DELETE_FAILED");
+            return;
+        }
+        MainActivity activity = (MainActivity) getActivity();
+        activity.confirmWithSystem(
+            sender,
+            () -> {
+                if (retryUri == null) {
+                    resolveDeleted(call, true);
+                    return;
+                }
+                try {
+                    resolveDeleted(call, getContext().getContentResolver().delete(retryUri, null, null) > 0);
+                } catch (SecurityException error) {
+                    call.reject("Skladbu se nepodařilo smazat.", "MEDIA_DELETE_FAILED", error);
+                }
+            },
+            () -> resolveDeleted(call, false)
+        );
+    }
+
+    private void resolveDeleted(PluginCall call, boolean deleted) {
+        JSObject result = new JSObject();
+        result.put("deleted", deleted);
         call.resolve(result);
     }
 
