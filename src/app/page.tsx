@@ -408,21 +408,25 @@ export default function HomePage() {
    * Co má systém ukazovat v notifikaci a na zámku. Pozice se čte přímo
    * z přehrávače, ne ze stavu - jinak by se tohle volalo několikrát za vteřinu.
    */
-  const pushNowPlaying = React.useCallback(
-    (playing: boolean) => {
-      if (currentTrack.id === EMPTY_TRACK.id) return;
-      void updateNowPlaying({
-        title: currentTrack.title,
-        artist: currentTrack.artist,
-        album: currentTrack.album,
-        artwork: currentTrack.artworkSource ?? null,
-        durationMs: Math.round((audioRef.current?.duration || currentTrack.durationSeconds || 0) * 1000),
-        positionMs: Math.round((audioRef.current?.currentTime ?? 0) * 1000),
-        playing,
-      });
-    },
-    [currentTrack],
-  );
+  // Přes ref, ne přes závislost: `currentTrack` je nový objekt při každé změně
+  // pole skladeb (třeba když se dopočítá délka), a hlásit systému stav při
+  // každém takovém překreslení znamená pokaždé restartovat službu.
+  const nowPlayingTrack = React.useRef(currentTrack);
+  nowPlayingTrack.current = currentTrack;
+
+  const pushNowPlaying = React.useCallback((playing: boolean) => {
+    const track = nowPlayingTrack.current;
+    if (track.id === EMPTY_TRACK.id) return;
+    void updateNowPlaying({
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      artwork: track.artworkSource ?? null,
+      durationMs: Math.round((audioRef.current?.duration || track.durationSeconds || 0) * 1000),
+      positionMs: Math.round((audioRef.current?.currentTime ?? 0) * 1000),
+      playing,
+    });
+  }, []);
 
   React.useEffect(() => {
     if (!hasTrack) {
@@ -434,7 +438,7 @@ export default function HomePage() {
     // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
     const timer = window.setTimeout(() => pushNowPlaying(isPlaying), 250);
     return () => window.clearTimeout(timer);
-  }, [hasTrack, isPlaying, pushNowPlaying]);
+  }, [hasTrack, isPlaying, currentTrack.id, pushNowPlaying]);
 
   React.useEffect(() => () => void clearNowPlaying(), []);
 

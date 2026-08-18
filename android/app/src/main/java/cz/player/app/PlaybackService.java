@@ -12,9 +12,6 @@ import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Icon;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -34,6 +31,12 @@ import java.io.InputStream;
  * Zároveň drží appku naživu, dokud se hraje. Bez služby v popředí je proces
  * s appkou na pozadí obyčejný kandidát na odstřel a hudba uprostřed skladby
  * ztichne.
+ *
+ * O zvukové ohnisko si tady schválně **neříkáme**. WebView si ho pro svoje
+ * přehrávání bere sám, a když o něj požádá ještě služba, systém ho prvnímu
+ * držiteli sebere - tedy vlastnímu WebView, které na ztrátu ohniska přehrávání
+ * zastaví. Navenek to vypadalo, že hudba po zapnutí sama do vteřiny ztichne.
+ * Pauzu při hovoru řeší WebView sám, tohle se tu nemá co dublovat.
  */
 public class PlaybackService extends Service {
 
@@ -64,9 +67,6 @@ public class PlaybackService extends Service {
     }
 
     private MediaSession session;
-    private AudioManager audioManager;
-    private AudioFocusRequest focusRequest;
-    private AudioManager.OnAudioFocusChangeListener focusListener;
 
     private String title = "";
     private String artist = "";
@@ -85,7 +85,6 @@ public class PlaybackService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         session = new MediaSession(this, "P/_ayer");
         session.setCallback(
             new MediaSession.Callback() {
@@ -121,13 +120,6 @@ public class PlaybackService extends Service {
             }
         );
         session.setActive(true);
-
-        // Když si zvuk vezme hovor nebo jiná appka, hudba se má ztišit sama.
-        focusListener = change -> {
-            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                send("pause", -1);
-            }
-        };
     }
 
     @Override
@@ -149,7 +141,6 @@ public class PlaybackService extends Service {
 
         publishMetadata();
         publishState();
-        requestFocus();
 
         try {
             Notification notification = buildNotification();
@@ -177,7 +168,6 @@ public class PlaybackService extends Service {
 
     @Override
     public void onDestroy() {
-        abandonFocus();
         if (session != null) {
             session.setActive(false);
             session.release();
@@ -332,43 +322,6 @@ public class PlaybackService extends Service {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         return new Notification.Action.Builder(Icon.createWithResource(this, icon), label, pending).build();
-    }
-
-    private void requestFocus() {
-        if (audioManager == null || !playing) return;
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (focusRequest == null) {
-                    focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                        .setAudioAttributes(
-                            new AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                                .build()
-                        )
-                        .setOnAudioFocusChangeListener(focusListener)
-                        .build();
-                }
-                audioManager.requestAudioFocus(focusRequest);
-            } else {
-                audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-            }
-        } catch (Exception error) {
-            // Bez zvukového ohniska se hraje dál, jen se hudba nesrovná s hovorem.
-        }
-    }
-
-    private void abandonFocus() {
-        if (audioManager == null) return;
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (focusRequest != null) audioManager.abandonAudioFocusRequest(focusRequest);
-            } else {
-                audioManager.abandonAudioFocus(focusListener);
-            }
-        } catch (Exception error) {
-            // Ohnisko nikdo nedrží - není co vracet.
-        }
     }
 
     /** Zapne nebo osvěží službu podle toho, co se zrovna hraje. */
