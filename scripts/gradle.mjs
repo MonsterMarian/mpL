@@ -11,7 +11,7 @@
  * Cesta k JDK se čte z gradle.properties, aby byla v projektu na jednom místě.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ANDROID = "android";
@@ -38,6 +38,40 @@ if (javaHome && !existsSync(javaHome)) {
   process.exit(1);
 }
 
+/**
+ * Záplata na rozbité unixové sokety.
+ *
+ * Na tomhle stroji vrací AF_UNIX u `connect` "Invalid argument" (bind projde,
+ * spojení ne). JDK si přes něj dělá každý `Selector.open()` a na TCP loopback,
+ * který funguje, samo neuhne - přepínač pro to neexistuje. Gradle proto skončí
+ * hned při startu na "Unable to establish loopback connection".
+ *
+ * Agent ten příznak v JVM přepíše a všechno se vrátí na TCP. Přes
+ * `JAVA_TOOL_OPTIONS`, aby ho dostal launcher, démon i odštěpené procesy pro
+ * překlad - stačilo by, aby ho jeden z nich neměl, a build padne znovu.
+ *
+ * Na zdravém stroji nevadí: TCP roury byly do JDK 17 běžná cesta.
+ */
+function unixSocketWorkaround(javaHome) {
+  const source = path.join("scripts", "uds-off", "UdsOff.java");
+  if (!existsSync(source) || !javaHome) return null;
+
+  const outDir = path.join("android", "build", "uds-off");
+  const jar = path.join(outDir, "uds-off.jar");
+  if (!existsSync(jar)) {
+    mkdirSync(outDir, { recursive: true });
+    const javac = spawnSync(path.join(javaHome, "bin", "javac"), ["-d", outDir, source], { stdio: "inherit", shell: true });
+    if (javac.status !== 0) return null;
+    const jarTool = spawnSync(
+      path.join(javaHome, "bin", "jar"),
+      ["cfm", jar, path.join("scripts", "uds-off", "manifest.txt"), "-C", outDir, "UdsOff.class"],
+      { stdio: "inherit", shell: true },
+    );
+    if (jarTool.status !== 0) return null;
+  }
+  return `-javaagent:${path.resolve(jar).split(path.sep).join("/")}`;
+}
+
 const args = process.argv.slice(2);
 // Dávkový soubor Node přímo spustit neumí, musí přes cmd.exe. Jinde je wrapper
 // obyčejný spustitelný skript a jde zavolat rovnou.
@@ -46,10 +80,17 @@ const [command, commandArgs] =
     ? ["cmd.exe", ["/c", path.resolve(wrapper), ...args]]
     : [path.resolve(wrapper), args];
 
+const agent = unixSocketWorkaround(javaHome ?? process.env.JAVA_HOME);
+const toolOptions = [process.env.JAVA_TOOL_OPTIONS, agent].filter(Boolean).join(" ");
+
 const result = spawnSync(command, commandArgs, {
   cwd: ANDROID,
   stdio: "inherit",
-  env: { ...process.env, JAVA_HOME: javaHome ?? process.env.JAVA_HOME },
+  env: {
+    ...process.env,
+    JAVA_HOME: javaHome ?? process.env.JAVA_HOME,
+    ...(toolOptions ? { JAVA_TOOL_OPTIONS: toolOptions } : {}),
+  },
 });
 
 if (result.error) {

@@ -27,6 +27,18 @@ a build si na to sáhne sám.
   - Capacitor 8 se kompiluje na Javu 21, v systému je 17;
     build si vlastní JDK bere přes `org.gradle.java.home` v `android/gradle.properties`
 
+## Když build spadne na „Unable to establish loopback connection"
+
+Na tomhle stroji je rozbitý AF_UNIX: `bind` projde, `connect` vrátí *Invalid
+argument*. JDK si přes unixové sokety dělá každý `Selector.open()` a na TCP
+loopback, který funguje, samo neuhne - přepínač pro to nemá. Gradle proto padal
+hned při startu.
+
+Řeší to malý javový agent v `scripts/uds-off/`, který ten příznak v JVM přepíše.
+`scripts/gradle.mjs` si ho sám přeloží (do `android/build/uds-off/`) a nasadí
+přes `JAVA_TOOL_OPTIONS`, takže ho dostane launcher, démon i odštěpené procesy
+pro překlad. Ručně není potřeba dělat nic - `npm run android:apk` prostě jede.
+
 ## Sestavení APK
 
 **Do telefonu vždy release verzi:**
