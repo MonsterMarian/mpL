@@ -25,10 +25,16 @@ const CURRENT_KEY = "microwins:ota:current";
 const PENDING_KEY = "microwins:ota:pending";
 const BOOTING_KEY = "microwins:ota:booting";
 
-/** Soubory balíku: cesta -> obsah. Bundle je čistě textový (js, css, html). */
+/**
+ * Soubory balíku: cesta -> obsah.
+ *
+ * Text se veze rovnou, binární soubory (obrázky) v base64 - jinak se cestou
+ * rozbijí. Starší balíky značku nemají a jsou celé textové, proto je volitelná.
+ */
 export interface BundleFile {
   path: string;
   content: string;
+  encoding?: "base64";
 }
 
 export interface UpdateManifest {
@@ -365,7 +371,9 @@ export async function checkForUpdate(): Promise<UpdateCheck> {
         path: `${dir}/${file.path}`,
         data: file.content,
         directory: Directory.Data,
-        encoding: Encoding.UTF8,
+        // Bez `encoding` bere Capacitor obsah jako base64 a zapíše ho bajt po
+        // bajtu - přesně to potřebují obrázky.
+        ...(file.encoding === "base64" ? {} : { encoding: Encoding.UTF8 }),
         recursive: true,
       });
     }

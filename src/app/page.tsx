@@ -86,6 +86,7 @@ import { readEmbeddedArtwork } from "@/lib/artwork";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
 import { keepAlive, releaseKeepAlive } from "@/lib/playback-service";
 import { installErrorCapture } from "@/lib/diagnostics";
+import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
 
 type View = "library" | "reader" | "video";
@@ -442,7 +443,7 @@ export default function HomePage() {
       artist: currentTrack.artist,
       album: currentTrack.album,
       // Bez obalu jde do notifikace značka appky, ne prázdné místo.
-      artwork: [{ src: currentTrack.artwork ?? "/logo-brand.png", sizes: "512x512", type: "image/png" }],
+      artwork: [{ src: currentTrack.artwork ?? BRAND_MARK, sizes: "192x192", type: "image/png" }],
     });
     session.playbackState = isPlaying ? "playing" : "paused";
   }, [currentTrack, isPlaying]);
@@ -1088,8 +1089,8 @@ export default function HomePage() {
       <header className="mw-safe-top mw-safe-x sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-4xl items-center gap-3 px-4">
           <button type="button" onClick={() => goToView("library")} className="mr-2 flex items-center gap-2.5 text-lg font-semibold tracking-tight">
-            {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/ */}
-            <img src="/logo-brand.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
+            {/* eslint-disable-next-line @next/next/no-img-element -- značka je data URI */}
+            <img src={BRAND_MARK} alt="" aria-hidden="true" className="size-8 shrink-0" />
             P/_AYER
           </button>
 

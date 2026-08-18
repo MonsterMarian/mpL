@@ -3,6 +3,7 @@
 import * as React from "react";
 import { recordError } from "@/lib/diagnostics";
 import { revertToBundled } from "@/lib/live-update";
+import { BRAND_MARK } from "@/lib/brand";
 
 /**
  * Poslední záchrana.
@@ -33,8 +34,8 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-background px-6 py-10 text-center text-foreground">
-        {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/ */}
-        <img src="/logo-brand.png" alt="" aria-hidden="true" className="size-14" />
+        {/* eslint-disable-next-line @next/next/no-img-element -- značka je data URI */}
+        <img src={BRAND_MARK} alt="" aria-hidden="true" className="size-14" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Něco se rozbilo</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">

@@ -42,13 +42,28 @@ async function walk(dir, base = dir) {
   return out;
 }
 
+/*
+ * Text jde do balíku jako text, všechno ostatní jako base64.
+ *
+ * Dřív se četlo všechno jako UTF-8 a binární soubory se tím tiše rozbily:
+ * z loga v telefonu zbyla ikona nenačteného obrázku. Pozná se to zkouškou tam
+ * a zpátky, ne podle přípony - seznam přípon se dřív nebo později rozejde
+ * s tím, co v `out/` doopravdy leží.
+ */
 const files = [];
 let bytes = 0;
 for (const rel of await walk(SRC)) {
-  const content = await readFile(path.join(SRC, rel), "utf8");
-  bytes += Buffer.byteLength(content);
-  files.push({ path: rel, content });
+  const buffer = await readFile(path.join(SRC, rel));
+  bytes += buffer.length;
+  const text = buffer.toString("utf8");
+  if (Buffer.compare(Buffer.from(text, "utf8"), buffer) === 0) {
+    files.push({ path: rel, content: text });
+  } else {
+    files.push({ path: rel, content: buffer.toString("base64"), encoding: "base64" });
+  }
 }
+
+const binary = files.filter((file) => file.encoding === "base64").length;
 
 if (!files.some((f) => f.path === "index.html")) {
   console.error("V out/ chybí index.html.");
@@ -77,6 +92,8 @@ await writeFile(
   JSON.stringify({ version, bundle: bundleUrl, notes: "" }, null, 2),
 );
 
-console.log(`\nBalík ${bundleName}: ${files.length} souborů, ${(bytes / 1024 / 1024).toFixed(2)} MB`);
+console.log(
+  `\nBalík ${bundleName}: ${files.length} souborů (z toho ${binary} binárních), ${(bytes / 1024 / 1024).toFixed(2)} MB`,
+);
 console.log(`Manifest ota/latest.json, verze ${version}`);
 console.log("Dál: npm run android:release (APK se stejnou verzí), pak commit a push ota/");

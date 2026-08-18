@@ -4,13 +4,15 @@ import * as React from "react";
 import { Heart, MoreVertical, Pause, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Track } from "@/lib/library";
+import { BRAND_MARK } from "@/lib/brand";
 
 /**
  * Obal skladby. Když ho skladba má, je vidět on. Když ne, nastoupí značka appky.
  *
- * Schválně `logo-brand.png`, ne `logo-mark.png`: značka v šedé je na černém
- * pozadí prakticky neviditelná a v seznamu po ní zůstávala díra, jako by byly
- * řádky odsazené neznámo proč. Žlutá je vidět, a ztlumená nepřebíjí názvy.
+ * Značka je data URI z `lib/brand.ts`, ne soubor: PNG se v balíku živé
+ * aktualizace rozbije a v telefonu z něj zbyla ikona nenačteného obrázku
+ * u každé skladby. Žlutá varianta schválně - šedá je na černém pozadí
+ * neviditelná a v seznamu po ní zůstávala díra.
  */
 export function Cover({ artwork, className }: { artwork: string | null; className?: string }) {
   const [broken, setBroken] = React.useState(false);
@@ -25,8 +27,8 @@ export function Cover({ artwork, className }: { artwork: string | null; classNam
         className={cn("flex shrink-0 items-center justify-center overflow-hidden bg-white/[0.06]", className)}
         aria-hidden="true"
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/, optimalizace Next.js tu nemá co dělat */}
-        <img src="/logo-brand.png" alt="" className="size-[58%] opacity-75" />
+        {/* eslint-disable-next-line @next/next/no-img-element -- značka je data URI, optimalizace Next.js tu nemá co dělat */}
+        <img src={BRAND_MARK} alt="" className="size-[58%] opacity-75" />
       </div>
     );
   }

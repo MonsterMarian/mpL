@@ -35,6 +35,7 @@ import {
   type Track,
 } from "@/lib/library";
 import type { Playlist } from "@/lib/playlists";
+import { BRAND_MARK } from "@/lib/brand";
 import { Cover, TrackRow } from "./track-row";
 
 /**
@@ -631,7 +632,7 @@ function EmptyLibrary({
     <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 px-6 text-center">
       <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-white/[0.05] text-muted-foreground">
         {/* eslint-disable-next-line @next/next/no-img-element -- statická značka z public/ */}
-        {hasTracks ? <Heart className="size-5" /> : <img src="/logo-brand.png" alt="" className="size-8" />}
+        {hasTracks ? <Heart className="size-5" /> : <img src={BRAND_MARK} alt="" className="size-8" />}
       </div>
       <p className="font-medium">
         {hasTracks
