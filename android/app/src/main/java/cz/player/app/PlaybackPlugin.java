@@ -2,6 +2,7 @@ package cz.player.app;
 
 import android.Manifest;
 import android.os.Build;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -11,8 +12,10 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 /**
- * Most k {@link PlaybackService}. Webová vrstva ví, kdy se hraje - nativní
- * vrstva umí říct systému, ať appku kvůli tomu nechá běžet.
+ * Most k {@link PlaybackService}.
+ *
+ * Webová vrstva ví, co hraje - nativní vrstva to umí říct systému a poslat
+ * zpátky, co uživatel zmáčkl v notifikaci nebo na zamykací obrazovce.
  */
 @CapacitorPlugin(
     name = "Playback",
@@ -20,9 +23,36 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public class PlaybackPlugin extends Plugin {
 
+    @Override
+    public void load() {
+        PlaybackService.setCommandSink((action, positionMs) -> {
+            JSObject event = new JSObject();
+            event.put("action", action);
+            if (positionMs >= 0) event.put("positionMs", positionMs);
+            notifyListeners("command", event);
+        });
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        PlaybackService.setCommandSink(null);
+        PlaybackService.stop(getContext());
+        super.handleOnDestroy();
+    }
+
+    /** Co hraje: název, interpret, obal, délka, pozice a jestli to běží. */
     @PluginMethod
-    public void start(PluginCall call) {
-        PlaybackService.start(getContext(), call.getString("title"), call.getString("artist"));
+    public void update(PluginCall call) {
+        PlaybackService.update(
+            getContext(),
+            call.getString("title", ""),
+            call.getString("artist", ""),
+            call.getString("album", ""),
+            call.getString("artwork"),
+            call.getLong("durationMs", 0L),
+            call.getLong("positionMs", 0L),
+            Boolean.TRUE.equals(call.getBoolean("playing", false))
+        );
         call.resolve();
     }
 
@@ -33,8 +63,9 @@ public class PlaybackPlugin extends Plugin {
     }
 
     /**
-     * Povolení notifikací (Android 13+). Bez něj služba běží dál, jen ji není
-     * vidět - proto se ptá až u prvního přehrání a odmítnutí není chyba.
+     * Povolení notifikací (Android 13+). Bez něj hudba hraje dál a session na
+     * zámku funguje, jen notifikace není vidět - proto se ptá až u prvního
+     * přehrání a odmítnutí není chyba.
      */
     @PluginMethod
     public void requestNotifications(PluginCall call) {

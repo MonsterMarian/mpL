@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Heart, MoreVertical, Pause, Play } from "lucide-react";
+import { Check, Heart, MoreVertical, Pause, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Track } from "@/lib/library";
 import { BRAND_MARK } from "@/lib/brand";
@@ -80,30 +80,77 @@ export interface TrackRowProps {
   onMenu: () => void;
   /** Tlačítko navíc před nabídkou - třeba „odebrat z playlistu". */
   extra?: React.ReactNode;
+  /** Režim výběru: klepnutí místo přehrávání zaškrtává. */
+  selecting?: boolean;
+  selected?: boolean;
+  /** Podržení prstu - odsud se do výběru vchází. */
+  onLongPress?: () => void;
 }
 
-export function TrackRow({ track, active, playing, liked, plays = 0, onPress, onToggle, onMenu, extra }: TrackRowProps) {
+export function TrackRow({
+  track,
+  active,
+  playing,
+  liked,
+  plays = 0,
+  onPress,
+  onToggle,
+  onMenu,
+  extra,
+  selecting = false,
+  selected = false,
+  onLongPress,
+}: TrackRowProps) {
+  // Podržení prstu hlásí prohlížeč jako `contextmenu` - vlastní měření času by
+  // se pralo se scrolováním a s dvojklikem.
+  const holdToSelect = (event: React.MouseEvent) => {
+    if (!onLongPress) return;
+    event.preventDefault();
+    onLongPress();
+  };
+
   return (
     <div
+      onContextMenu={holdToSelect}
       className={cn(
         "group flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]",
-        active && "bg-white/[0.04]",
+        active && !selecting && "bg-white/[0.04]",
+        selected && "bg-brand/10",
       )}
     >
       <button
         type="button"
-        onClick={active ? onToggle : onPress}
+        onClick={selecting ? onPress : active ? onToggle : onPress}
         className="relative shrink-0"
-        aria-label={active && playing ? `Pozastavit ${track.title}` : `Přehrát ${track.title}`}
+        aria-label={
+          selecting
+            ? `${selected ? "Odebrat z výběru" : "Vybrat"} ${track.title}`
+            : active && playing
+              ? `Pozastavit ${track.title}`
+              : `Přehrát ${track.title}`
+        }
+        aria-pressed={selecting ? selected : undefined}
       >
         <Cover artwork={track.artwork} className="size-12 rounded-xl" />
         <span
           className={cn(
-            "absolute inset-0 flex items-center justify-center rounded-xl bg-black/50 text-white transition-opacity",
-            active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            "absolute inset-0 flex items-center justify-center rounded-xl transition-opacity",
+            selecting
+              ? selected
+                ? "bg-brand/85 text-black opacity-100"
+                : "bg-black/45 text-white/70 opacity-100"
+              : active
+                ? "bg-black/50 text-white opacity-100"
+                : "bg-black/50 text-white opacity-0 group-hover:opacity-100",
           )}
         >
-          {active && playing ? <Pause className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+          {selecting ? (
+            <Check className={cn("size-5", !selected && "opacity-40")} />
+          ) : active && playing ? (
+            <Pause className="size-4 fill-current" />
+          ) : (
+            <Play className="size-4 fill-current" />
+          )}
         </span>
       </button>
 
@@ -122,15 +169,18 @@ export function TrackRow({ track, active, playing, liked, plays = 0, onPress, on
       </button>
 
       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{track.duration}</span>
-      {extra}
-      <button
-        type="button"
-        onClick={onMenu}
-        aria-label={`Možnosti skladby ${track.title}`}
-        className="-mr-1 shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <MoreVertical className="size-4" />
-      </button>
+      {/* Ve výběru mizí všechno, co dělá něco jiného než zaškrtnutí. */}
+      {selecting ? null : extra}
+      {selecting ? null : (
+        <button
+          type="button"
+          onClick={onMenu}
+          aria-label={`Možnosti skladby ${track.title}`}
+          className="-mr-1 shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <MoreVertical className="size-4" />
+        </button>
+      )}
     </div>
   );
 }

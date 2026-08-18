@@ -52,7 +52,7 @@ export function PlayerDock({
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   return (
-    <div className="player-dock mw-safe-x fixed inset-x-0 z-30 border-t border-white/[0.09]">
+    <div className="player-dock relative border-t border-white/[0.09]">
       {/* Vlásek postupu nad lištou - jediná zpětná vazba, když se detail nedívá. */}
       <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden">
         <div className="h-full bg-brand transition-[width]" style={{ width: `${progress}%` }} />

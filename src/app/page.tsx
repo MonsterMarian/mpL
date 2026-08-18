@@ -51,6 +51,7 @@ import {
   previousTrackId,
   reshuffleQueue,
   sortTracks,
+  trackCountLabel,
   upcomingIds,
   type LibraryFilter,
   type PlayStats,
@@ -84,7 +85,7 @@ import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
-import { keepAlive, releaseKeepAlive } from "@/lib/playback-service";
+import { clearNowPlaying, onPlaybackCommand, updateNowPlaying } from "@/lib/playback-service";
 import { installErrorCapture } from "@/lib/diagnostics";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
@@ -117,6 +118,7 @@ function mapNativeTrack(track: NativeAudioTrack): Track {
     durationSeconds: track.durationSeconds,
     src: playableMediaSource(track.src),
     artwork: track.artwork ? playableMediaSource(track.artwork) : null,
+    artworkSource: track.artwork ?? null,
     addedAt: track.addedAt ?? 0,
     source: "device",
   };
@@ -148,8 +150,10 @@ export default function HomePage() {
   const [playlists, setPlaylists] = React.useState<Playlist[]>([]);
   /** Skladba přes celou obrazovku - otevírá ji klepnutí na to, co hraje. */
   const [nowPlayingOpen, setNowPlayingOpen] = React.useState(false);
-  /** Nabídka u skladby; `null` = zavřená. */
-  const [menuTrack, setMenuTrack] = React.useState<Track | null>(null);
+  /** Skladby, kterých se týká otevřená nabídka; prázdné pole = zavřená. */
+  const [menuTracks, setMenuTracks] = React.useState<Track[]>([]);
+  /** Vybrané skladby pro hromadné akce; `null` = režim výběru neběží. */
+  const [selected, setSelected] = React.useState<Set<string> | null>(null);
   const [deleting, setDeleting] = React.useState(false);
   const [libraryTab, setLibraryTab] = React.useState<LibraryTab>("tracks");
   /** Otevřené album, interpret nebo playlist. */
@@ -171,8 +175,18 @@ export default function HomePage() {
   const resumeRef = React.useRef<{ id: string; time: number } | null>(null);
   /** Vteřina, na kterou se má skočit, jakmile prohlížeč načte délku skladby. */
   const pendingSeek = React.useRef(0);
-  /** Poslední verze ovladačů pro MediaSession, která se registruje jen jednou. */
-  const controls = React.useRef({ next: () => {}, previous: () => {} });
+  /**
+   * Poslední verze ovladačů. Přes ref, aby se posluchači (MediaSession
+   * v prohlížeči, notifikace a zámek v telefonu) registrovali jen jednou
+   * a přesto sahali na aktuální stav.
+   */
+  const controls = React.useRef({
+    next: () => {},
+    previous: () => {},
+    play: () => {},
+    pause: () => {},
+    seek: (_seconds: number) => {},
+  });
 
   /** Knihovna dokumentů z disku - stejně jako knihovna hudby přežije restart. */
   const [documents, setDocuments] = React.useState<StoredDocument[]>([]);
@@ -390,18 +404,63 @@ export default function HomePage() {
    * Dokud hraje hudba, drží appku naživu služba v popředí. Bez ní Android
    * proces na pozadí sestřelí a poslech skončí uprostřed skladby.
    */
+  /**
+   * Co má systém ukazovat v notifikaci a na zámku. Pozice se čte přímo
+   * z přehrávače, ne ze stavu - jinak by se tohle volalo několikrát za vteřinu.
+   */
+  const pushNowPlaying = React.useCallback(
+    (playing: boolean) => {
+      if (currentTrack.id === EMPTY_TRACK.id) return;
+      void updateNowPlaying({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        album: currentTrack.album,
+        artwork: currentTrack.artworkSource ?? null,
+        durationMs: Math.round((audioRef.current?.duration || currentTrack.durationSeconds || 0) * 1000),
+        positionMs: Math.round((audioRef.current?.currentTime ?? 0) * 1000),
+        playing,
+      });
+    },
+    [currentTrack],
+  );
+
   React.useEffect(() => {
+    if (!hasTrack) {
+      void clearNowPlaying();
+      return;
+    }
     // Se zpožděním schválně: Android hlídá, že služba naskočí do popředí do
     // pěti vteřin, a rozklepané pauza/přehrát by ji spouštělo a rušilo naráz.
     // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
-    const timer = window.setTimeout(() => {
-      if (isPlaying && hasTrack) void keepAlive(currentTrack.title, currentTrack.artist);
-      else void releaseKeepAlive();
-    }, 250);
+    const timer = window.setTimeout(() => pushNowPlaying(isPlaying), 250);
     return () => window.clearTimeout(timer);
-  }, [isPlaying, hasTrack, currentTrack.title, currentTrack.artist]);
+  }, [hasTrack, isPlaying, pushNowPlaying]);
 
-  React.useEffect(() => () => void releaseKeepAlive(), []);
+  React.useEffect(() => () => void clearNowPlaying(), []);
+
+  /** Tlačítka z notifikace, ze zámku a ze sluchátek. */
+  React.useEffect(() => {
+    return onPlaybackCommand((command) => {
+      switch (command.action) {
+        case "play":
+          controls.current.play();
+          break;
+        case "pause":
+        case "stop":
+          controls.current.pause();
+          break;
+        case "next":
+          controls.current.next();
+          break;
+        case "previous":
+          controls.current.previous();
+          break;
+        case "seek":
+          controls.current.seek(command.positionMs / 1000);
+          break;
+      }
+    });
+  }, []);
 
   /** Odpočet časovače. Vteřinový tik stačí - vyšší přesnost by nikdo nepoznal. */
   React.useEffect(() => {
@@ -547,8 +606,12 @@ export default function HomePage() {
    */
   const handleBack = React.useRef<() => boolean>(() => false);
   handleBack.current = () => {
-    if (menuTrack) {
-      setMenuTrack(null);
+    if (menuTracks.length) {
+      setMenuTracks([]);
+      return true;
+    }
+    if (selected) {
+      setSelected(null);
       return true;
     }
     if (sleepOpen) {
@@ -625,6 +688,10 @@ export default function HomePage() {
    * by klepnutí na to, co zrovna hraje, nemělo kam vést.
    */
   const pressTrack = (trackId: string, queueIds: string[]) => {
+    if (selected) {
+      toggleSelected(trackId);
+      return;
+    }
     if (trackId === currentTrackId) {
       setNowPlayingOpen(true);
       return;
@@ -682,6 +749,8 @@ export default function HomePage() {
   const seekTo = (seconds: number) => {
     if (audioRef.current) audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
+    // Bez tohohle by pruh na zámku běžel od staré pozice dál.
+    pushNowPlaying(isPlaying);
   };
 
   const skipBy = (seconds: number) => {
@@ -717,36 +786,79 @@ export default function HomePage() {
     startTrack(next);
   };
 
-  controls.current = { next: playNext, previous: playPrevious };
+  controls.current = {
+    next: playNext,
+    previous: playPrevious,
+    play: () => {
+      if (!isPlaying) togglePlayback();
+    },
+    pause: () => {
+      if (isPlaying) togglePlayback();
+    },
+    seek: seekTo,
+  };
 
   // --- fronta, playlisty a mazání --------------------------------------------
 
-  const queueAction = (track: Track, where: "next" | "end") => {
+  /** Popisek pro hlášku: jedna skladba jménem, víc počtem. */
+  const label = (tracks_: Track[]) => (tracks_.length === 1 ? tracks_[0].title : trackCountLabel(tracks_.length));
+
+  const closeMenu = () => {
+    setMenuTracks([]);
+    setSelected(null);
+  };
+
+  const queueAction = (target: Track[], where: "next" | "end") => {
+    if (!target.length) return;
+    const ids = target.map((track) => track.id);
     setQueue((previous) => {
       const base = previous.ids.length ? previous : activeQueue;
-      return where === "next"
-        ? insertNext(base, [track.id], currentTrackId)
-        : appendToQueue(base, [track.id], currentTrackId);
+      return where === "next" ? insertNext(base, ids, currentTrackId) : appendToQueue(base, ids, currentTrackId);
     });
-    setMenuTrack(null);
+    closeMenu();
     toast({
       tone: "info",
       title: where === "next" ? "Zařazeno jako další" : "Přidáno do fronty",
-      description: track.title,
+      description: label(target),
     });
   };
 
-  const addTrackToPlaylist = (playlistId: string, track: Track) => {
-    setPlaylists((previous) => addToPlaylist(previous, playlistId, [track.id]));
-    setMenuTrack(null);
+  const addTracksToPlaylist = (playlistId: string, target: Track[]) => {
+    setPlaylists((previous) => addToPlaylist(previous, playlistId, target.map((track) => track.id)));
+    closeMenu();
     const name = playlists.find((playlist) => playlist.id === playlistId)?.name;
-    toast({ tone: "win", title: "Přidáno do playlistu", description: name ?? track.title });
+    toast({ tone: "win", title: "Přidáno do playlistu", description: name ?? label(target) });
   };
 
-  const createPlaylistWith = (name: string, track?: Track) => {
-    setPlaylists((previous) => createPlaylist(previous, name, track ? [track.id] : []));
-    if (track) setMenuTrack(null);
+  const createPlaylistWith = (name: string, target: Track[] = []) => {
+    setPlaylists((previous) => createPlaylist(previous, name, target.map((track) => track.id)));
+    if (target.length) closeMenu();
     toast({ tone: "win", title: "Playlist založen", description: name });
+  };
+
+  /** Srdce pro celý výběr: když ho má každý, sundá se všem, jinak se přidá. */
+  const toggleLikeAll = (target: Track[]) => {
+    const everyLiked = target.every((track) => liked.has(track.id));
+    setLiked((previous) => {
+      const next = new Set(previous);
+      for (const track of target) {
+        if (everyLiked) next.delete(track.id);
+        else next.add(track.id);
+      }
+      return next;
+    });
+    closeMenu();
+  };
+
+  const toggleSelected = (trackId: string) => {
+    setSelected((previous) => {
+      if (!previous) return new Set([trackId]);
+      const next = new Set(previous);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      // Prázdný výběr nemá co držet obrazovku - vypne se sám.
+      return next.size ? next : null;
+    });
   };
 
   /**
@@ -787,29 +899,33 @@ export default function HomePage() {
    * Smazání souboru ze zařízení. Od Androidu 11 se ptá systém vlastním oknem,
    * takže odmítnutí není chyba - skladba prostě zůstane, kde byla.
    */
-  const deleteTrack = async (track: Track) => {
-    const fromDevice = track.source === "device" && canReadDeviceMedia();
+  const deleteTracks = async (target: Track[]) => {
+    if (!target.length) return;
+    const deviceIds = canReadDeviceMedia()
+      ? target.filter((track) => track.source === "device").map((track) => track.id.replace(/^device-/, ""))
+      : [];
     setDeleting(true);
     try {
-      if (fromDevice) {
-        const result = await MediaLibrary.deleteAudio({ id: track.id.replace(/^device-/, "") });
+      if (deviceIds.length) {
+        // Všechna id naráz: systém se pak zeptá jednou, ne u každé skladby zvlášť.
+        const result = await MediaLibrary.deleteAudio({ ids: deviceIds });
         if (!result?.deleted) {
-          toast({ tone: "info", title: "Skladba zůstává", description: "Mazání nebylo potvrzené." });
+          toast({ tone: "info", title: "Skladby zůstávají", description: "Mazání nebylo potvrzené." });
           return;
         }
       }
-      forgetTrack(track.id);
+      for (const track of target) forgetTrack(track.id);
       toast({
         tone: "win",
-        title: fromDevice ? "Skladba smazána" : "Odebráno z knihovny",
-        description: track.title,
+        title: deviceIds.length ? "Smazáno ze zařízení" : "Odebráno z knihovny",
+        description: label(target),
       });
     } catch (error) {
-      console.error("Skladbu se nepodařilo smazat", error);
+      console.error("Skladby se nepodařilo smazat", error);
       toast({ tone: "warn", title: "Smazání selhalo", description: "Soubor se nepodařilo odstranit ze zařízení." });
     } finally {
       setDeleting(false);
-      setMenuTrack(null);
+      closeMenu();
     }
   };
 
@@ -1073,6 +1189,11 @@ export default function HomePage() {
   const sleepActive = sleepAt !== null || sleepAfterTrack;
   const sleepLabel = sleepAt !== null ? `${Math.ceil(sleepLeft / 60000)} min` : sleepAfterTrack ? "do konce" : null;
 
+  // Hlášky musí vědět, jak vysoký je spodní pruh - viz `.mw-above-dock`.
+  React.useEffect(() => {
+    document.documentElement.dataset.bottomBar = views.length > 1 ? "nav" : "dock";
+  }, [views.length]);
+
   const goToView = (view: View) => {
     if (!views.some((v) => v.id === view)) return;
     setActiveView(view);
@@ -1146,7 +1267,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="mw-pad-nav mx-auto w-full max-w-4xl flex-1 px-4 pt-6">
+      <main className={cn("mx-auto w-full max-w-4xl flex-1 px-4 pt-6", views.length > 1 ? "mw-pad-nav" : "mw-pad-dock")}>
         {activeView === "library" ? (
           <LibraryView
             tracks={tracks}
@@ -1172,7 +1293,12 @@ export default function HomePage() {
             onUpload={handleAudioUpload}
             onPressTrack={pressTrack}
             onToggleTrack={togglePlayback}
-            onMenu={setMenuTrack}
+            onMenu={(track) => setMenuTracks([track])}
+            selected={selected}
+            onStartSelection={(trackId) => setSelected(new Set([trackId]))}
+            onSelectAll={(trackIds) => setSelected(new Set(trackIds))}
+            onEndSelection={() => setSelected(null)}
+            onSelectionMenu={() => setMenuTracks(tracks.filter((track) => selected?.has(track.id)))}
             onPlayCollection={playCollection}
             onCreatePlaylist={(name) => createPlaylistWith(name)}
             onRenamePlaylist={(id, name) => setPlaylists((previous) => renamePlaylist(previous, id, name))}
@@ -1335,54 +1461,69 @@ export default function HomePage() {
         ) : null}
       </main>
 
-      <nav className="mw-safe-bottom mw-safe-x fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur sm:hidden">
-        <div className="mx-auto flex w-full max-w-4xl">
-          {views.map((item) => {
-            const Icon = item.icon;
-            const active = activeView === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => goToView(item.id)}
-                aria-label={item.label}
-                className={cn(
-                  "flex flex-1 items-center justify-center py-3 transition-colors",
-                  active ? "text-foreground" : "text-muted-foreground",
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex h-9 w-16 items-center justify-center rounded-full transition-colors",
-                    active && "bg-secondary text-secondary-foreground",
-                  )}
-                >
-                  <Icon className="size-5" />
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/*
+        Lišta přehrávače a přepínač sekcí jsou jeden ukotvený pruh, ne dvě věci
+        nad sebou: dokud se každá kotvila zvlášť, zbýval mezi nimi vlásek
+        pozadí, který při scrolování probleskoval.
+
+        Přepínač se kreslí, jen když je mezi čím přepínat - s vypnutými addony
+        zbyde jediné tlačítko a to je jen pruh navíc.
+      */}
+      <div className="mw-safe-x fixed inset-x-0 bottom-0 z-40 bg-background">
+        <PlayerDock
+          track={currentTrack}
+          hasTrack={hasTrack}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          shuffle={isShuffled}
+          repeat={repeatMode}
+          onOpen={() => setNowPlayingOpen(true)}
+          onToggle={togglePlayback}
+          onNext={playNext}
+          onPrevious={playPrevious}
+          onSeek={seekTo}
+          onShuffle={toggleShuffle}
+          onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
+        />
+
+        {views.length > 1 ? (
+          <nav className="border-t border-white/[0.07] sm:hidden">
+            <div className="mx-auto flex w-full max-w-4xl">
+              {views.map((item) => {
+                const Icon = item.icon;
+                const active = activeView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => goToView(item.id)}
+                    aria-label={item.label}
+                    className={cn(
+                      "flex flex-1 items-center justify-center py-3 transition-colors",
+                      active ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "flex h-9 w-16 items-center justify-center rounded-full transition-colors",
+                        active && "bg-secondary text-secondary-foreground",
+                      )}
+                    >
+                      <Icon className="size-5" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        ) : null}
+
+        {/* Pruh gest na dně displeje - obsah pod něj nesmí. */}
+        <div className="mw-safe-bottom" />
+      </div>
 
       <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={handleEnded} onError={() => { if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
-
-      <PlayerDock
-        track={currentTrack}
-        hasTrack={hasTrack}
-        isPlaying={isPlaying}
-        currentTime={currentTime}
-        duration={duration}
-        shuffle={isShuffled}
-        repeat={repeatMode}
-        onOpen={() => setNowPlayingOpen(true)}
-        onToggle={togglePlayback}
-        onNext={playNext}
-        onPrevious={playPrevious}
-        onSeek={seekTo}
-        onShuffle={toggleShuffle}
-        onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
-      />
 
       <NowPlaying
         open={nowPlayingOpen && hasTrack}
@@ -1405,29 +1546,30 @@ export default function HomePage() {
         onLike={() => toggleLike(currentTrack.id)}
         onShuffle={toggleShuffle}
         onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
-        onMenu={() => setMenuTrack(currentTrack)}
+        onMenu={() => setMenuTracks([currentTrack])}
         onSleep={() => setSleepOpen(true)}
         onPlayFromQueue={(trackId) => startTrack(trackId)}
         onRemoveFromQueue={(trackId) => setQueue((previous) => dropFromQueue(previous, trackId))}
       />
 
       <TrackMenu
-        track={menuTrack}
-        liked={menuTrack ? liked.has(menuTrack.id) : false}
+        tracks={menuTracks}
+        liked={menuTracks.length > 0 && menuTracks.every((track) => liked.has(track.id))}
         playlists={playlists}
-        fromDevice={menuTrack?.source === "device" && canReadDeviceMedia()}
+        fromDevice={canReadDeviceMedia() && menuTracks.some((track) => track.source === "device")}
         deleting={deleting}
-        onClose={() => setMenuTrack(null)}
-        onPlayNext={() => menuTrack && queueAction(menuTrack, "next")}
-        onQueue={() => menuTrack && queueAction(menuTrack, "end")}
-        onLike={() => {
-          if (!menuTrack) return;
-          toggleLike(menuTrack.id);
-          setMenuTrack(null);
+        canSelect={selected === null && menuTracks.length === 1}
+        onClose={() => setMenuTracks([])}
+        onPlayNext={() => queueAction(menuTracks, "next")}
+        onQueue={() => queueAction(menuTracks, "end")}
+        onLike={() => toggleLikeAll(menuTracks)}
+        onSelect={() => {
+          setSelected(new Set(menuTracks.map((track) => track.id)));
+          setMenuTracks([]);
         }}
-        onAddToPlaylist={(playlistId) => menuTrack && addTrackToPlaylist(playlistId, menuTrack)}
-        onCreatePlaylist={(name) => menuTrack && createPlaylistWith(name, menuTrack)}
-        onDelete={() => menuTrack && void deleteTrack(menuTrack)}
+        onAddToPlaylist={(playlistId) => addTracksToPlaylist(playlistId, menuTracks)}
+        onCreatePlaylist={(name) => createPlaylistWith(name, menuTracks)}
+        onDelete={() => void deleteTracks(menuTracks)}
       />
 
       <Dialog

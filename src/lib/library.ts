@@ -16,6 +16,11 @@ export interface Track {
   src: string;
   /** Obal skladby, když nějaký má. Jinak `null` a nastoupí značka appky. */
   artwork: string | null;
+  /**
+   * Původní `content://` adresa obalu. WebView si adresu překládá na svoji,
+   * ale notifikace a zámek čtou soubor přímo, takže potřebují tu nepřeloženou.
+   */
+  artworkSource?: string | null;
   /** Kdy skladba přibyla do zařízení - podle toho řadí „Naposledy přidané". */
   addedAt: number;
   source: "device" | "local";

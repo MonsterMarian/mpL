@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   ArrowDownUp,
   Check,
+  CheckCheck,
   ChevronLeft,
   Disc3,
   Heart,
@@ -16,6 +17,7 @@ import {
   Plus,
   Search,
   Shuffle,
+  MoreHorizontal,
   Trash2,
   Upload,
   X,
@@ -91,6 +93,12 @@ export interface LibraryViewProps {
   onPressTrack: (trackId: string, queueIds: string[]) => void;
   onToggleTrack: () => void;
   onMenu: (track: Track) => void;
+  /** Vybrané skladby; `null` = režim výběru neběží. */
+  selected: ReadonlySet<string> | null;
+  onStartSelection: (trackId: string) => void;
+  onSelectAll: (trackIds: string[]) => void;
+  onEndSelection: () => void;
+  onSelectionMenu: () => void;
   onPlayCollection: (trackIds: string[], shuffle: boolean) => void;
   onCreatePlaylist: (name: string) => void;
   onRenamePlaylist: (id: string, name: string) => void;
@@ -126,6 +134,11 @@ export function LibraryView(props: LibraryViewProps) {
     onMenu,
     onPlayCollection,
     onCreatePlaylist,
+    selected,
+    onStartSelection,
+    onSelectAll,
+    onEndSelection,
+    onSelectionMenu,
   } = props;
 
   const albums = React.useMemo(() => groupByAlbum(tracks), [tracks]);
@@ -144,8 +157,22 @@ export function LibraryView(props: LibraryViewProps) {
       onToggle={onToggleTrack}
       onMenu={() => onMenu(track)}
       extra={extra}
+      selecting={selected !== null}
+      selected={selected?.has(track.id) ?? false}
+      onLongPress={() => onStartSelection(track.id)}
     />
   );
+
+  const selectionBar = (visibleIds: string[]) =>
+    selected ? (
+      <SelectionBar
+        count={selected.size}
+        allSelected={visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))}
+        onSelectAll={() => onSelectAll(visibleIds)}
+        onEnd={onEndSelection}
+        onMenu={onSelectionMenu}
+      />
+    ) : null;
 
   if (browse) {
     return (
@@ -155,6 +182,7 @@ export function LibraryView(props: LibraryViewProps) {
         artists={artists}
         browse={browse}
         renderRow={row}
+        selectionBar={selectionBar}
         onBack={() => onBrowseChange(null)}
       />
     );
@@ -162,6 +190,7 @@ export function LibraryView(props: LibraryViewProps) {
 
   return (
     <section className="animate-in-up">
+      {selectionBar(visibleTracks.map((track) => track.id))}
       <div className="mb-5">
         <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Knihovna</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
@@ -263,6 +292,62 @@ export function LibraryView(props: LibraryViewProps) {
         />
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Lišta výběru.
+ *
+ * Drží se nahoře nad seznamem a lepí se pod hlavičku, aby při procházení
+ * dlouhé knihovny neutekla - jinak by se z výběru nedalo ven bez scrolování
+ * na začátek.
+ */
+function SelectionBar({
+  count,
+  allSelected,
+  onSelectAll,
+  onEnd,
+  onMenu,
+}: {
+  count: number;
+  allSelected: boolean;
+  onSelectAll: () => void;
+  onEnd: () => void;
+  onMenu: () => void;
+}) {
+  return (
+    <div className="animate-in-up sticky top-16 z-30 -mx-4 mb-4 flex items-center gap-2 border-b border-white/[0.08] bg-background/95 px-4 py-2.5 backdrop-blur">
+      <button
+        type="button"
+        onClick={onEnd}
+        aria-label="Zrušit výběr"
+        className="-ml-2 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <X className="size-5" />
+      </button>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+        {count ? `${count} ${count === 1 ? "vybraná" : count < 5 ? "vybrané" : "vybraných"}` : "Nic není vybrané"}
+      </span>
+      <button
+        type="button"
+        onClick={onSelectAll}
+        className={cn(
+          "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors hover:bg-accent",
+          allSelected && "border-brand/40 text-brand",
+        )}
+      >
+        <CheckCheck className="size-3.5" /> Vše
+      </button>
+      <button
+        type="button"
+        onClick={onMenu}
+        disabled={!count}
+        aria-label="Co s vybranými"
+        className="flex size-9 items-center justify-center rounded-full bg-brand text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+      >
+        <MoreHorizontal className="size-4" />
+      </button>
+    </div>
   );
 }
 
@@ -467,6 +552,7 @@ function CollectionDetail({
   tracks,
   playlists,
   renderRow,
+  selectionBar,
   onBack,
   onPlayCollection,
   onRenamePlaylist,
@@ -477,6 +563,7 @@ function CollectionDetail({
   artists: Collection[];
   browse: Browse;
   renderRow: (track: Track, queueIds: string[], extra?: React.ReactNode) => React.ReactNode;
+  selectionBar: (visibleIds: string[]) => React.ReactNode;
   onBack: () => void;
 }) {
   const playlist = browse.kind === "playlists" ? playlists.find((item) => item.id === browse.key) ?? null : null;
@@ -502,6 +589,7 @@ function CollectionDetail({
 
   return (
     <section className="animate-in-up">
+      {selectionBar(queueIds)}
       <button
         type="button"
         onClick={onBack}

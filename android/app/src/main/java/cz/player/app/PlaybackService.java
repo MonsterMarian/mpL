@@ -5,31 +5,77 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.Icon;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.media.MediaMetadata;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
-import androidx.core.app.NotificationCompat;
+import java.io.InputStream;
 
 /**
- * Služba, která drží appku naživu, dokud hraje hudba.
+ * Přehrávač tak, jak ho vidí systém.
  *
- * Zvuk hraje ve WebView, a ten je jen součástí procesu appky. Jakmile appka
- * zmizí z popředí, je její proces pro Android obyčejný kandidát na odstřel -
- * hudba pak uprostřed skladby ztichne a návrat do appky vypadá jako pád.
- * Služba v popředí tomu zabrání: dokud běží, systém proces nechá být.
+ * Zvuk sám hraje ve WebView, ale Android o něm neví nic - v notifikacích ani na
+ * zamykací obrazovce se proto neobjevilo vůbec nic. Tahle služba mu to řekne:
+ * drží MediaSession s názvem, interpretem, obalem a pozicí ve skladbě, kreslí
+ * notifikaci s tlačítky a stisky posílá zpátky do webové vrstvy.
  *
- * Sama nic nepřehrává. Ovládání ze zámku obstarává MediaSession, kterou hlásí
- * WebView, tahle notifikace jen říká, že se hraje, a otevře appku.
+ * Zároveň drží appku naživu, dokud se hraje. Bez služby v popředí je proces
+ * s appkou na pozadí obyčejný kandidát na odstřel a hudba uprostřed skladby
+ * ztichne.
  */
 public class PlaybackService extends Service {
 
+    static final String ACTION_UPDATE = "cz.player.app.UPDATE";
+    static final String ACTION_COMMAND = "cz.player.app.COMMAND";
+
     static final String EXTRA_TITLE = "title";
     static final String EXTRA_ARTIST = "artist";
+    static final String EXTRA_ALBUM = "album";
+    static final String EXTRA_ARTWORK = "artwork";
+    static final String EXTRA_DURATION = "durationMs";
+    static final String EXTRA_POSITION = "positionMs";
+    static final String EXTRA_PLAYING = "playing";
+    static final String EXTRA_COMMAND = "command";
 
     private static final String CHANNEL_ID = "playback";
     private static final int NOTIFICATION_ID = 1;
+
+    /** Kam se hlásí stisky z notifikace a ze zámku. Nastavuje ho plugin. */
+    private static CommandSink sink;
+
+    interface CommandSink {
+        void onCommand(String action, long positionMs);
+    }
+
+    static void setCommandSink(CommandSink next) {
+        sink = next;
+    }
+
+    private MediaSession session;
+    private AudioManager audioManager;
+    private AudioFocusRequest focusRequest;
+    private AudioManager.OnAudioFocusChangeListener focusListener;
+
+    private String title = "";
+    private String artist = "";
+    private String album = "";
+    private String artworkUri;
+    private Bitmap artwork;
+    private long durationMs = 0;
+    private long positionMs = 0;
+    private boolean playing = false;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -37,35 +83,202 @@ public class PlaybackService extends Service {
     }
 
     @Override
+    public void onCreate() {
+        super.onCreate();
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        session = new MediaSession(this, "P/_ayer");
+        session.setCallback(
+            new MediaSession.Callback() {
+                @Override
+                public void onPlay() {
+                    send("play", -1);
+                }
+
+                @Override
+                public void onPause() {
+                    send("pause", -1);
+                }
+
+                @Override
+                public void onSkipToNext() {
+                    send("next", -1);
+                }
+
+                @Override
+                public void onSkipToPrevious() {
+                    send("previous", -1);
+                }
+
+                @Override
+                public void onStop() {
+                    send("stop", -1);
+                }
+
+                @Override
+                public void onSeekTo(long pos) {
+                    send("seek", pos);
+                }
+            }
+        );
+        session.setActive(true);
+
+        // Když si zvuk vezme hovor nebo jiná appka, hudba se má ztišit sama.
+        focusListener = change -> {
+            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                send("pause", -1);
+            }
+        };
+    }
+
+    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        String title = intent != null ? intent.getStringExtra(EXTRA_TITLE) : null;
-        String artist = intent != null ? intent.getStringExtra(EXTRA_ARTIST) : null;
+        if (intent != null && ACTION_COMMAND.equals(intent.getAction())) {
+            send(intent.getStringExtra(EXTRA_COMMAND), -1);
+            return START_NOT_STICKY;
+        }
+
+        if (intent != null) {
+            title = orEmpty(intent.getStringExtra(EXTRA_TITLE));
+            artist = orEmpty(intent.getStringExtra(EXTRA_ARTIST));
+            album = orEmpty(intent.getStringExtra(EXTRA_ALBUM));
+            durationMs = intent.getLongExtra(EXTRA_DURATION, 0);
+            positionMs = intent.getLongExtra(EXTRA_POSITION, 0);
+            playing = intent.getBooleanExtra(EXTRA_PLAYING, false);
+            loadArtwork(intent.getStringExtra(EXTRA_ARTWORK));
+        }
+
+        publishMetadata();
+        publishState();
+        requestFocus();
 
         try {
-            Notification notification = buildNotification(title, artist);
+            Notification notification = buildNotification();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
             } else {
                 startForeground(NOTIFICATION_ID, notification);
             }
         } catch (Exception error) {
-            // Android 12+ neumožní rozjet službu v popředí odkudkoliv. Když to
-            // neprojde, musí služba hned skončit - jinak ji systém sestřelí sám
-            // s hláškou, že se do popředí nedostala včas.
+            // Android 12+ nepustí službu do popředí odkudkoliv. Když to neprojde,
+            // musí služba hned skončit - jinak ji systém sestřelí sám s hláškou,
+            // že se do popředí nedostala včas.
             stopSelf();
             return START_NOT_STICKY;
         }
 
-        // Bez hudby nemá služba co dělat: po sestřelení procesu se nekřísí.
+        // Po pauze zůstane notifikace viset, ale ze zámku se dá odsunout:
+        // hudba stojí, takže proces už nemá co držet.
+        if (!playing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(Service.STOP_FOREGROUND_DETACH);
+        }
+
         return START_NOT_STICKY;
     }
 
-    private Notification buildNotification(String title, String artist) {
+    @Override
+    public void onDestroy() {
+        abandonFocus();
+        if (session != null) {
+            session.setActive(false);
+            session.release();
+            session = null;
+        }
+        if (artwork != null) {
+            artwork.recycle();
+            artwork = null;
+        }
+        super.onDestroy();
+    }
+
+    private void send(String action, long pos) {
+        CommandSink target = sink;
+        if (target != null && action != null) target.onCommand(action, pos);
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private void publishMetadata() {
+        if (session == null) return;
+        MediaMetadata.Builder metadata = new MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, album)
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+        if (artwork != null) {
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork);
+        }
+        session.setMetadata(metadata.build());
+    }
+
+    /**
+     * Stav pro zámek a notifikaci. Pozice se posílá jen při změně - systém si ji
+     * mezi aktualizacemi dopočítá sám podle rychlosti přehrávání.
+     */
+    private void publishState() {
+        if (session == null) return;
+        session.setPlaybackState(
+            new PlaybackState.Builder()
+                .setActions(
+                    PlaybackState.ACTION_PLAY
+                        | PlaybackState.ACTION_PAUSE
+                        | PlaybackState.ACTION_PLAY_PAUSE
+                        | PlaybackState.ACTION_SKIP_TO_NEXT
+                        | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                        | PlaybackState.ACTION_SEEK_TO
+                        | PlaybackState.ACTION_STOP
+                )
+                .setState(
+                    playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                    positionMs,
+                    playing ? 1f : 0f
+                )
+                .build()
+        );
+    }
+
+    /** Obal alba z MediaStore. Zmenšený - do notifikace se plnotučný nevejde. */
+    private void loadArtwork(String uri) {
+        if (uri == null || uri.isEmpty()) {
+            if (artwork != null) artwork.recycle();
+            artwork = null;
+            artworkUri = null;
+            return;
+        }
+        if (uri.equals(artworkUri) && artwork != null) return;
+
+        Bitmap loaded = null;
+        try {
+            ContentResolver resolver = getContentResolver();
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream probe = resolver.openInputStream(Uri.parse(uri))) {
+                BitmapFactory.decodeStream(probe, null, bounds);
+            }
+
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            int larger = Math.max(bounds.outWidth, bounds.outHeight);
+            options.inSampleSize = larger > 512 ? Math.round((float) larger / 512f) : 1;
+            try (InputStream stream = resolver.openInputStream(Uri.parse(uri))) {
+                loaded = BitmapFactory.decodeStream(stream, null, options);
+            }
+        } catch (Exception error) {
+            // Obal je ozdoba. Když nejde načíst, hraje se dál bez něj.
+            loaded = null;
+        }
+
+        if (artwork != null) artwork.recycle();
+        artwork = loaded;
+        artworkUri = loaded != null ? uri : null;
+    }
+
+    private Notification buildNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "Přehrávání",
-                // Tichý kanál: hlásí se, že se hraje, ne že se něco stalo.
+                // Tichý kanál: hlásí se, co hraje, ne že se něco stalo.
                 NotificationManager.IMPORTANCE_LOW
             );
             channel.setShowBadge(false);
@@ -75,31 +288,109 @@ public class PlaybackService extends Service {
 
         Intent open = new Intent(this, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent contentIntent = PendingIntent.getActivity(
+        PendingIntent content = PendingIntent.getActivity(
             this,
             0,
             open,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title != null && !title.isEmpty() ? title : "P/_ayer")
-            .setContentText(artist != null && !artist.isEmpty() ? artist : "Přehrává se")
-            .setContentIntent(contentIntent)
-            .setOngoing(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build();
+            .setContentTitle(title.isEmpty() ? "P/_ayer" : title)
+            .setContentText(artist.isEmpty() ? "Přehrává se" : artist)
+            .setContentIntent(content)
+            .setOngoing(playing)
+            .setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setStyle(
+                new Notification.MediaStyle()
+                    .setMediaSession(session.getSessionToken())
+                    // Na zamčeném displeji je místo na tři - zpět, přehrát, dál.
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
+            .addAction(action("Předchozí", android.R.drawable.ic_media_previous, "previous"))
+            .addAction(
+                playing
+                    ? action("Pozastavit", android.R.drawable.ic_media_pause, "pause")
+                    : action("Přehrát", android.R.drawable.ic_media_play, "play")
+            )
+            .addAction(action("Další", android.R.drawable.ic_media_next, "next"));
+
+        if (artwork != null) builder.setLargeIcon(artwork);
+        return builder.build();
     }
 
-    /** Zapne nebo osvěží službu. Volá se, když se rozjede skladba. */
-    static void start(Context context, String title, String artist) {
-        Intent intent = new Intent(context, PlaybackService.class);
-        intent.putExtra(EXTRA_TITLE, title);
-        intent.putExtra(EXTRA_ARTIST, artist);
+    private Notification.Action action(String label, int icon, String command) {
+        Intent intent = new Intent(this, PlaybackService.class)
+            .setAction(ACTION_COMMAND)
+            .putExtra(EXTRA_COMMAND, command);
+        PendingIntent pending = PendingIntent.getService(
+            this,
+            command.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        return new Notification.Action.Builder(Icon.createWithResource(this, icon), label, pending).build();
+    }
+
+    private void requestFocus() {
+        if (audioManager == null || !playing) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (focusRequest == null) {
+                    focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(
+                            new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        .setOnAudioFocusChangeListener(focusListener)
+                        .build();
+                }
+                audioManager.requestAudioFocus(focusRequest);
+            } else {
+                audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+            }
+        } catch (Exception error) {
+            // Bez zvukového ohniska se hraje dál, jen se hudba nesrovná s hovorem.
+        }
+    }
+
+    private void abandonFocus() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (focusRequest != null) audioManager.abandonAudioFocusRequest(focusRequest);
+            } else {
+                audioManager.abandonAudioFocus(focusListener);
+            }
+        } catch (Exception error) {
+            // Ohnisko nikdo nedrží - není co vracet.
+        }
+    }
+
+    /** Zapne nebo osvěží službu podle toho, co se zrovna hraje. */
+    static void update(
+        Context context,
+        String title,
+        String artist,
+        String album,
+        String artwork,
+        long durationMs,
+        long positionMs,
+        boolean playing
+    ) {
+        Intent intent = new Intent(context, PlaybackService.class)
+            .setAction(ACTION_UPDATE)
+            .putExtra(EXTRA_TITLE, title)
+            .putExtra(EXTRA_ARTIST, artist)
+            .putExtra(EXTRA_ALBUM, album)
+            .putExtra(EXTRA_ARTWORK, artwork)
+            .putExtra(EXTRA_DURATION, durationMs)
+            .putExtra(EXTRA_POSITION, positionMs)
+            .putExtra(EXTRA_PLAYING, playing);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);

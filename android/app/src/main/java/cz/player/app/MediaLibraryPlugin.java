@@ -14,6 +14,7 @@ import android.os.Build;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import androidx.core.content.ContextCompat;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -21,8 +22,11 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import org.json.JSONArray;
+import org.json.JSONException;
 
 @CapacitorPlugin(
     name = "MediaLibrary",
@@ -208,7 +212,7 @@ public class MediaLibraryPlugin extends Plugin {
     }
 
     /**
-     * Smaže skladbu ze zařízení, ne jen z knihovny appky.
+     * Smaže skladby ze zařízení, ne jen z knihovny appky.
      *
      * Soubor patří tomu, kdo ho stáhl, ne přehrávači - proto se od Androidu 11
      * ptá systém sám vlastním oknem (`createDeleteRequest`) a na Androidu 10
@@ -218,14 +222,14 @@ public class MediaLibraryPlugin extends Plugin {
      */
     @PluginMethod
     public void deleteAudio(PluginCall call) {
-        Long id = trackId(call);
-        if (id == null) return;
+        List<Uri> uris = trackUris(call);
+        if (uris == null) return;
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !hasWritePermission()) {
             requestPermissionForAlias("write", call, "writePermissionCallback");
             return;
         }
-        deleteTrack(call, id);
+        deleteTracks(call, uris);
     }
 
     @PermissionCallback
@@ -234,23 +238,43 @@ public class MediaLibraryPlugin extends Plugin {
             call.reject("Mazání souborů nebylo povoleno.", "MEDIA_PERMISSION_DENIED");
             return;
         }
-        Long id = trackId(call);
-        if (id != null) deleteTrack(call, id);
+        List<Uri> uris = trackUris(call);
+        if (uris != null) deleteTracks(call, uris);
     }
 
-    /** Id skladby z volání. Když chybí nebo je nesmyslné, volání se rovnou odmítne. */
-    private Long trackId(PluginCall call) {
-        String raw = call.getString("id");
-        if (raw == null || raw.trim().isEmpty()) {
+    /**
+     * Adresy skladeb z volání. Bere `ids` i starší `id`: balík živé aktualizace
+     * a APK bývají chvíli každý jinak starý a nemají se o sebe zakopnout.
+     */
+    private List<Uri> trackUris(PluginCall call) {
+        List<String> raw;
+        try {
+            JSArray ids = call.getArray("ids");
+            raw = ids != null ? ids.toList() : null;
+        } catch (JSONException error) {
+            raw = null;
+        }
+        if (raw == null) {
+            String single = call.getString("id");
+            raw = single != null ? Collections.singletonList(single) : Collections.<String>emptyList();
+        }
+
+        List<Uri> uris = new ArrayList<>();
+        for (String value : raw) {
+            if (value == null || value.trim().isEmpty()) continue;
+            try {
+                long id = Long.parseLong(value.trim());
+                uris.add(ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id));
+            } catch (NumberFormatException error) {
+                // Ručně přidaný soubor v MediaStore není - přeskočí se.
+            }
+        }
+
+        if (uris.isEmpty()) {
             call.reject("Chybí id skladby.", "MEDIA_BAD_REQUEST");
             return null;
         }
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException error) {
-            call.reject("Skladba není ze zařízení.", "MEDIA_BAD_REQUEST");
-            return null;
-        }
+        return uris;
     }
 
     private boolean hasWritePermission() {
@@ -258,14 +282,14 @@ public class MediaLibraryPlugin extends Plugin {
             == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void deleteTrack(PluginCall call, long id) {
-        Uri uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+    private void deleteTracks(PluginCall call, List<Uri> uris) {
         ContentResolver resolver = getContext().getContentResolver();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // Android 11+: mazání obstará systém, appka jen ukáže jeho okno.
+            // Všechny adresy naráz, ať se ptá jednou i u celého výběru.
             try {
-                PendingIntent request = MediaStore.createDeleteRequest(resolver, Collections.singletonList(uri));
+                PendingIntent request = MediaStore.createDeleteRequest(resolver, uris);
                 confirmWithUser(call, request.getIntentSender(), null);
             } catch (Exception error) {
                 call.reject("Skladbu se nepodařilo smazat.", "MEDIA_DELETE_FAILED", error);
@@ -274,7 +298,9 @@ public class MediaLibraryPlugin extends Plugin {
         }
 
         try {
-            resolveDeleted(call, resolver.delete(uri, null, null) > 0);
+            int removed = 0;
+            for (Uri uri : uris) removed += resolver.delete(uri, null, null);
+            resolveDeleted(call, removed > 0);
         } catch (SecurityException error) {
             IntentSender sender = recoverableSender(error);
             if (sender == null) {
@@ -282,7 +308,7 @@ public class MediaLibraryPlugin extends Plugin {
                 return;
             }
             // Android 10: po svolení se maže znovu, systém sám nic nesmaže.
-            confirmWithUser(call, sender, uri);
+            confirmWithUser(call, sender, uris);
         }
     }
 
@@ -296,7 +322,7 @@ public class MediaLibraryPlugin extends Plugin {
      * Systémové okno s otázkou. `retryUri` je vyplněné tam, kde se po svolení
      * musí smazat ještě jednou (Android 10) - jinak systém smaže sám.
      */
-    private void confirmWithUser(PluginCall call, IntentSender sender, Uri retryUri) {
+    private void confirmWithUser(PluginCall call, IntentSender sender, List<Uri> retry) {
         if (!(getActivity() instanceof MainActivity)) {
             call.reject("Mazání není v tomhle prostředí dostupné.", "MEDIA_DELETE_FAILED");
             return;
@@ -305,12 +331,14 @@ public class MediaLibraryPlugin extends Plugin {
         activity.confirmWithSystem(
             sender,
             () -> {
-                if (retryUri == null) {
+                if (retry == null) {
                     resolveDeleted(call, true);
                     return;
                 }
                 try {
-                    resolveDeleted(call, getContext().getContentResolver().delete(retryUri, null, null) > 0);
+                    int removed = 0;
+                    for (Uri uri : retry) removed += getContext().getContentResolver().delete(uri, null, null);
+                    resolveDeleted(call, removed > 0);
                 } catch (SecurityException error) {
                     call.reject("Skladbu se nepodařilo smazat.", "MEDIA_DELETE_FAILED", error);
                 }

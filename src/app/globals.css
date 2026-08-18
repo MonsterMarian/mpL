@@ -158,13 +158,24 @@
     padding-bottom: calc(8.75rem + var(--mw-safe-bottom));
   }
 
-  /* Bubliny hlásek patří nad lištu přehrávače, ne přes ni. */
+  /* Bez přepínače sekcí je dole jen lišta přehrávače. */
+  .mw-pad-dock {
+    padding-bottom: calc(5.5rem + var(--mw-safe-bottom));
+  }
+
+  /* Bubliny hlásek patří nad spodní pruh, ne přes něj. Bez přepínače sekcí je
+     ten pruh o celý řádek nižší, tak se hlášky spustí za ním. */
   .mw-above-dock {
     bottom: calc(8.25rem + var(--mw-safe-bottom));
   }
 
+  :root[data-bottom-bar="dock"] .mw-above-dock {
+    bottom: calc(5rem + var(--mw-safe-bottom));
+  }
+
   @media (min-width: 640px) {
-    .mw-pad-nav {
+    .mw-pad-nav,
+    .mw-pad-dock {
       padding-bottom: 5.5rem;
     }
 
@@ -264,6 +275,53 @@
 
   .animate-in-up {
     animation: mw-in 0.18s ease-out both;
+  }
+
+  /*
+   * Panel od spodní hrany. Vyjede rychle a dosedne s doběhem, zpátky padá
+   * o kus svižněji - odcházející okno nemá na co čekat.
+   */
+  @keyframes mw-sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: none;
+    }
+  }
+
+  @keyframes mw-sheet-out {
+    from {
+      transform: none;
+    }
+    to {
+      transform: translateY(100%);
+    }
+  }
+
+  .mw-sheet-in {
+    animation: mw-sheet-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .mw-sheet-out {
+    animation: mw-sheet-out 0.18s ease-in both;
+  }
+
+  @keyframes mw-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .mw-fade-in {
+    animation: mw-fade 0.2s ease-out both;
+  }
+
+  .mw-fade-out {
+    animation: mw-fade 0.18s ease-in reverse both;
   }
 
   /*
@@ -382,6 +440,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .mw-sheet-in,
+    .mw-sheet-out,
+    .mw-fade-in,
+    .mw-fade-out,
     .animate-in-up,
     [class*="mw-spin"],
     .mw-shine,
@@ -475,21 +537,13 @@
 }
 
 /*
- * Lišta přehrávače sedí na celé šířce těsně nad spodní navigací. Plovoucí
- * karta s okraji vypadala jako cizí okno položené na appku - přes celou šířku
- * je z ní součást zařízení, jako je systémová lišta.
+ * Lišta přehrávače. Kotví ji společný pruh na dně (viz `app/page.tsx`), ne ona
+ * sama: dokud se lišta i přepínač sekcí kotvily každý zvlášť, zbýval mezi nimi
+ * vlásek pozadí, který při scrolování probleskoval.
  */
 .player-dock {
   background: var(--black);
-  bottom: calc(3.8125rem + var(--mw-safe-bottom));
   box-shadow: 0 -8px 24px rgb(0 0 0 / 55%);
-}
-
-@media (min-width: 640px) {
-  /* Na širokém okně spodní navigace není, lišta klesne až k hraně. */
-  .player-dock {
-    bottom: 0;
-  }
 }
 
 /* Stránka dokumentu drží stejný pár jako zbytek appky: černá pod bílým textem. */
