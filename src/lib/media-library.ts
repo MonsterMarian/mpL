@@ -43,6 +43,13 @@ interface MediaLibraryPlugin {
    */
   openExternally(options: { uri: string; mimeType?: string }): Promise<void>;
   /**
+   * Stáhne soubor z přímé adresy. Obstará to systémový DownloadManager, takže
+   * stahování přežije i zavřenou appku a hotový soubor se objeví v knihovně.
+   */
+  download(options: { url: string; fileName?: string }): Promise<{ id: string; fileName: string }>;
+  /** Náhled videa jako data URI. `null`, když ho MediaStore nemá. */
+  videoThumbnail(options: { id: string }): Promise<{ thumbnail: string | null }>;
+  /**
    * Video se od Androidu 13 povoluje zvlášť od hudby, takže má vlastní
    * dvojici check/request - jinak by si appka řekla o obojí naráz i u toho,
    * kdo video vůbec nezapnul.

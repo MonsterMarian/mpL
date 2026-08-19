@@ -70,6 +70,25 @@ export async function hideSplash(): Promise<void> {
 }
 
 /**
+ * Návrat do appky.
+ *
+ * Oprávnění se povolují v systémovém nastavení, tedy mimo appku - a ta se to
+ * jinak nedozví. Bez tohohle musel uživatel appku vypnout a zapnout, aby se
+ * povolený přístup k hudbě projevil.
+ */
+export async function onAppResume(handler: () => void): Promise<() => void> {
+  if (!isNative()) return () => {};
+  try {
+    const handle = await App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) handler();
+    });
+    return () => void handle.remove();
+  } catch {
+    return () => {};
+  }
+}
+
+/**
  * Hardwarové tlačítko Zpět. Uvnitř appky jde o krok zpět v historii,
  * na hlavní obrazovce appku ukončí - tak se chová každá Android appka.
  */

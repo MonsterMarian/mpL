@@ -15,6 +15,15 @@ import {
   type PlaybackEvent,
 } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
+import { SectionIcon } from "@/components/ui/section-icon";
+import {
+  SECTION_ICONS,
+  loadSectionIcons,
+  saveSectionIcons,
+  type SectionIconId,
+  type SectionIcons,
+  type SectionId,
+} from "@/lib/section-icons";
 import { cn } from "@/lib/utils";
 
 type Tab = "main" | "addons";
@@ -29,7 +38,7 @@ const TABS: { id: Tab; label: string }[] = [
  * Vypínatelné části appky. Přidání dalšího addonu je jeden řádek tady -
  * obrazovka nastavení i záložky v appce jedou z tohohle seznamu.
  */
-export type AddonId = "reader" | "video";
+export type AddonId = "reader" | "video" | "downloads";
 
 export const ADDONS: { id: AddonId; label: string; hint: string; storageKey: string }[] = [
   {
@@ -43,6 +52,12 @@ export const ADDONS: { id: AddonId; label: string; hint: string; storageKey: str
     label: "Video",
     hint: "MP4 ze zařízení i z vybraného souboru",
     storageKey: "microwins:video_addon",
+  },
+  {
+    id: "downloads",
+    label: "Stahování",
+    hint: "Přímý odkaz na MP3 nebo MP4",
+    storageKey: "microwins:downloads_addon",
   },
 ];
 
@@ -77,15 +92,17 @@ interface SettingsDialogProps {
   onAddonChange?: (id: AddonId, enabled: boolean) => void;
   mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
   onRequestMediaAccess?: () => Promise<void> | void;
+  onSectionIconsChange?: (icons: SectionIcons) => void;
 }
 
 export function SettingsDialog({
   open,
   onOpenChange,
-  addons = { reader: true, video: true },
+  addons = { reader: true, video: true, downloads: true },
   onAddonChange,
   mediaPermission = "unknown",
   onRequestMediaAccess,
+  onSectionIconsChange,
 }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = React.useState<Tab>("main");
   
@@ -137,6 +154,10 @@ export function SettingsDialog({
           <div className="flex flex-col gap-5 animate-in-up">
             <Section title="Addony" hint="Vypnutá část zmizí i se svou záložkou; data zůstanou.">
               <AddonChoice addons={addons} onAddonChange={onAddonChange} />
+            </Section>
+
+            <Section title="Ikony sekcí" hint="Volba se projeví hned ve spodní liště.">
+              <SectionIconChoice open={open} onChange={onSectionIconsChange} />
             </Section>
           </div>
         )}
@@ -250,6 +271,67 @@ function AddonChoice({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Vlastní ikona pro každou sekci.
+ *
+ * Sáhnout uživateli na ikony bez ptaní byl omyl - tvar, který jednomu sedí,
+ * druhého tahá za oči. Výchozí zůstávají ty původní.
+ */
+function SectionIconChoice({ open, onChange }: { open: boolean; onChange?: (icons: SectionIcons) => void }) {
+  const [icons, setIcons] = React.useState<SectionIcons | null>(null);
+
+  React.useEffect(() => {
+    if (open) setIcons(loadSectionIcons());
+  }, [open]);
+
+  if (!icons) return null;
+
+  const sections: { id: SectionId; label: string }[] = [
+    { id: "library", label: "Knihovna" },
+    { id: "reader", label: "Dokumenty" },
+    { id: "video", label: "Video" },
+    { id: "downloads", label: "Stahování" },
+  ];
+
+  const pick = (section: SectionId, icon: SectionIconId) => {
+    const next = { ...icons, [section]: icon };
+    setIcons(next);
+    saveSectionIcons(next);
+    onChange?.(next);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {sections.map((section) => (
+        <div key={section.id} className="rounded-lg border px-3 py-2.5">
+          <p className="mb-2 text-sm font-medium">{section.label}</p>
+          <div className="flex gap-2">
+            {SECTION_ICONS[section.id].map((choice) => {
+              const active = icons[section.id] === choice.id;
+              return (
+                <button
+                  key={choice.id}
+                  type="button"
+                  onClick={() => pick(section.id, choice.id)}
+                  aria-label={choice.label}
+                  title={choice.label}
+                  aria-pressed={active}
+                  className={cn(
+                    "flex size-11 items-center justify-center rounded-xl border transition-colors",
+                    active ? "border-brand bg-brand/15 text-brand" : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  <SectionIcon id={choice.id} className="size-5" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

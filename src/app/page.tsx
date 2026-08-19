@@ -29,12 +29,14 @@ import {
 } from "lucide-react";
 import { SettingsDialog, loadAddons, type AddonId, type Addons } from "@/components/settings-dialog";
 import { VideoLibrary } from "@/components/video-library";
+import { DownloadView } from "@/components/download-view";
 import { LibraryView, type Browse, type LibraryTab } from "@/components/music/library-view";
 import { NowPlaying } from "@/components/music/now-playing";
 import { PlayerDock } from "@/components/music/player-dock";
 import { TrackMenu } from "@/components/music/track-menu";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
@@ -85,6 +87,7 @@ import {
 import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
+import type { PDFPageProxy } from "pdfjs-dist";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
 import {
   currentNativePlayback,
@@ -96,10 +99,12 @@ import {
   seekNative,
 } from "@/lib/playback-service";
 import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
+import { SectionIcon } from "@/components/ui/section-icon";
+import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
 import { BRAND_MARK } from "@/lib/brand";
-import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
+import { hideSplash, onAppResume, registerBackButton, syncStatusBar } from "@/lib/native";
 
-type View = "library" | "reader" | "video";
+type View = "library" | "reader" | "video" | "downloads";
 
 /** Volby časovače v minutách; 0 = dohrát rozjetou skladbu a skončit. */
 const SLEEP_OPTIONS = [15, 30, 45, 60, 0];
@@ -116,6 +121,31 @@ const EMPTY_TRACK: Track = {
   addedAt: 0,
   source: "device",
 };
+
+/**
+ * Náhled stránky PDF.
+ *
+ * Kreslí se do plátna v paměti a ukládá jako JPEG - jinak by knihovna
+ * dokumentů byla řádka stejných šedých obdélníků a nešlo by v nich poznat,
+ * co je co.
+ */
+async function renderPageThumbnail(page: PDFPageProxy): Promise<string | null> {
+  try {
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(1.5, 320 / base.width);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    await page.render({ canvasContext: context, viewport, canvas }).promise;
+    return canvas.toDataURL("image/jpeg", 0.7);
+  } catch {
+    // Náhled je ozdoba - bez něj se dokument otevře stejně.
+    return null;
+  }
+}
 
 function mapNativeTrack(track: NativeAudioTrack): Track {
   return {
@@ -169,7 +199,9 @@ export default function HomePage() {
   /** Otevřené album, interpret nebo playlist. */
   const [browse, setBrowse] = React.useState<Browse | null>(null);
   /** Zapnuté addony. Seznam i klíče v úložišti drží `settings-dialog`. */
-  const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true });
+  const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true, downloads: true });
+  /** Ikony sekcí si vybírá uživatel v Nastavení. */
+  const [sectionIcons, setSectionIcons] = React.useState<SectionIcons>(defaultSectionIcons);
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
   /**
@@ -217,6 +249,8 @@ export default function HomePage() {
   const [documentZoom, setDocumentZoom] = React.useState(100);
   const [documentBookmarks, setDocumentBookmarks] = React.useState<number[]>([]);
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
+  /** Přehled stránek - otevírá se číslem stránky pod textem. */
+  const [pagesOpen, setPagesOpen] = React.useState(false);
   const [isReadingDocument, setIsReadingDocument] = React.useState(false);
   const [documentError, setDocumentError] = React.useState<string | null>(null);
   /** Kus věty, u kterého řeč stojí - odtud se po pauze pokračuje. */
@@ -244,6 +278,14 @@ export default function HomePage() {
   );
   /** Co má služba načtené - aby „přehrát" po restartu appky vědělo, co pustit. */
   const nativeLoaded = React.useRef<string | null>(null);
+  /**
+   * Hrálo se v tomhle spuštění?
+   *
+   * Appka si pamatuje, kde uživatel posledně skončil, ale lišta dole nemá po
+   * otevření hlásit skladbu, kterou nikdo nepustil. Objeví se, až se přehrává
+   * doopravdy - nebo když se převezme hudba běžící na pozadí.
+   */
+  const [playbackStarted, setPlaybackStarted] = React.useState(false);
 
   /** Co je vidět v seznamu skladeb - po hledání, filtru a řazení. */
   const visibleTracks = React.useMemo(
@@ -370,6 +412,7 @@ export default function HomePage() {
     }
 
     setAddons(loadAddons());
+    setSectionIcons(loadSectionIcons());
     setStorageReady(true);
     void loadDeviceMusic();
 
@@ -416,6 +459,7 @@ export default function HomePage() {
       const track = tracks.find((item) => item.uri === snapshot.uri);
       if (!track) return;
       logPlayback("služba: appka převzala běžící přehrávání");
+      setPlaybackStarted(true);
       nativeLoaded.current = track.id;
       resumeRef.current = null;
       setCurrentTrackId(track.id);
@@ -692,6 +736,21 @@ export default function HomePage() {
     return () => cleanup();
   }, []);
 
+  /**
+   * Návrat do appky knihovnu přečte znovu.
+   *
+   * Oprávnění se povolují v systémovém nastavení, tedy mimo appku. Bez tohohle
+   * se povolený přístup projevil až po vypnutí a zapnutí appky, což vypadá
+   * jako že povolení nefunguje.
+   */
+  React.useEffect(() => {
+    let cleanup = () => {};
+    void onAppResume(() => void loadDeviceMusic()).then((fn) => {
+      cleanup = fn;
+    });
+    return () => cleanup();
+  }, [loadDeviceMusic]);
+
   const toggleLike = (trackId: string) => {
     setLiked((previous) => {
       const next = new Set(previous);
@@ -704,6 +763,7 @@ export default function HomePage() {
   /** Nová skladba se počítá do statistiky - z ní žije řazení podle poslechu. */
   const startTrack = (trackId: string, positionMs = 0) => {
     logPlayback("uživatel: spustil skladbu");
+    setPlaybackStarted(true);
     startedAt.current = Date.now();
     // Hudba a předčítání se v jednom přehrávači nepřekřikují.
     stopReading();
@@ -1099,6 +1159,7 @@ export default function HomePage() {
     setDocumentError(null);
     try {
       let pages: DocumentPage[] = [];
+      let thumbnail: string | null = null;
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         const pdfjsLib = await import("pdfjs-dist");
         // Worker se vozí v public/ a odkazuje se absolutně z kořene - jediná
@@ -1115,6 +1176,9 @@ export default function HomePage() {
             .replace(/\s+/g, " ")
             .trim();
           pages.push({ text: pageText(text), label: `Strana ${index}` });
+
+          // Obálka knihovny: první stránka, jednou a nastálo.
+          if (index === 1) thumbnail = await renderPageThumbnail(page);
         }
       } else {
         pages = buildTextPages(await file.text());
@@ -1130,6 +1194,7 @@ export default function HomePage() {
         addedAt: new Date().toISOString(),
         page: 0,
         bookmarks: [],
+        thumbnail,
       };
 
       await saveDocument(doc);
@@ -1276,16 +1341,12 @@ export default function HomePage() {
     if (!enabled && activeView === id) setActiveView("library");
   };
 
-  /**
-   * Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne.
-   *
-   * Ikony jsou plné tvary, ne drátěné: filmový pás se v neaktivním stavu
-   * rozpadal na čárky a vypadal jako chyba vykreslení.
-   */
-  const views: { id: View; label: string; icon: typeof Music2 }[] = [
-    { id: "library", label: "Knihovna", icon: Music2 },
-    ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpen }] : []),
-    ...(addons.video ? [{ id: "video" as const, label: "Video", icon: Video }] : []),
+  /** Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne. */
+  const views: { id: View; label: string }[] = [
+    { id: "library", label: "Knihovna" },
+    ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty" }] : []),
+    ...(addons.video ? [{ id: "video" as const, label: "Video" }] : []),
+    ...(addons.downloads ? [{ id: "downloads" as const, label: "Stahování" }] : []),
   ];
 
   const sleepActive = sleepAt !== null || sleepAfterTrack;
@@ -1319,7 +1380,6 @@ export default function HomePage() {
 
           <nav className="hidden items-center gap-1 sm:flex">
             {views.map((item) => {
-              const Icon = item.icon;
               const active = activeView === item.id;
               return (
                 <button
@@ -1333,7 +1393,7 @@ export default function HomePage() {
                       : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   )}
                 >
-                  <Icon className="size-4" />
+                  <SectionIcon id={sectionIcons[item.id]} className="size-4" />
                   <span>{item.label}</span>
                   {item.id === "reader" && documentName && <span className="ml-1 size-1.5 rounded-full bg-brand" />}
                 </button>
@@ -1426,25 +1486,50 @@ export default function HomePage() {
             </div>
 
             {documents.length > 0 ? (
-              <div className="mb-5 flex flex-wrap gap-2">
-                {documents.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className={cn(
-                      "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors",
-                      doc.id === documentId_ ? "border-brand/40 bg-brand/10 text-brand" : "border-white/[0.08] text-muted-foreground hover:bg-white/[0.05]",
-                    )}
-                  >
-                    <button type="button" onClick={() => openDocument(doc)} className="flex min-w-0 items-center gap-2 text-left">
-                      <FileText className="size-3.5 shrink-0" />
-                      <span className="max-w-[180px] truncate">{doc.name}</span>
-                      <span className="shrink-0 tabular-nums opacity-60">{clampPage(doc.page, doc.pages.length) + 1}/{doc.pages.length}</span>
-                    </button>
-                    <button type="button" onClick={() => void forgetDocument(doc.id)} className="shrink-0 rounded-md p-0.5 opacity-50 hover:opacity-100" aria-label={`Odebrat ${doc.name} z knihovny`}>
-                      <X className="size-3.5" />
-                    </button>
-                  </div>
-                ))}
+              /*
+                Police s náhledy, ne řádka štítků: podle obálky se pozná, co je
+                co, dřív než podle názvu souboru. Pruh pod dlaždicí ukazuje, kam
+                až je přečteno.
+              */
+              <div className="mb-6 grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                {documents.map((doc) => {
+                  const at = clampPage(doc.page, doc.pages.length);
+                  const read = doc.pages.length > 1 ? (at / (doc.pages.length - 1)) * 100 : 0;
+                  return (
+                    <div key={doc.id} className="group relative">
+                      <button type="button" onClick={() => openDocument(doc)} className="w-full text-left">
+                        <span
+                          className={cn(
+                            "relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-xl border bg-white/[0.05]",
+                            doc.id === documentId_ ? "border-brand/50" : "border-white/[0.08]",
+                          )}
+                        >
+                          {doc.thumbnail ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- data URI z pdf.js
+                            <img src={doc.thumbnail} alt="" aria-hidden="true" loading="lazy" className="size-full object-cover" />
+                          ) : (
+                            <FileText className="size-7 text-muted-foreground" />
+                          )}
+                          <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/10">
+                            <span className="block h-full bg-brand" style={{ width: `${read}%` }} />
+                          </span>
+                        </span>
+                        <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
+                        <span className="block text-[11px] tabular-nums text-muted-foreground">
+                          {at + 1} / {doc.pages.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void forgetDocument(doc.id)}
+                        className="absolute right-1 top-1 rounded-lg bg-black/70 p-1 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        aria-label={`Odebrat ${doc.name} z knihovny`}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
 
@@ -1457,32 +1542,8 @@ export default function HomePage() {
                 <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-brand" /> lokálně</span><span><Check className="mr-1 inline size-3 text-brand" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-brand" /> PDF / TXT</span></div>
               </div>
             ) : (
-              <div className="grid gap-5 xl:grid-cols-[210px_minmax(0,1fr)]">
-                <aside className="order-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 xl:order-1">
-                  <div className="flex items-start justify-between gap-3 px-2 pb-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{documentName}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{documentPages.length} {documentPages.length === 1 ? "stránka" : "stránek"}</p>
-                    </div>
-                    <FileText className="size-4 shrink-0 text-brand" />
-                  </div>
-                  <div className="space-y-1 border-t border-white/[0.07] pt-3">
-                    {documentPages.map((page, index) => (
-                      <button
-                        key={index}
-                        type="button"
-                        onClick={() => goToPage(index)}
-                        className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors", index === documentPage ? "bg-brand/15 text-brand" : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground")}
-                      >
-                        <span className="w-5 text-[10px] tabular-nums opacity-60">{String(index + 1).padStart(2, "0")}</span>
-                        <span className="truncate">{page.label}</span>
-                        {documentBookmarks.includes(index) ? <BookmarkCheck className="ml-auto size-3 shrink-0 text-brand" /> : null}
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <div className="order-1 min-w-0 xl:order-2">
+              <div className="min-w-0">
+                <div className="min-w-0">
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2">
                       <FileText className="size-4 shrink-0 text-brand" />
@@ -1552,7 +1613,13 @@ export default function HomePage() {
 
                   <div className="mt-4 flex items-center justify-between">
                     <button type="button" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"><ChevronLeft className="size-4" /> Předchozí</button>
-                    <span className="text-xs tabular-nums text-muted-foreground">{documentPage + 1} / {documentPages.length}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPagesOpen(true)}
+                      className="rounded-lg px-3 py-2 text-xs tabular-nums text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      {documentPage + 1} / {documentPages.length}
+                    </button>
                     <button type="button" disabled={documentPage === documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30">Další <ChevronRight className="size-4" /></button>
                   </div>
                 </div>
@@ -1566,6 +1633,10 @@ export default function HomePage() {
 
         {activeView === "video" && addons.video ? (
           <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} />
+        ) : null}
+
+        {activeView === "downloads" && addons.downloads ? (
+          <DownloadView onToast={toast} onDownloaded={() => void loadDeviceMusic()} />
         ) : null}
       </main>
 
@@ -1584,7 +1655,7 @@ export default function HomePage() {
           po otevření appky nemá co hlásit. Ve videu a v dokumentech by jen
           zabírala místo věcem, které mají vlastní přehrávač.
         */}
-        {activeView === "library" && hasTrack ? (
+        {activeView === "library" && hasTrack && playbackStarted ? (
         <PlayerDock
           track={currentTrack}
           hasTrack={hasTrack}
@@ -1630,7 +1701,6 @@ export default function HomePage() {
           <nav className="border-t border-white/[0.07] sm:hidden">
             <div className="mx-auto flex w-full max-w-4xl">
               {views.map((item) => {
-                const Icon = item.icon;
                 const active = activeView === item.id;
                 return (
                   <button
@@ -1649,7 +1719,7 @@ export default function HomePage() {
                         active && "bg-secondary text-secondary-foreground",
                       )}
                     >
-                      <Icon className="size-5" />
+                      <SectionIcon id={sectionIcons[item.id]} className="size-5" />
                     </span>
                   </button>
                 );
@@ -1742,6 +1812,43 @@ export default function HomePage() {
         </div>
       </Dialog>
 
+      <Sheet
+        open={pagesOpen}
+        onOpenChange={setPagesOpen}
+        title="Stránky"
+        description={documentName ?? undefined}
+      >
+        {/*
+          Přehled na vyžádání, ne věčný sloupec vedle textu: stránky mají smysl
+          ve chvíli, kdy uživatel chce skočit jinam. Klepnutí přeskočí a čtení
+          nahlas pokračuje odtamtud.
+        */}
+        <div className="grid grid-cols-5 gap-2 pb-1 sm:grid-cols-8">
+          {documentPages.map((page, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => {
+                goToPage(index);
+                setPagesOpen(false);
+              }}
+              aria-label={page.label}
+              className={cn(
+                "relative flex h-11 items-center justify-center rounded-xl border text-xs tabular-nums transition-colors",
+                index === documentPage
+                  ? "border-brand bg-brand/15 text-brand"
+                  : "border-white/[0.08] text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {index + 1}
+              {documentBookmarks.includes(index) ? (
+                <BookmarkCheck className="absolute right-0.5 top-0.5 size-3 text-brand" />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </Sheet>
+
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -1749,6 +1856,7 @@ export default function HomePage() {
         onAddonChange={handleAddonChange}
         mediaPermission={mediaPermission}
         onRequestMediaAccess={requestMediaAccess}
+        onSectionIconsChange={setSectionIcons}
       />
     </div>
   );

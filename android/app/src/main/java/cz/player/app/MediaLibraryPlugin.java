@@ -3,16 +3,23 @@ package cz.player.app;
 import android.Manifest;
 import android.app.PendingIntent;
 import android.app.RecoverableSecurityException;
+import android.app.DownloadManager;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.ContentUris;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.util.Base64;
+import android.util.Size;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -22,6 +29,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -108,6 +116,126 @@ public class MediaLibraryPlugin extends Plugin {
         } else {
             call.reject("Přístup k videím nebyl povolen.", "MEDIA_PERMISSION_DENIED");
         }
+    }
+
+    /**
+     * Stáhne soubor z přímé adresy do telefonu.
+     *
+     * Obstará to systémový DownloadManager: umí pokračovat po výpadku sítě,
+     * ukazuje průběh v liště a hotový soubor rovnou ohlásí MediaStore, takže
+     * se objeví v knihovně bez dalšího zásahu.
+     *
+     * Vytahovat média ze stránek YouTube nebo Spotify tohle neumí a neřeší -
+     * bere jen odkaz, který míří přímo na soubor.
+     */
+    @PluginMethod
+    public void download(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.trim().isEmpty()) {
+            call.reject("Chybí adresa.", "DOWNLOAD_BAD_REQUEST");
+            return;
+        }
+
+        Uri source;
+        try {
+            source = Uri.parse(url.trim());
+            String scheme = source.getScheme();
+            if (scheme == null || !(scheme.equals("http") || scheme.equals("https"))) {
+                call.reject("Adresa musí začínat http:// nebo https://.", "DOWNLOAD_BAD_REQUEST");
+                return;
+            }
+        } catch (Exception error) {
+            call.reject("Adresa nedává smysl.", "DOWNLOAD_BAD_REQUEST", error);
+            return;
+        }
+
+        String fileName = call.getString("fileName", "");
+        if (fileName == null || fileName.trim().isEmpty()) {
+            String last = source.getLastPathSegment();
+            fileName = last != null && !last.trim().isEmpty() ? last : "stazeny-soubor";
+        }
+        // Video patří mezi filmy, zbytek mezi hudbu - podle toho ho pak najde
+        // knihovna appky i galerie telefonu.
+        boolean video = fileName.toLowerCase().endsWith(".mp4")
+            || fileName.toLowerCase().endsWith(".mkv")
+            || fileName.toLowerCase().endsWith(".webm");
+        String folder = video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_MUSIC;
+
+        try {
+            DownloadManager.Request request = new DownloadManager.Request(source)
+                .setTitle(fileName)
+                .setDescription("P/_ayer")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(folder, fileName)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(false);
+
+            DownloadManager manager = (DownloadManager) getContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager == null) {
+                call.reject("Stahování není v tomhle zařízení dostupné.", "DOWNLOAD_UNAVAILABLE");
+                return;
+            }
+
+            JSObject result = new JSObject();
+            result.put("id", String.valueOf(manager.enqueue(request)));
+            result.put("fileName", fileName);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Stahování se nepodařilo spustit.", "DOWNLOAD_FAILED", error);
+        }
+    }
+
+    /**
+     * Náhled videa.
+     *
+     * MediaStore si miniatury drží sám, takže se nic negeneruje znovu -
+     * jen se zmenší na velikost dlaždice a pošle jako data URI. Starší systémy
+     * miniatury přes `loadThumbnail` neumí, tam je vytáhne přehrávač z prvního
+     * snímku.
+     */
+    @PluginMethod
+    public void videoThumbnail(PluginCall call) {
+        String raw = call.getString("id");
+        if (raw == null || raw.trim().isEmpty()) {
+            call.reject("Chybí id videa.", "MEDIA_BAD_REQUEST");
+            return;
+        }
+
+        Bitmap bitmap = null;
+        try {
+            long id = Long.parseLong(raw.trim());
+            Uri uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                bitmap = getContext().getContentResolver().loadThumbnail(uri, new Size(480, 270), null);
+            } else {
+                MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                try {
+                    retriever.setDataSource(getContext(), uri);
+                    bitmap = retriever.getFrameAtTime(1_000_000);
+                } finally {
+                    retriever.release();
+                }
+            }
+        } catch (Exception error) {
+            bitmap = null;
+        }
+
+        JSObject result = new JSObject();
+        if (bitmap == null) {
+            result.put("thumbnail", (String) null);
+            call.resolve(result);
+            return;
+        }
+
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out);
+            result.put("thumbnail", "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+        } catch (Exception error) {
+            result.put("thumbnail", (String) null);
+        } finally {
+            bitmap.recycle();
+        }
+        call.resolve(result);
     }
 
     /**

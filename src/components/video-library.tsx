@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { ExternalLink, Film, FolderOpen, Loader2, Play, Upload, X } from "lucide-react";
+import { ExternalLink, Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
+import { onAppResume } from "@/lib/native";
 import { cn } from "@/lib/utils";
 
 /**
@@ -63,6 +64,44 @@ function mapNative(video: NativeVideo): VideoItem {
   };
 }
 
+/**
+ * Náhled videa.
+ *
+ * Miniatury drží MediaStore, takže se nic negeneruje znovu - jen se o ně
+ * řekne, když je dlaždice na obrazovce. Než dorazí, drží místo tichá plocha:
+ * probliknutá náhradní ikona vypadá při otevření sekce jako chyba.
+ */
+function VideoThumbnail({ video }: { video: VideoItem }) {
+  const [thumbnail, setThumbnail] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!video.uri || !canReadDeviceMedia()) return;
+    const nativeId = video.id.replace(/^device-/, "");
+    void MediaLibrary.videoThumbnail({ id: nativeId })
+      .then((result) => {
+        if (!cancelled) setThumbnail(result?.thumbnail ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [video.id, video.uri]);
+
+  if (!thumbnail) {
+    return (
+      <span className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+        <Film className="size-6 opacity-40" />
+      </span>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- data URI z MediaStore
+    <img src={thumbnail} alt="" aria-hidden="true" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover" />
+  );
+}
+
 export function VideoLibrary({
   onBeforePlay,
   onToast,
@@ -77,6 +116,10 @@ export function VideoLibrary({
   const [currentId, setCurrentId] = React.useState<string | null>(null);
   /** Video, které WebView odmítl - nabídne se jiný přehrávač. */
   const [failed, setFailed] = React.useState<string | null>(null);
+  const [playing, setPlaying] = React.useState(false);
+  const [position, setPosition] = React.useState(0);
+  const [length, setLength] = React.useState(0);
+  const [controlsVisible, setControls] = React.useState(true);
   const [query, setQuery] = React.useState("");
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const objectUrls = React.useRef<string[]>([]);
@@ -170,6 +213,9 @@ export function VideoLibrary({
   const play = (id: string) => {
     onBeforePlay();
     setFailed(null);
+    setPosition(0);
+    setLength(0);
+    setControls(true);
     setCurrentId(id);
   };
 
@@ -195,6 +241,16 @@ export function VideoLibrary({
       // Autoplay může systém odmítnout - uživatel klepne na přehrát ve videu.
     });
   }, [currentId]);
+
+  // Povolení k videím se uděluje v systémovém nastavení - po návratu se
+  // knihovna přečte znovu, jinak to vypadá, že povolení nezabralo.
+  React.useEffect(() => {
+    let cleanup = () => {};
+    void onAppResume(() => void load()).then((fn) => {
+      cleanup = fn;
+    });
+    return () => cleanup();
+  }, [load]);
 
   const shown = videos.filter(
     (v) => !query || v.title.toLowerCase().includes(query.trim().toLowerCase()),
@@ -250,12 +306,87 @@ export function VideoLibrary({
             <video
               ref={videoRef}
               src={current.src}
-              controls
               playsInline
-              onPlay={onBeforePlay}
+              onPlay={() => {
+                onBeforePlay();
+                setPlaying(true);
+              }}
+              onPause={() => setPlaying(false)}
+              onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
+              onLoadedMetadata={(event) => setLength(event.currentTarget.duration)}
               onError={() => setFailed(current.id)}
+              onClick={() => setControls((value) => !value)}
               className="max-h-full w-full bg-black"
             />
+
+            {/*
+              Ovládání kreslí appka, ne prohlížeč: systémové se v celé obrazovce
+              tluče s lištami a nejde do něj přidat nic vlastního. Klepnutí do
+              obrazu ho schová, jak je u přehrávačů zvykem.
+            */}
+            {controlsVisible ? (
+              <div className="mw-safe-bottom absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-gradient-to-t from-black/80 to-transparent px-4 pb-3 pt-8">
+                <div className="flex items-center gap-3">
+                  <span className="w-14 text-right text-xs tabular-nums text-white/80">{formatTime(position)}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max={length || current.durationSeconds || 0}
+                    step="0.1"
+                    value={Math.min(position, length || current.durationSeconds || 0)}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (videoRef.current) videoRef.current.currentTime = value;
+                      setPosition(value);
+                    }}
+                    className="player-range"
+                    aria-label="Pozice ve videu"
+                    style={{
+                      "--range-progress": `${length ? Math.min(100, (position / length) * 100) : 0}%`,
+                    } as React.CSSProperties}
+                  />
+                  <span className="w-14 text-xs tabular-nums text-white/80">
+                    {formatTime(length || current.durationSeconds)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-center gap-8 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (videoRef.current) videoRef.current.currentTime = Math.max(0, position - 10);
+                    }}
+                    aria-label="O deset vteřin zpět"
+                    className="text-white/85 transition-colors hover:text-white"
+                  >
+                    <RotateCcw className="size-6" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const element = videoRef.current;
+                      if (!element) return;
+                      if (element.paused) void element.play().catch(() => {});
+                      else element.pause();
+                    }}
+                    aria-label={playing ? "Pozastavit" : "Přehrát"}
+                    className="text-white"
+                  >
+                    {playing ? <Pause className="size-10 fill-current" /> : <Play className="size-10 fill-current" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (videoRef.current) videoRef.current.currentTime = Math.min(length || 0, position + 10);
+                    }}
+                    aria-label="O deset vteřin vpřed"
+                    className="text-white/85 transition-colors hover:text-white"
+                  >
+                    <RotateCw className="size-6" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {failed === current.id ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center">
                 <p className="text-sm font-medium text-white">Tenhle formát appka nepřehraje</p>
@@ -308,32 +439,33 @@ export function VideoLibrary({
             placeholder="Hledat video"
             className="h-9 text-sm"
           />
-          <ul className="divide-y rounded-2xl border">
+          {/*
+            Mřížka s náhledy, ne řádky: u videa se pozná podle obrázku, o co
+            jde, mnohem dřív než podle názvu souboru. Délka sedí v rohu dlaždice
+            jako v galerii telefonu.
+          */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {shown.map((video) => (
-              <li key={video.id}>
-                <button
-                  type="button"
-                  onClick={() => play(video.id)}
-                  className={cn(
-                    "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent",
-                    video.id === currentId && "bg-secondary",
-                  )}
-                >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-                    {video.id === currentId ? <Play className="size-4 fill-current" /> : <Film className="size-4" />}
+              <button
+                key={video.id}
+                type="button"
+                onClick={() => play(video.id)}
+                className="group text-left"
+              >
+                <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">
+                  <VideoThumbnail video={video} />
+                  <span className="absolute bottom-1 right-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
+                    {formatTime(video.durationSeconds)}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{video.title}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {[formatTime(video.durationSeconds), formatSize(video.sizeBytes)]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
+                    <Play className="size-8 fill-white text-white" />
                   </span>
-                </button>
-              </li>
+                </span>
+                <span className="mt-1.5 block truncate text-xs font-medium">{video.title}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">{formatSize(video.sizeBytes)}</span>
+              </button>
             ))}
-          </ul>
+          </div>
           {shown.length === 0 ? (
             <p className="px-1 text-xs text-muted-foreground">Nic neodpovídá hledání.</p>
           ) : null}

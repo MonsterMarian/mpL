@@ -23,6 +23,14 @@ export interface StoredDocument {
   /** Stránka, na které uživatel naposledy skončil. */
   page: number;
   bookmarks: number[];
+  /**
+   * Náhled první stránky jako data URI.
+   *
+   * Kreslí se jednou při načtení dokumentu, ne při každém otevření knihovny:
+   * vykreslit deset PDF stránek naráz je práce na vteřiny a příště by to bylo
+   * to samé.
+   */
+  thumbnail?: string | null;
 }
 
 /** Kolik znaků textového souboru padne na jednu "stránku". */
