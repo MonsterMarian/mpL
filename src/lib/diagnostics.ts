@@ -54,6 +54,54 @@ export function recordError(message: string, source?: string): void {
   }
 }
 
+/**
+ * Záznam průběhu přehrávání.
+ *
+ * Když hudba zhasne sama od sebe, je bez tohohle nemožné poznat, kdo ji
+ * zastavil: jestli přišel příkaz ze systému (notifikace, zámek, zvukové
+ * ohnisko), nebo si přehrávač ve WebView pauzl sám. Drží se posledních třicet
+ * událostí s časem, aby šlo přečíst pořadí, ne jen poslední stav.
+ */
+export interface PlaybackEvent {
+  at: number;
+  text: string;
+}
+
+const PLAYBACK_KEY = "microwins:playback_log";
+const PLAYBACK_LIMIT = 30;
+
+export function readPlaybackLog(): PlaybackEvent[] {
+  try {
+    const raw = localStorage.getItem(PLAYBACK_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is PlaybackEvent =>
+        Boolean(item) && typeof item === "object" && typeof (item as PlaybackEvent).text === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function clearPlaybackLog(): void {
+  try {
+    localStorage.removeItem(PLAYBACK_KEY);
+  } catch {
+    // soukromý režim - není kam mazat
+  }
+}
+
+export function logPlayback(text: string): void {
+  try {
+    const next = [...readPlaybackLog(), { at: Date.now(), text }].slice(-PLAYBACK_LIMIT);
+    localStorage.setItem(PLAYBACK_KEY, JSON.stringify(next));
+  } catch {
+    // Záznam o přehrávání nesmí přehrávání shodit.
+  }
+}
+
 /** Odchytí i to, co se stane mimo React - v přehrávači, v pluginu, kdekoliv. */
 export function installErrorCapture(): void {
   if (typeof window === "undefined") return;

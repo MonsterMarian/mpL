@@ -6,7 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
-import { clearErrors, readErrors, type LoggedError } from "@/lib/diagnostics";
+import {
+  clearErrors,
+  clearPlaybackLog,
+  readErrors,
+  readPlaybackLog,
+  type LoggedError,
+  type PlaybackEvent,
+} from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { cn } from "@/lib/utils";
 
@@ -122,6 +129,7 @@ export function SettingsDialog({
               onRequestMediaAccess={onRequestMediaAccess} 
             />
             <SystemPlaybackSection open={open} />
+            <PlaybackLogSection open={open} />
             <UpdateSection />
             <ErrorSection open={open} />
           </div>
@@ -301,6 +309,58 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
             Povolit notifikace
           </Button>
         )}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * Průběh přehrávání.
+ *
+ * Když hudba zhasne sama, tohle je jediné místo, ze kterého jde poznat proč:
+ * je v něm vidět pořadí - kdo dal pokyn, co udělal přehrávač a co hlásila
+ * služba. Časy jsou relativní k prvnímu záznamu, protože zajímavé je odstupem,
+ * ne kolik bylo hodin.
+ */
+function PlaybackLogSection({ open }: { open: boolean }) {
+  const [events, setEvents] = React.useState<PlaybackEvent[]>([]);
+
+  React.useEffect(() => {
+    if (open) setEvents(readPlaybackLog());
+  }, [open]);
+
+  if (!events.length) return null;
+
+  const start = events[0].at;
+  const line = (event: PlaybackEvent) => `+${((event.at - start) / 1000).toFixed(2)} s  ${event.text}`;
+
+  return (
+    <Section title="Průběh přehrávání" hint="Když se hudba sama zastaví, zkopíruj tohle - je z toho vidět, kdo ji zastavil.">
+      <div className="max-h-56 overflow-y-auto rounded-lg border bg-white/[0.02] p-3">
+        {events.map((event, index) => (
+          <p key={`${event.at}-${index}`} className="whitespace-pre font-mono text-[11px] leading-relaxed text-muted-foreground">
+            {line(event)}
+          </p>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void navigator.clipboard?.writeText(events.map(line).join("\n"))}
+        >
+          Zkopírovat
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            clearPlaybackLog();
+            setEvents([]);
+          }}
+        >
+          Vymazat
+        </Button>
       </div>
     </Section>
   );

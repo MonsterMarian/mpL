@@ -23,9 +23,15 @@ export interface NowPlaying {
   playing: boolean;
 }
 
+/**
+ * `source` odděluje stisk v notifikaci (vždycky uživatel) od `onPause`, které
+ * na systémové session umí vyvolat i sám systém.
+ */
+export type PlaybackSource = "session" | "notification";
+
 export type PlaybackCommand =
-  | { action: "play" | "pause" | "next" | "previous" | "stop" }
-  | { action: "seek"; positionMs: number };
+  | { action: "play" | "pause" | "next" | "previous" | "stop"; source: PlaybackSource }
+  | { action: "seek"; positionMs: number; source: PlaybackSource };
 
 interface PlaybackPlugin {
   update(options: NowPlaying): Promise<void>;
@@ -35,7 +41,7 @@ interface PlaybackPlugin {
   checkPermissions(): Promise<{ notifications: "granted" | "denied" | "prompt" | "prompt-with-rationale" }>;
   addListener(
     event: "command",
-    handler: (data: { action: string; positionMs?: number }) => void,
+    handler: (data: { action: string; positionMs?: number; source?: string }) => void,
   ): Promise<PluginListenerHandle>;
 }
 
@@ -119,12 +125,13 @@ export function onPlaybackCommand(handler: (command: PlaybackCommand) => void): 
   let cancelled = false;
 
   void Playback.addListener("command", (data) => {
+    const source: PlaybackSource = data.source === "notification" ? "notification" : "session";
     if (data.action === "seek") {
-      handler({ action: "seek", positionMs: data.positionMs ?? 0 });
+      handler({ action: "seek", positionMs: data.positionMs ?? 0, source });
       return;
     }
     if (data.action === "play" || data.action === "pause" || data.action === "next" || data.action === "previous" || data.action === "stop") {
-      handler({ action: data.action });
+      handler({ action: data.action, source });
     }
   })
     .then((registered) => {

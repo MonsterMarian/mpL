@@ -86,7 +86,7 @@ import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
 import { clearNowPlaying, onPlaybackCommand, updateNowPlaying } from "@/lib/playback-service";
-import { installErrorCapture } from "@/lib/diagnostics";
+import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
 
@@ -436,15 +436,33 @@ export default function HomePage() {
     // Se zpožděním schválně: Android hlídá, že služba naskočí do popředí do
     // pěti vteřin, a rozklepané pauza/přehrát by ji spouštělo a rušilo naráz.
     // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
-    const timer = window.setTimeout(() => pushNowPlaying(isPlaying), 250);
+    const timer = window.setTimeout(() => {
+      logPlayback(`služba: hlásím ${isPlaying ? "hraje" : "stojí"}`);
+      pushNowPlaying(isPlaying);
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [hasTrack, isPlaying, currentTrack.id, pushNowPlaying]);
 
   React.useEffect(() => () => void clearNowPlaying(), []);
 
-  /** Tlačítka z notifikace, ze zámku a ze sluchátek. */
+  /**
+   * Tlačítka z notifikace, ze zámku a ze sluchátek.
+   *
+   * Pauza, která přijde do dvou vteřin po spuštění, se zahazuje: uživatel ji
+   * v takovém čase zmáčknout nemohl, takže je to systém (zvukové ohnisko nebo
+   * politika výrobce), a hudba by kvůli němu zhasla hned po zapnutí. Do
+   * záznamu se to zapíše, ať je vidět, že se to děje.
+   */
   React.useEffect(() => {
     return onPlaybackCommand((command) => {
+      // Tlačítko v notifikaci je vždycky uživatel a poslechne se hned. Pauza
+      // ze systémové session do dvou vteřin po spuštění ale uživatel být
+      // nemůže - to je politika systému a hudba by kvůli ní zhasla hned po
+      // zapnutí. Do záznamu se to zapíše, ať je vidět, že se to děje.
+      const early = command.source === "session" && Date.now() - startedAt.current < 2000;
+      const ignored = early && command.action !== "play";
+      logPlayback(`${command.source === "notification" ? "notifikace" : "systém"}: ${command.action}${ignored ? " (zahozeno, je moc brzo)" : ""}`);
+      if (ignored) return;
       switch (command.action) {
         case "play":
           controls.current.play();
@@ -660,6 +678,8 @@ export default function HomePage() {
 
   /** Nová skladba se počítá do statistiky - z ní žije řazení podle poslechu. */
   const startTrack = (trackId: string) => {
+    logPlayback("uživatel: spustil skladbu");
+    startedAt.current = Date.now();
     // Hudba a předčítání se v jednom přehrávači nepřekřikují.
     stopReading();
     setCurrentTrackId(trackId);
@@ -670,18 +690,25 @@ export default function HomePage() {
     }));
   };
 
+  /** Kdy naposledy pustil přehrávání uživatel - viz `ignoreEarlyPause`. */
+  const startedAt = React.useRef(0);
+
   const togglePlayback = () => {
     if (!hasTrack) return;
     if (isPlaying) {
+      logPlayback("uživatel: pauza");
       audioRef.current?.pause();
       setIsPlaying(false);
       return;
     }
+    logPlayback("uživatel: přehrát");
+    startedAt.current = Date.now();
     stopReading();
     audioRef.current
       ?.play()
       .then(() => setIsPlaying(true))
-      .catch(() => {
+      .catch((error) => {
+        logPlayback(`element: play() odmítnut - ${String(error).slice(0, 80)}`);
         toast({ tone: "warn", title: "Skladbu se nepodařilo spustit", description: "Soubor už nemusí být dostupný v zařízení." });
       });
   };
@@ -1527,7 +1554,7 @@ export default function HomePage() {
         <div className="mw-safe-bottom" />
       </div>
 
-      <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={handleEnded} onError={() => { if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
+      <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => { logPlayback("element: hraje"); setIsPlaying(true); }} onPause={() => { logPlayback("element: pauza"); setIsPlaying(false); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={() => { logPlayback("element: konec skladby"); handleEnded(); }} onStalled={() => logPlayback("element: uvázl")} onError={() => { logPlayback(`element: chyba (kód ${audioRef.current?.error?.code ?? "?"})`); if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
 
       <NowPlaying
         open={nowPlayingOpen && hasTrack}

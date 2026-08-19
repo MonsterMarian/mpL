@@ -25,9 +25,10 @@ public class PlaybackPlugin extends Plugin {
 
     @Override
     public void load() {
-        PlaybackService.setCommandSink((action, positionMs) -> {
+        PlaybackService.setCommandSink((action, positionMs, source) -> {
             JSObject event = new JSObject();
             event.put("action", action);
+            event.put("source", source);
             if (positionMs >= 0) event.put("positionMs", positionMs);
             notifyListeners("command", event);
         });

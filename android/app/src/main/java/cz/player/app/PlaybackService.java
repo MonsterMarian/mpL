@@ -59,7 +59,7 @@ public class PlaybackService extends Service {
     private static CommandSink sink;
 
     interface CommandSink {
-        void onCommand(String action, long positionMs);
+        void onCommand(String action, long positionMs, String source);
     }
 
     static void setCommandSink(CommandSink next) {
@@ -90,32 +90,32 @@ public class PlaybackService extends Service {
             new MediaSession.Callback() {
                 @Override
                 public void onPlay() {
-                    send("play", -1);
+                    send("play", -1, "session");
                 }
 
                 @Override
                 public void onPause() {
-                    send("pause", -1);
+                    send("pause", -1, "session");
                 }
 
                 @Override
                 public void onSkipToNext() {
-                    send("next", -1);
+                    send("next", -1, "session");
                 }
 
                 @Override
                 public void onSkipToPrevious() {
-                    send("previous", -1);
+                    send("previous", -1, "session");
                 }
 
                 @Override
                 public void onStop() {
-                    send("stop", -1);
+                    send("stop", -1, "session");
                 }
 
                 @Override
                 public void onSeekTo(long pos) {
-                    send("seek", pos);
+                    send("seek", pos, "session");
                 }
             }
         );
@@ -125,7 +125,7 @@ public class PlaybackService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_COMMAND.equals(intent.getAction())) {
-            send(intent.getStringExtra(EXTRA_COMMAND), -1);
+            send(intent.getStringExtra(EXTRA_COMMAND), -1, "notification");
             return START_NOT_STICKY;
         }
 
@@ -180,9 +180,14 @@ public class PlaybackService extends Service {
         super.onDestroy();
     }
 
-    private void send(String action, long pos) {
+    /**
+     * `source` odděluje dvě různé věci se stejným jménem: stisk tlačítka
+     * v notifikaci je vždycky uživatel, kdežto `onPause` na session umí poslat
+     * i systém sám od sebe. Webová vrstva se pak může rozhodnout jinak.
+     */
+    private void send(String action, long pos, String source) {
         CommandSink target = sink;
-        if (target != null && action != null) target.onCommand(action, pos);
+        if (target != null && action != null) target.onCommand(action, pos, source);
     }
 
     private static String orEmpty(String value) {
