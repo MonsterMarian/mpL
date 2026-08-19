@@ -15,38 +15,42 @@ import { BRAND_MARK } from "@/lib/brand";
  * neviditelná a v seznamu po ní zůstávala díra.
  */
 export function Cover({ artwork, className }: { artwork: string | null; className?: string }) {
-  const [broken, setBroken] = React.useState(false);
+  const [state, setState] = React.useState<"loading" | "ready" | "broken">(artwork ? "loading" : "broken");
 
   // Obal alba nemusí jít načíst (soubor zmizel, prázdný záznam v MediaStore).
   // Nová adresa dostane novou šanci, jinak by značka zůstala i tam, kde obal je.
-  React.useEffect(() => setBroken(false), [artwork]);
-
-  if (!artwork || broken) {
-    return (
-      <div
-        className={cn("flex shrink-0 items-center justify-center overflow-hidden bg-white/[0.06]", className)}
-        aria-hidden="true"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- značka je data URI, optimalizace Next.js tu nemá co dělat */}
-        <img src={BRAND_MARK} alt="" className="size-[58%] opacity-75" />
-      </div>
-    );
-  }
+  React.useEffect(() => setState(artwork ? "loading" : "broken"), [artwork]);
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- blob:/content: adresy, optimalizace Next.js tu nemá co dělat
-    <img
-      src={artwork}
-      alt=""
-      aria-hidden="true"
-      // Obal alba z MediaStore je plnotučný obrázek, klidně 1500 px. Načíst
-      // jich naráz tisíc (seznam skladeb, mřížka alb) položí WebView na
-      // paměti - proto se dekóduje jen to, co je zrovna na obrazovce.
-      loading="lazy"
-      decoding="async"
-      onError={() => setBroken(true)}
-      className={cn("shrink-0 overflow-hidden bg-white/[0.05] object-cover", className)}
-    />
+    <span className={cn("relative block shrink-0 overflow-hidden bg-white/[0.06]", className)} aria-hidden="true">
+      {/*
+        Značka se ukáže, teprve když je jisté, že obal nebude. Dokud se načítá,
+        drží místo tichá plocha - jinak při otevření appky přes celý seznam
+        blikla značka a hned ji přepsaly obaly.
+      */}
+      {state === "broken" ? (
+        // eslint-disable-next-line @next/next/no-img-element -- značka je data URI
+        <img src={BRAND_MARK} alt="" className="absolute inset-0 m-auto size-[58%] opacity-75" />
+      ) : null}
+      {artwork ? (
+        // eslint-disable-next-line @next/next/no-img-element -- blob:/content: adresy, optimalizace Next.js tu nemá co dělat
+        <img
+          src={artwork}
+          alt=""
+          // Obal alba z MediaStore je plnotučný obrázek, klidně 1500 px. Načíst
+          // jich naráz tisíc (seznam skladeb, mřížka alb) položí WebView na
+          // paměti - proto se dekóduje jen to, co je zrovna na obrazovce.
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setState("ready")}
+          onError={() => setState("broken")}
+          className={cn(
+            "absolute inset-0 size-full object-cover transition-opacity duration-200",
+            state === "ready" ? "opacity-100" : "opacity-0",
+          )}
+        />
+      ) : null}
+    </span>
   );
 }
 

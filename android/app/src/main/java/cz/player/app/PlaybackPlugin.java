@@ -12,10 +12,10 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 /**
- * Most k {@link PlaybackService}.
+ * Ovladač {@link PlaybackService}.
  *
- * Webová vrstva ví, co hraje - nativní vrstva to umí říct systému a poslat
- * zpátky, co uživatel zmáčkl v notifikaci nebo na zamykací obrazovce.
+ * Zvuk hraje ve službě, ne ve stránce - webová vrstva odsud říká, co se má
+ * hrát, a zpátky dostává stav, pozici a stisky z notifikace i ze zámku.
  */
 @CapacitorPlugin(
     name = "Playback",
@@ -25,49 +25,99 @@ public class PlaybackPlugin extends Plugin {
 
     @Override
     public void load() {
-        PlaybackService.setCommandSink((action, positionMs, source) -> {
-            JSObject event = new JSObject();
-            event.put("action", action);
-            event.put("source", source);
-            if (positionMs >= 0) event.put("positionMs", positionMs);
-            notifyListeners("command", event);
-        });
+        PlaybackService.setListener(
+            new PlaybackService.Listener() {
+                @Override
+                public void onState(boolean playing, long positionMs, long durationMs) {
+                    JSObject event = new JSObject();
+                    event.put("playing", playing);
+                    event.put("positionMs", positionMs);
+                    event.put("durationMs", durationMs);
+                    notifyListeners("state", event);
+                }
+
+                @Override
+                public void onCompleted() {
+                    notifyListeners("completed", new JSObject());
+                }
+
+                @Override
+                public void onError(String message) {
+                    JSObject event = new JSObject();
+                    event.put("message", message);
+                    notifyListeners("failed", event);
+                }
+
+                @Override
+                public void onCommand(String action, long positionMs, String source) {
+                    JSObject event = new JSObject();
+                    event.put("action", action);
+                    event.put("source", source);
+                    if (positionMs >= 0) event.put("positionMs", positionMs);
+                    notifyListeners("command", event);
+                }
+            }
+        );
     }
 
-    @Override
-    protected void handleOnDestroy() {
-        PlaybackService.setCommandSink(null);
-        PlaybackService.stop(getContext());
-        super.handleOnDestroy();
-    }
-
-    /**
-     * Co hraje: název, interpret, obal, délka, pozice a jestli to běží.
-     *
-     * Čísla se čtou přes `optDouble`, ne přes `call.getLong`. Ten vrací výchozí
-     * hodnotu pro všechno, co není přesně `Long` - a JSON z JavaScriptu dá
-     * `Integer`, takže délka i pozice do služby chodily jako nula a v liště
-     * svítilo 00:00 s posuvníkem na začátku.
+    /*
+     * Služba se schválně **nezastavuje**, když zmizí okno appky. Přesně o to
+     * jde: hudba má hrát dál i se zavřenou appkou. Vypne ji uživatel, nebo
+     * `stop()` z webové vrstvy.
      */
+
+    /** Načte skladbu a (podle `playWhenReady`) ji rovnou pustí. */
     @PluginMethod
-    public void update(PluginCall call) {
-        PlaybackService.update(
+    public void load(PluginCall call) {
+        String uri = call.getString("uri");
+        if (uri == null || uri.isEmpty()) {
+            call.reject("Chybí adresa skladby.", "PLAYBACK_BAD_REQUEST");
+            return;
+        }
+        PlaybackService.load(
             getContext(),
+            uri,
             call.getString("title", ""),
             call.getString("artist", ""),
             call.getString("album", ""),
             call.getString("artwork"),
-            millis(call, "durationMs"),
             millis(call, "positionMs"),
-            Boolean.TRUE.equals(call.getBoolean("playing", false))
+            !Boolean.FALSE.equals(call.getBoolean("playWhenReady", true))
         );
         call.resolve();
     }
 
-    private long millis(PluginCall call, String name) {
-        double value = call.getData().optDouble(name, 0);
-        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) return 0;
-        return (long) value;
+    @PluginMethod
+    public void play(PluginCall call) {
+        PlaybackService.command(getContext(), PlaybackService.ACTION_PLAY, 0);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void pause(PluginCall call) {
+        PlaybackService.command(getContext(), PlaybackService.ACTION_PAUSE, 0);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void seek(PluginCall call) {
+        PlaybackService.command(getContext(), PlaybackService.ACTION_SEEK, millis(call, "positionMs"));
+        call.resolve();
+    }
+
+    /** Co služba zrovna hraje - appka se podle toho po otevření srovná. */
+    @PluginMethod
+    public void current(PluginCall call) {
+        String[] state = PlaybackService.snapshot();
+        JSObject result = new JSObject();
+        result.put("running", state != null);
+        if (state != null) {
+            result.put("uri", state[0]);
+            result.put("playing", "1".equals(state[1]));
+            result.put("positionMs", Long.parseLong(state[2]));
+            result.put("durationMs", Long.parseLong(state[3]));
+        }
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -77,9 +127,9 @@ public class PlaybackPlugin extends Plugin {
     }
 
     /**
-     * Povolení notifikací (Android 13+). Bez něj hudba hraje dál a session na
-     * zámku funguje, jen notifikace není vidět - proto se ptá až u prvního
-     * přehrání a odmítnutí není chyba.
+     * Povolení notifikací (Android 13+). Bez něj hudba hraje dál, jen ovládání
+     * v liště není vidět - proto se ptá až u prvního přehrání a odmítnutí
+     * není chyba.
      */
     @PluginMethod
     public void requestNotifications(PluginCall call) {
@@ -94,5 +144,16 @@ public class PlaybackPlugin extends Plugin {
     @PermissionCallback
     private void notificationsCallback(PluginCall call) {
         call.resolve();
+    }
+
+    /**
+     * Čísla se čtou přes `optDouble`, ne přes `call.getLong`. Ten vrací výchozí
+     * hodnotu pro všechno, co není přesně `Long` - a JSON z JavaScriptu dá
+     * `Integer`, takže by pozice chodila jako nula.
+     */
+    private long millis(PluginCall call, String name) {
+        double value = call.getData().optDouble(name, 0);
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) return 0;
+        return (long) value;
     }
 }

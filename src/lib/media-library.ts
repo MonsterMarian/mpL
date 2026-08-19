@@ -38,6 +38,11 @@ interface MediaLibraryPlugin {
    */
   deleteAudio(options: { ids: string[] }): Promise<{ deleted: boolean }>;
   /**
+   * Otevře soubor v jiné aplikaci. WebView umí jen webové kodeky, takže
+   * u filmů (MKV, AC3) je tohle jediná cesta, jak je přehrát.
+   */
+  openExternally(options: { uri: string; mimeType?: string }): Promise<void>;
+  /**
    * Video se od Androidu 13 povoluje zvlášť od hudby, takže má vlastní
    * dvojici check/request - jinak by si appka řekla o obojí naráz i u toho,
    * kdo video vůbec nezapnul.

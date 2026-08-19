@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Film, FolderOpen, Loader2, Play, Upload } from "lucide-react";
+import { ExternalLink, Film, FolderOpen, Loader2, Play, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
@@ -24,6 +24,9 @@ export interface VideoItem {
   id: string;
   title: string;
   src: string;
+  /** Původní `content://` adresa - potřebuje ji jiný přehrávač. */
+  uri?: string;
+  mimeType?: string;
   durationSeconds: number;
   sizeBytes: number;
   source: "device" | "local";
@@ -52,6 +55,8 @@ function mapNative(video: NativeVideo): VideoItem {
     id: `device-${video.id}`,
     title: video.title || video.fileName,
     src: playableMediaSource(video.src),
+    uri: video.src,
+    mimeType: video.mimeType,
     durationSeconds: video.durationSeconds,
     sizeBytes: video.sizeBytes,
     source: "device",
@@ -70,6 +75,8 @@ export function VideoLibrary({
   const [permission, setPermission] = React.useState<Permission>("unknown");
   const [loading, setLoading] = React.useState(false);
   const [currentId, setCurrentId] = React.useState<string | null>(null);
+  /** Video, které WebView odmítl - nabídne se jiný přehrávač. */
+  const [failed, setFailed] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const objectUrls = React.useRef<string[]>([]);
@@ -162,7 +169,21 @@ export function VideoLibrary({
 
   const play = (id: string) => {
     onBeforePlay();
+    setFailed(null);
     setCurrentId(id);
+  };
+
+  /** Formát, který WebView neumí, dostane přehrávač, který ho umí. */
+  const openElsewhere = async (video: VideoItem) => {
+    if (!video.uri || !canReadDeviceMedia()) {
+      onToast?.({ tone: "warn", title: "Otevřít jinde nejde", description: "Ručně vybraný soubor umí jen tahle appka." });
+      return;
+    }
+    try {
+      await MediaLibrary.openExternally({ uri: video.uri, mimeType: video.mimeType ?? "video/*" });
+    } catch {
+      onToast?.({ tone: "warn", title: "Žádný přehrávač", description: "V telefonu není aplikace, která by video otevřela." });
+    }
   };
 
   React.useEffect(() => {
@@ -198,20 +219,55 @@ export function VideoLibrary({
       </div>
 
       {current ? (
-        <div className="overflow-hidden rounded-2xl border bg-black">
-          <video
-            ref={videoRef}
-            src={current.src}
-            controls
-            playsInline
-            onPlay={onBeforePlay}
-            className="max-h-[60vh] w-full bg-black"
-          />
-          <div className="flex items-center gap-2 px-4 py-3">
+        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+          {/*
+            Video přes celou obrazovku, jak to dělá každý přehrávač: obraz nemá
+            soupeřit se seznamem a s lištami appky. Ven se jde křížkem nebo
+            systémovým tlačítkem zpět.
+          */}
+          <div className="mw-safe-top flex items-center gap-2 px-3 pt-2 text-white">
+            <button
+              type="button"
+              onClick={() => setCurrentId(null)}
+              aria-label="Zavřít video"
+              className="rounded-full p-2 text-white/80 transition-colors hover:text-white"
+            >
+              <X className="size-6" />
+            </button>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{current.title}</span>
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {formatTime(current.durationSeconds)}
-            </span>
+            <button
+              type="button"
+              onClick={() => void openElsewhere(current)}
+              aria-label="Otevřít v jiné aplikaci"
+              title="Otevřít v jiné aplikaci"
+              className="rounded-full p-2 text-white/80 transition-colors hover:text-white"
+            >
+              <ExternalLink className="size-5" />
+            </button>
+          </div>
+
+          <div className="relative flex flex-1 items-center justify-center">
+            <video
+              ref={videoRef}
+              src={current.src}
+              controls
+              playsInline
+              onPlay={onBeforePlay}
+              onError={() => setFailed(current.id)}
+              className="max-h-full w-full bg-black"
+            />
+            {failed === current.id ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center">
+                <p className="text-sm font-medium text-white">Tenhle formát appka nepřehraje</p>
+                <p className="max-w-xs text-xs leading-relaxed text-white/70">
+                  Filmy bývají v kontejnerech (MKV) a se zvukem (AC3), které umí jen samostatný
+                  přehrávač. Soubor se dá otevřít v něm.
+                </p>
+                <Button size="sm" onClick={() => void openElsewhere(current)}>
+                  <ExternalLink className="size-4" /> Otevřít v jiné aplikaci
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

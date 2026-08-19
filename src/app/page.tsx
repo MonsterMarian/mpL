@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BookOpen,
   BookOpenText,
   Bookmark,
   BookmarkCheck,
@@ -10,9 +11,8 @@ import {
   ChevronRight,
   FileText,
   FileUp,
-  Film,
-  Library,
   Loader2,
+  Music2,
   Pause,
   Play,
   Plus,
@@ -22,6 +22,7 @@ import {
   SkipForward,
   Timer,
   TimerReset,
+  Video,
   X,
   ZoomIn,
   ZoomOut,
@@ -85,7 +86,15 @@ import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
-import { clearNowPlaying, onPlaybackCommand, updateNowPlaying } from "@/lib/playback-service";
+import {
+  currentNativePlayback,
+  listenToNativePlayback,
+  nativePlaybackAvailable,
+  pauseNative,
+  playNative,
+  resumeNative,
+  seekNative,
+} from "@/lib/playback-service";
 import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, registerBackButton, syncStatusBar } from "@/lib/native";
@@ -117,6 +126,7 @@ function mapNativeTrack(track: NativeAudioTrack): Track {
     duration: formatTime(track.durationSeconds),
     durationSeconds: track.durationSeconds,
     src: playableMediaSource(track.src),
+    uri: track.src,
     artwork: track.artwork ? playableMediaSource(track.artwork) : null,
     artworkSource: track.artwork ?? null,
     addedAt: track.addedAt ?? 0,
@@ -162,6 +172,14 @@ export default function HomePage() {
   const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true });
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
+  /**
+   * Knihovna se nekreslí, dokud se nenačte.
+   *
+   * Bez toho appka po otevření na okamžik ukázala prázdný stav („žádné
+   * skladby"), pak seznam bez obalů a teprve pak hotovou obrazovku. Tři různé
+   * obrazy během půl vteřiny vypadají jako chyba, i když jde jen o načítání.
+   */
+  const [libraryReady, setLibraryReady] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   /** Čas, kdy má hudba usnout. `null` = časovač neběží. */
   const [sleepAt, setSleepAt] = React.useState<number | null>(null);
@@ -175,6 +193,8 @@ export default function HomePage() {
   const resumeRef = React.useRef<{ id: string; time: number } | null>(null);
   /** Vteřina, na kterou se má skočit, jakmile prohlížeč načte délku skladby. */
   const pendingSeek = React.useRef(0);
+  /** Poslední známá pozice - ukládá se na disk i mimo překreslení. */
+  const currentTimeRef = React.useRef(0);
   /**
    * Poslední verze ovladačů. Přes ref, aby se posluchači (MediaSession
    * v prohlížeči, notifikace a zámek v telefonu) registrovali jen jednou
@@ -186,6 +206,7 @@ export default function HomePage() {
     play: () => {},
     pause: () => {},
     seek: (_seconds: number) => {},
+    ended: () => {},
   });
 
   /** Knihovna dokumentů z disku - stejně jako knihovna hudby přežije restart. */
@@ -208,6 +229,22 @@ export default function HomePage() {
   const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? EMPTY_TRACK;
   const hasTrack = currentTrack.id !== EMPTY_TRACK.id;
 
+  /**
+   * Kdo zvuk doopravdy přehrává.
+   *
+   * Skladbu ze zařízení pouští nativní služba - jen tak hraje dál, když je
+   * appka zavřená. Ručně vybraný soubor (blob adresa) nativní přehrávač
+   * otevřít neumí, ten zůstává značce `<audio>` ve stránce, stejně jako celý
+   * prohlížeč a starší balík bez pluginu.
+   */
+  const nativeReady = React.useMemo(() => nativePlaybackAvailable(), []);
+  const playsNatively = React.useCallback(
+    (track: Track) => nativeReady && Boolean(track.uri),
+    [nativeReady],
+  );
+  /** Co má služba načtené - aby „přehrát" po restartu appky vědělo, co pustit. */
+  const nativeLoaded = React.useRef<string | null>(null);
+
   /** Co je vidět v seznamu skladeb - po hledání, filtru a řazení. */
   const visibleTracks = React.useMemo(
     () => sortTracks(filterTracks(tracks, query, libraryFilter, liked), sortKey, playStats),
@@ -222,6 +259,8 @@ export default function HomePage() {
       .filter((track): track is Track => Boolean(track));
   }, [queue, currentTrackId, tracks]);
 
+  currentTimeRef.current = currentTime;
+
   const activeDoc = documents.find((doc) => doc.id === documentId_) ?? null;
   const documentPages: DocumentPage[] = activeDoc?.pages ?? [];
   const documentName = activeDoc?.name ?? null;
@@ -235,6 +274,7 @@ export default function HomePage() {
   const loadDeviceMusic = React.useCallback(async (requestPermission = false) => {
     if (!canReadDeviceMedia()) {
       setMediaPermission("unavailable");
+      setLibraryReady(true);
       return;
     }
 
@@ -267,6 +307,7 @@ export default function HomePage() {
       if (requestPermission) toast({ tone: "warn", title: "Hudbu se nepodařilo načíst", description: "Zkontroluj oprávnění aplikace v Androidu." });
     } finally {
       setIsLoadingMedia(false);
+      setLibraryReady(true);
     }
   }, [toast]);
 
@@ -359,6 +400,31 @@ export default function HomePage() {
     if (storageReady) savePlaylists(playlists);
   }, [playlists, storageReady]);
 
+  /**
+   * Srovnání s běžícím přehráváním.
+   *
+   * Hudba mohla hrát celou dobu, co byla appka zavřená - služba o ní ví
+   * a appka se podle ní zařídí. Bez toho by se tvářila, že nehraje nic,
+   * a prvním klepnutím by běžící skladbu přerazila.
+   */
+  const adopted = React.useRef(false);
+  React.useEffect(() => {
+    if (!nativeReady || !tracks.length || adopted.current) return;
+    adopted.current = true;
+    void currentNativePlayback().then((snapshot) => {
+      if (!snapshot?.running || !snapshot.uri) return;
+      const track = tracks.find((item) => item.uri === snapshot.uri);
+      if (!track) return;
+      logPlayback("služba: appka převzala běžící přehrávání");
+      nativeLoaded.current = track.id;
+      resumeRef.current = null;
+      setCurrentTrackId(track.id);
+      setIsPlaying(Boolean(snapshot.playing));
+      setCurrentTime((snapshot.positionMs ?? 0) / 1000);
+      if (snapshot.durationMs) setDuration(snapshot.durationMs / 1000);
+    });
+  }, [nativeReady, tracks]);
+
   /** Návrat tam, kde se skončilo. Jde jen o skladby, které v zařízení pořád jsou. */
   React.useEffect(() => {
     const resume = resumeRef.current;
@@ -366,6 +432,7 @@ export default function HomePage() {
     resumeRef.current = null;
     if (!tracks.some((track) => track.id === resume.id)) return;
     setCurrentTrackId(resume.id);
+    setCurrentTime(resume.time);
     pendingSeek.current = resume.time;
   }, [tracks]);
 
@@ -378,7 +445,7 @@ export default function HomePage() {
     const save = () => {
       localStorage.setItem(
         "microwins:resume",
-        JSON.stringify({ id: currentTrackId, time: audioRef.current?.currentTime ?? 0 }),
+        JSON.stringify({ id: currentTrackId, time: currentTimeRef.current }),
       );
     };
     save();
@@ -390,6 +457,9 @@ export default function HomePage() {
   }, [currentTrackId, storageReady]);
 
   React.useEffect(() => {
+    // Skladbu, kterou hraje služba, si prvek ve stránce nesmí nahrát - hrálo
+    // by to dvakrát přes sebe.
+    if (playsNatively(currentTrack)) return;
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
     audio.load();
@@ -398,6 +468,7 @@ export default function HomePage() {
     if (isPlaying) {
       audio.play().catch(() => setIsPlaying(false));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTrackId]);
 
   /**
@@ -405,92 +476,37 @@ export default function HomePage() {
    * proces na pozadí sestřelí a poslech skončí uprostřed skladby.
    */
   /**
-   * Co má systém ukazovat v notifikaci a na zámku. Pozice se čte přímo
-   * z přehrávače, ne ze stavu - jinak by se tohle volalo několikrát za vteřinu.
-   */
-  // Přes ref, ne přes závislost: `currentTrack` je nový objekt při každé změně
-  // pole skladeb (třeba když se dopočítá délka), a hlásit systému stav při
-  // každém takovém překreslení znamená pokaždé restartovat službu.
-  const nowPlayingTrack = React.useRef(currentTrack);
-  nowPlayingTrack.current = currentTrack;
-
-  const pushNowPlaying = React.useCallback((playing: boolean) => {
-    const track = nowPlayingTrack.current;
-    if (track.id === EMPTY_TRACK.id) return;
-    // Přehrávač umí u obsahu bez známé velikosti vrátit délku `Infinity`.
-    // Do systému musí jít číslo, jinak zůstane posuvník mrtvý.
-    const audio = audioRef.current;
-    const measured = audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-    const seconds = measured || track.durationSeconds || 0;
-    const position = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-    void updateNowPlaying({
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      artwork: track.artworkSource ?? null,
-      durationMs: Math.max(0, Math.round(seconds * 1000)),
-      positionMs: Math.max(0, Math.round(position * 1000)),
-      playing,
-    });
-  }, []);
-
-  React.useEffect(() => {
-    if (!hasTrack) {
-      void clearNowPlaying();
-      return;
-    }
-    // Se zpožděním schválně: Android hlídá, že služba naskočí do popředí do
-    // pěti vteřin, a rozklepané pauza/přehrát by ji spouštělo a rušilo naráz.
-    // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
-    const timer = window.setTimeout(() => {
-      logPlayback(`služba: hlásím ${isPlaying ? "hraje" : "stojí"}, délka ${formatTime(duration)}`);
-      pushNowPlaying(isPlaying);
-    }, 250);
-    return () => window.clearTimeout(timer);
-    // `duration` je v závislostech schválně: při prvním ohlášení ji přehrávač
-    // ještě nezná a v liště by zůstalo 00:00 bez posuvníku.
-  }, [hasTrack, isPlaying, currentTrack.id, duration, pushNowPlaying]);
-
-  React.useEffect(() => () => void clearNowPlaying(), []);
-
-  /**
-   * Tlačítka z notifikace, ze zámku a ze sluchátek.
+   * Co hlásí nativní přehrávač.
    *
-   * Pauza, která přijde do dvou vteřin po spuštění, se zahazuje: uživatel ji
-   * v takovém čase zmáčknout nemohl, takže je to systém (zvukové ohnisko nebo
-   * politika výrobce), a hudba by kvůli němu zhasla hned po zapnutí. Do
-   * záznamu se to zapíše, ať je vidět, že se to děje.
+   * Stav i pozice chodí odsud, ne z prvku ve stránce - službě totiž hudba
+   * patří. Appka je proti ní jen okno: po otevření se srovná podle toho, co
+   * zrovna hraje, místo aby přehrávání přerazila.
    */
   React.useEffect(() => {
-    return onPlaybackCommand((command) => {
-      // Tlačítko v notifikaci je vždycky uživatel a poslechne se hned. Pauza
-      // ze systémové session do dvou vteřin po spuštění ale uživatel být
-      // nemůže - to je politika systému a hudba by kvůli ní zhasla hned po
-      // zapnutí. Do záznamu se to zapíše, ať je vidět, že se to děje.
-      const early = command.source === "session" && Date.now() - startedAt.current < 2000;
-      const ignored = early && command.action !== "play";
-      logPlayback(`${command.source === "notification" ? "notifikace" : "systém"}: ${command.action}${ignored ? " (zahozeno, je moc brzo)" : ""}`);
-      if (ignored) return;
-      switch (command.action) {
-        case "play":
-          controls.current.play();
-          break;
-        case "pause":
-        case "stop":
-          controls.current.pause();
-          break;
-        case "next":
-          controls.current.next();
-          break;
-        case "previous":
-          controls.current.previous();
-          break;
-        case "seek":
-          controls.current.seek(command.positionMs / 1000);
-          break;
-      }
+    return listenToNativePlayback({
+      onState: ({ playing, positionMs, durationMs }) => {
+        setIsPlaying(playing);
+        setCurrentTime(positionMs / 1000);
+        if (durationMs > 0) setDuration(durationMs / 1000);
+      },
+      onCompleted: () => {
+        logPlayback("služba: skladba dohrála");
+        controls.current.ended();
+      },
+      onFailed: (message) => {
+        logPlayback(`služba: ${message}`);
+        toast({ tone: "warn", title: "Skladbu se nepodařilo přehrát", description: "Soubor už nemusí být v zařízení." });
+      },
+      onCommand: (command) => {
+        logPlayback(`${command.source === "notification" ? "notifikace" : "systém"}: ${command.action}`);
+        // Přehrát, pauzu i posun udělala služba sama a stav si vyžádá zpátky
+        // vlastní hláškou. Appka řeší jen to, co umí rozhodnout jedině ona:
+        // která skladba je na řadě.
+        if (command.action === "next") controls.current.next();
+        else if (command.action === "previous") controls.current.previous();
+      },
     });
-  }, []);
+  }, [toast]);
 
   /** Odpočet časovače. Vteřinový tik stačí - vyšší přesnost by nikdo nepoznal. */
   React.useEffect(() => {
@@ -503,6 +519,7 @@ export default function HomePage() {
       setSleepLeft(Math.max(0, left));
       if (left > 0) return;
       audioRef.current?.pause();
+      void pauseNative();
       setIsPlaying(false);
       setSleepAt(null);
       toast({ tone: "info", title: "Časovač doběhl", description: "Hudba usnula." });
@@ -685,7 +702,7 @@ export default function HomePage() {
   };
 
   /** Nová skladba se počítá do statistiky - z ní žije řazení podle poslechu. */
-  const startTrack = (trackId: string) => {
+  const startTrack = (trackId: string, positionMs = 0) => {
     logPlayback("uživatel: spustil skladbu");
     startedAt.current = Date.now();
     // Hudba a předčítání se v jednom přehrávači nepřekřikují.
@@ -696,6 +713,22 @@ export default function HomePage() {
       ...previous,
       [trackId]: { count: (previous[trackId]?.count ?? 0) + 1, at: Date.now() },
     }));
+
+    const track = tracks.find((item) => item.id === trackId);
+    if (track && playsNatively(track)) {
+      nativeLoaded.current = trackId;
+      setCurrentTime(positionMs / 1000);
+      setDuration(track.durationSeconds);
+      void playNative({
+        uri: track.uri as string,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        artwork: track.artworkSource ?? null,
+        positionMs,
+        playWhenReady: true,
+      });
+    }
   };
 
   /** Kdy naposledy pustil přehrávání uživatel - viz `ignoreEarlyPause`. */
@@ -703,6 +736,25 @@ export default function HomePage() {
 
   const togglePlayback = () => {
     if (!hasTrack) return;
+
+    if (playsNatively(currentTrack)) {
+      if (isPlaying) {
+        logPlayback("uživatel: pauza");
+        setIsPlaying(false);
+        void pauseNative();
+        return;
+      }
+      logPlayback("uživatel: přehrát");
+      startedAt.current = Date.now();
+      stopReading();
+      setIsPlaying(true);
+      // Po restartu appky služba nic načteného nemá - tehdy se skladba musí
+      // podat znovu, i s pozicí, kde se posledně skončilo.
+      if (nativeLoaded.current === currentTrack.id) void resumeNative();
+      else startTrack(currentTrack.id, Math.round(currentTime * 1000));
+      return;
+    }
+
     if (isPlaying) {
       logPlayback("uživatel: pauza");
       audioRef.current?.pause();
@@ -786,29 +838,33 @@ export default function HomePage() {
   };
 
   const seekTo = (seconds: number) => {
-    if (audioRef.current) audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
-    // Bez tohohle by pruh na zámku běžel od staré pozice dál.
-    pushNowPlaying(isPlaying);
+    if (playsNatively(currentTrack)) {
+      void seekNative(seconds * 1000);
+      return;
+    }
+    if (audioRef.current) audioRef.current.currentTime = seconds;
   };
 
   const skipBy = (seconds: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    seekTo(Math.min(Math.max(0, audio.currentTime + seconds), audio.duration || duration || 0));
+    const limit = duration || currentTrack.durationSeconds || 0;
+    seekTo(Math.min(Math.max(0, currentTime + seconds), limit));
   };
 
   const handleEnded = () => {
     // Časovač „do konce skladby" se vybírá právě tady - ne po vteřinách.
     if (sleepAfterTrack) {
       setSleepAfterTrack(false);
+      void pauseNative();
       setIsPlaying(false);
       setCurrentTime(0);
       toast({ tone: "info", title: "Časovač doběhl", description: "Hudba usnula po dohrání skladby." });
       return;
     }
     if (repeatMode === "one") {
-      if (audioRef.current) {
+      if (playsNatively(currentTrack)) {
+        startTrack(currentTrack.id);
+      } else if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
@@ -835,6 +891,7 @@ export default function HomePage() {
       if (isPlaying) togglePlayback();
     },
     seek: seekTo,
+    ended: handleEnded,
   };
 
   // --- fronta, playlisty a mazání --------------------------------------------
@@ -1209,6 +1266,7 @@ export default function HomePage() {
   const silenceEverything = () => {
     stopReading();
     audioRef.current?.pause();
+    void pauseNative();
     setIsPlaying(false);
   };
 
@@ -1218,11 +1276,16 @@ export default function HomePage() {
     if (!enabled && activeView === id) setActiveView("library");
   };
 
-  /** Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne. */
-  const views: { id: View; label: string; icon: typeof Library }[] = [
-    { id: "library", label: "Knihovna", icon: Library },
-    ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpenText }] : []),
-    ...(addons.video ? [{ id: "video" as const, label: "Video", icon: Film }] : []),
+  /**
+   * Záložky nad obsahem. Addon bez svojí položky ze seznamu vypadne.
+   *
+   * Ikony jsou plné tvary, ne drátěné: filmový pás se v neaktivním stavu
+   * rozpadal na čárky a vypadal jako chyba vykreslení.
+   */
+  const views: { id: View; label: string; icon: typeof Music2 }[] = [
+    { id: "library", label: "Knihovna", icon: Music2 },
+    ...(addons.reader ? [{ id: "reader" as const, label: "Dokumenty", icon: BookOpen }] : []),
+    ...(addons.video ? [{ id: "video" as const, label: "Video", icon: Video }] : []),
   ];
 
   const sleepActive = sleepAt !== null || sleepAfterTrack;
@@ -1307,7 +1370,13 @@ export default function HomePage() {
       </header>
 
       <main className={cn("mx-auto w-full max-w-4xl flex-1 px-4 pt-6", views.length > 1 ? "mw-pad-nav" : "mw-pad-dock")}>
-        {activeView === "library" ? (
+        {activeView === "library" && !libraryReady ? (
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Načítám knihovnu" />
+          </div>
+        ) : null}
+
+        {activeView === "library" && libraryReady ? (
           <LibraryView
             tracks={tracks}
             visibleTracks={visibleTracks}
@@ -1509,6 +1578,13 @@ export default function HomePage() {
         zbyde jediné tlačítko a to je jen pruh navíc.
       */}
       <div className="mw-safe-x fixed inset-x-0 bottom-0 z-40 bg-background">
+        {/*
+          Lišta patří k tomu, co je na obrazovce. V knihovně ukazuje hudbu,
+          a to teprve od chvíle, kdy si uživatel nějakou skladbu pustí -
+          po otevření appky nemá co hlásit. Ve videu a v dokumentech by jen
+          zabírala místo věcem, které mají vlastní přehrávač.
+        */}
+        {activeView === "library" && hasTrack ? (
         <PlayerDock
           track={currentTrack}
           hasTrack={hasTrack}
@@ -1525,6 +1601,30 @@ export default function HomePage() {
           onShuffle={toggleShuffle}
           onRepeat={() => setRepeatMode((mode) => (mode === "off" ? "all" : mode === "all" ? "one" : "off"))}
         />
+        ) : null}
+
+        {activeView === "reader" && documentName ? (
+          <button
+            type="button"
+            onClick={toggleDocumentReading}
+            className="player-dock flex w-full items-center gap-3 border-t border-white/[0.09] px-4 py-2.5 text-left"
+          >
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-brand">
+              <FileText className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{documentName}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                strana {documentPage + 1} z {documentPages.length}
+              </span>
+            </span>
+            {readablePage || isReadingDocument ? (
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+                {isReadingDocument ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
 
         {views.length > 1 ? (
           <nav className="border-t border-white/[0.07] sm:hidden">
@@ -1562,7 +1662,7 @@ export default function HomePage() {
         <div className="mw-safe-bottom" />
       </div>
 
-      <audio ref={audioRef} src={currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => { logPlayback("element: hraje"); setIsPlaying(true); }} onPause={() => { logPlayback("element: pauza"); setIsPlaying(false); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={() => { logPlayback("element: konec skladby"); handleEnded(); }} onStalled={() => logPlayback("element: uvázl")} onError={() => { logPlayback(`element: chyba (kód ${audioRef.current?.error?.code ?? "?"})`); if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
+      <audio ref={audioRef} src={playsNatively(currentTrack) ? undefined : currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => { logPlayback("element: hraje"); setIsPlaying(true); }} onPause={() => { logPlayback("element: pauza"); setIsPlaying(false); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={() => { logPlayback("element: konec skladby"); handleEnded(); }} onStalled={() => logPlayback("element: uvázl")} onError={() => { logPlayback(`element: chyba (kód ${audioRef.current?.error?.code ?? "?"})`); if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
 
       <NowPlaying
         open={nowPlayingOpen && hasTrack}

@@ -1,26 +1,32 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 
 /**
- * Přehrávač očima systému.
+ * Přehrávání v nativní službě.
  *
- * Zvuk hraje ve WebView a Android o něm sám od sebe neví nic - v notifikacích
- * ani na zamykací obrazovce se neobjeví. Tenhle most mu pošle, co hraje,
- * a přinese zpátky, co uživatel zmáčkl.
+ * Dokud hudba hrála ve stránce, byla svázaná s oknem appky: stačilo appku
+ * odsunout nebo zavřít a ztichla, protože WebView zmizel i s ní. Nativní
+ * služba hraje dál - a je to zároveň jediné místo, ze kterého se dá obsloužit
+ * notifikace a zamykací obrazovka.
  *
- * Zároveň drží appku naživu: proces bez služby v popředí Android na pozadí
- * sestřelí a hudba uprostřed skladby ztichne.
- *
- * V prohlížeči i na starším balíku bez pluginu se všechno tiše přeskočí.
+ * Webová vrstva tady jen říká, co se má hrát, a poslouchá, co se děje.
+ * V prohlížeči (a ve starém APK bez pluginu) se všechno tiše přeskočí
+ * a přehrává značka `<audio>` ve stránce jako dřív.
  */
-export interface NowPlaying {
+export interface NativeTrackRequest {
+  /** Původní `content://` adresa, ne ta přeložená pro WebView. */
+  uri: string;
   title: string;
   artist: string;
   album: string;
-  /** Původní `content://` adresa obalu, ne ta přeložená pro WebView. */
   artwork: string | null;
-  durationMs: number;
   positionMs: number;
+  playWhenReady: boolean;
+}
+
+export interface PlaybackStateEvent {
   playing: boolean;
+  positionMs: number;
+  durationMs: number;
 }
 
 /**
@@ -33,12 +39,27 @@ export type PlaybackCommand =
   | { action: "play" | "pause" | "next" | "previous" | "stop"; source: PlaybackSource }
   | { action: "seek"; positionMs: number; source: PlaybackSource };
 
+export interface NativeSnapshot {
+  running: boolean;
+  uri?: string;
+  playing?: boolean;
+  positionMs?: number;
+  durationMs?: number;
+}
+
 interface PlaybackPlugin {
-  update(options: NowPlaying): Promise<void>;
+  load(options: NativeTrackRequest): Promise<void>;
+  current(): Promise<NativeSnapshot>;
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  seek(options: { positionMs: number }): Promise<void>;
   stop(): Promise<void>;
   requestNotifications(): Promise<void>;
   /** Dodává Capacitor sám podle deklarovaných oprávnění pluginu. */
   checkPermissions(): Promise<{ notifications: "granted" | "denied" | "prompt" | "prompt-with-rationale" }>;
+  addListener(event: "state", handler: (data: PlaybackStateEvent) => void): Promise<PluginListenerHandle>;
+  addListener(event: "completed", handler: () => void): Promise<PluginListenerHandle>;
+  addListener(event: "failed", handler: (data: { message?: string }) => void): Promise<PluginListenerHandle>;
   addListener(
     event: "command",
     handler: (data: { action: string; positionMs?: number; source?: string }) => void,
@@ -47,19 +68,132 @@ interface PlaybackPlugin {
 
 const Playback = registerPlugin<PlaybackPlugin>("Playback");
 
+/** Umí tahle instalace přehrávat nativně? Starý balík ani prohlížeč ne. */
+export function nativePlaybackAvailable(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Playback");
+}
+
 let notificationsAsked = false;
 
+export async function playNative(request: NativeTrackRequest): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    // O notifikace se řekne až u prvního přehrání - ptát se hned při startu
+    // appky by bylo na nic, uživatel ještě neví proč.
+    if (!notificationsAsked) {
+      notificationsAsked = true;
+      await Playback.requestNotifications().catch(() => {});
+    }
+    await Playback.load(request);
+  } catch {
+    // Bez služby zbývá přehrávání ve stránce.
+  }
+}
+
+export async function resumeNative(): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    await Playback.play();
+  } catch {
+    // viz výše
+  }
+}
+
+export async function pauseNative(): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    await Playback.pause();
+  } catch {
+    // viz výše
+  }
+}
+
+export async function seekNative(positionMs: number): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    await Playback.seek({ positionMs: Math.max(0, Math.round(positionMs)) });
+  } catch {
+    // viz výše
+  }
+}
+
+export async function stopNative(): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    await Playback.stop();
+  } catch {
+    // viz výše
+  }
+}
+
+export interface NativePlaybackHandlers {
+  onState: (state: PlaybackStateEvent) => void;
+  onCompleted: () => void;
+  onFailed: (message: string) => void;
+  onCommand: (command: PlaybackCommand) => void;
+}
+
+/** Přihlásí se ke všemu, co služba hlásí. Vrací odhlášení. */
+export function listenToNativePlayback(handlers: NativePlaybackHandlers): () => void {
+  if (!nativePlaybackAvailable()) return () => {};
+  const handles: PluginListenerHandle[] = [];
+  let cancelled = false;
+
+  const keep = (promise: Promise<PluginListenerHandle>) => {
+    void promise
+      .then((handle) => {
+        if (cancelled) void handle.remove();
+        else handles.push(handle);
+      })
+      .catch(() => {});
+  };
+
+  keep(Playback.addListener("state", handlers.onState));
+  keep(Playback.addListener("completed", handlers.onCompleted));
+  keep(Playback.addListener("failed", (data) => handlers.onFailed(data?.message ?? "Přehrávač selhal.")));
+  keep(
+    Playback.addListener("command", (data) => {
+      const source: PlaybackSource = data.source === "notification" ? "notification" : "session";
+      if (data.action === "seek") {
+        handlers.onCommand({ action: "seek", positionMs: data.positionMs ?? 0, source });
+        return;
+      }
+      if (
+        data.action === "play" ||
+        data.action === "pause" ||
+        data.action === "next" ||
+        data.action === "previous" ||
+        data.action === "stop"
+      ) {
+        handlers.onCommand({ action: data.action, source });
+      }
+    }),
+  );
+
+  return () => {
+    cancelled = true;
+    for (const handle of handles) void handle.remove();
+  };
+}
+
 /**
- * Co z ovládání v systému je vůbec k mání.
+ * Co služba zrovna hraje.
  *
- * Nativní část se do telefonu dostane jen s novým APK - živá aktualizace veze
- * pouze web. Bez tohohle by se to poznalo jedině tak, že „to nefunguje":
- * volání do neexistujícího pluginu tiše spadne a nikde se nic neukáže.
+ * Appka se podle toho po otevření srovná: hudba mohla hrát celou dobu, co byla
+ * zavřená, a nemá se jí přerazit ani tvářit, že nehraje nic.
  */
+export async function currentNativePlayback(): Promise<NativeSnapshot | null> {
+  if (!nativePlaybackAvailable()) return null;
+  try {
+    return await Playback.current();
+  } catch {
+    return null;
+  }
+}
+
+/** Co z ovládání v systému je vůbec k mání - pro diagnostiku v Nastavení. */
 export interface PlaybackSupport {
-  /** Běžíme v telefonu, ne v prohlížeči. */
   native: boolean;
-  /** APK zná plugin Playback. */
   plugin: boolean;
   notifications: "granted" | "denied" | "prompt" | "unknown";
 }
@@ -85,63 +219,11 @@ export async function playbackSupport(): Promise<PlaybackSupport> {
 
 /** Řekne si o notifikace na vyžádání - z Nastavení, ne mimochodem při přehrání. */
 export async function askForNotifications(): Promise<void> {
-  if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable("Playback")) return;
+  if (!nativePlaybackAvailable()) return;
   try {
     notificationsAsked = true;
     await Playback.requestNotifications();
   } catch {
     // Starší balík bez pluginu - není o co si říct.
   }
-}
-
-export async function updateNowPlaying(state: NowPlaying): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  try {
-    // O notifikace se řekne až u prvního přehrání - ptát se hned při startu
-    // appky by bylo na nic, uživatel ještě neví proč.
-    if (!notificationsAsked) {
-      notificationsAsked = true;
-      await Playback.requestNotifications().catch(() => {});
-    }
-    await Playback.update(state);
-  } catch {
-    // Starší balík bez pluginu - hudba hraje, jen o ní systém neví.
-  }
-}
-
-export async function clearNowPlaying(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  try {
-    await Playback.stop();
-  } catch {
-    // Služba neběží nebo plugin chybí - není co řešit.
-  }
-}
-
-/** Stisky z notifikace, ze zámku i ze sluchátek. Vrací odhlášení. */
-export function onPlaybackCommand(handler: (command: PlaybackCommand) => void): () => void {
-  if (!Capacitor.isNativePlatform()) return () => {};
-  let handle: PluginListenerHandle | null = null;
-  let cancelled = false;
-
-  void Playback.addListener("command", (data) => {
-    const source: PlaybackSource = data.source === "notification" ? "notification" : "session";
-    if (data.action === "seek") {
-      handler({ action: "seek", positionMs: data.positionMs ?? 0, source });
-      return;
-    }
-    if (data.action === "play" || data.action === "pause" || data.action === "next" || data.action === "previous" || data.action === "stop") {
-      handler({ action: data.action, source });
-    }
-  })
-    .then((registered) => {
-      if (cancelled) void registered.remove();
-      else handle = registered;
-    })
-    .catch(() => {});
-
-  return () => {
-    cancelled = true;
-    void handle?.remove();
-  };
 }

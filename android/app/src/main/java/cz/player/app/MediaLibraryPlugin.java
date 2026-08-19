@@ -110,6 +110,31 @@ public class MediaLibraryPlugin extends Plugin {
         }
     }
 
+    /**
+     * Otevře soubor v jiné aplikaci.
+     *
+     * WebView umí jen to, co má Android jako kodek pro web - MKV, AC3 a půlka
+     * filmů mu nic neříká. Než aby appka tvrdila „nejde přehrát", pustí soubor
+     * do přehrávače, který ho zvládne.
+     */
+    @PluginMethod
+    public void openExternally(PluginCall call) {
+        String uri = call.getString("uri");
+        if (uri == null || uri.trim().isEmpty()) {
+            call.reject("Chybí adresa souboru.", "MEDIA_BAD_REQUEST");
+            return;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(Uri.parse(uri), call.getString("mimeType", "video/*"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContext().startActivity(Intent.createChooser(intent, "Otevřít v").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Soubor se nepodařilo otevřít.", "MEDIA_OPEN_FAILED", error);
+        }
+    }
+
     @PluginMethod
     public void openAppSettings(PluginCall call) {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);

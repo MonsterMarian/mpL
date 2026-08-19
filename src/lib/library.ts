@@ -14,6 +14,11 @@ export interface Track {
   duration: string;
   durationSeconds: number;
   src: string;
+  /**
+   * Původní `content://` adresa souboru. WebView si adresu překládá na svoji,
+   * ale nativní přehrávač otevírá soubor přímo a potřebuje tu nepřeloženou.
+   */
+  uri?: string | null;
   /** Obal skladby, když nějaký má. Jinak `null` a nastoupí značka appky. */
   artwork: string | null;
   /**
