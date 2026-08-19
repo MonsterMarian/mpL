@@ -23,6 +23,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MediaLibraryPlugin.class);
         registerPlugin(PlaybackPlugin.class);
+        registerPlugin(StreamPlugin.class);
         super.onCreate(savedInstanceState);
         confirmLauncher = registerForActivityResult(
             new ActivityResultContracts.StartIntentSenderForResult(),

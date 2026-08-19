@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
+import { playVideoNatively } from "@/lib/stream";
 import { cn } from "@/lib/utils";
 
 /**
@@ -207,11 +208,18 @@ export function VideoLibrary({
     });
 
     setVideos((previous) => [...added, ...previous]);
-    play(added[0].id);
+    void play(added[0].id);
   };
 
-  const play = (id: string) => {
+  const play = async (id: string) => {
     onBeforePlay();
+    const video = videos.find((item) => item.id === id);
+
+    // Nativní přehrávač umí i to, co WebView ne (MKV, HEVC), a nese si vlastní
+    // ovládání. Vlastní obrazovka appky zůstává pro ručně vybraný soubor
+    // a pro prohlížeč.
+    if (video?.uri && (await playVideoNatively(video.uri, video.title))) return;
+
     setFailed(null);
     setPosition(0);
     setLength(0);
@@ -449,7 +457,7 @@ export function VideoLibrary({
               <button
                 key={video.id}
                 type="button"
-                onClick={() => play(video.id)}
+                onClick={() => void play(video.id)}
                 className="group text-left"
               >
                 <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">

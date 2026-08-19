@@ -21,6 +21,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Video přes celou obrazovku v ExoPlayeru: umí i to, co WebView ne. -->
+        <activity
+            android:name=".VideoActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
         <!-- Drží proces naživu, dokud hraje hudba. Sama nic nepřehrává. -->
         <service
             android:name=".PlaybackService"

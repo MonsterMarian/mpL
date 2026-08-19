@@ -176,3 +176,19 @@ describe("popisky", () => {
     expect(formatTotal(5400)).toBe("1 h 30 min");
   });
 });
+
+describe("stahování", () => {
+  it("název souboru přežije uvozovky, lomítka i dlouhý titulek", async () => {
+    const { safeFileName } = await import("./downloads");
+    expect(safeFileName('AC/DC - "Thunderstruck"', "m4a")).toBe('AC-DC - Thunderstruck.m4a');
+    expect(safeFileName("x".repeat(200), ".MP4").length).toBeLessThanOrEqual(115);
+  });
+
+  it("odkaz na stránku se pozná od přímého souboru", async () => {
+    const { needsResolving } = await import("./downloads");
+    expect(needsResolving("https://www.youtube.com/watch?v=abc")).toBe(true);
+    expect(needsResolving("https://youtu.be/abc")).toBe(true);
+    expect(needsResolving("https://open.spotify.com/track/xyz")).toBe(true);
+    expect(needsResolving("https://example.com/dil-12.mp3")).toBe(false);
+  });
+});

@@ -21,6 +21,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // NewPipeExtractor (vytahování adres z YouTube) je jen na JitPacku.
+        maven { url 'https://jitpack.io' }
     }
 }
 
