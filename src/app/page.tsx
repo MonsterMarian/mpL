@@ -441,7 +441,9 @@ export default function HomePage() {
       pushNowPlaying(isPlaying);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [hasTrack, isPlaying, currentTrack.id, pushNowPlaying]);
+    // `duration` je v závislostech schválně: při prvním ohlášení ji přehrávač
+    // ještě nezná a v liště by zůstalo 00:00 bez posuvníku.
+  }, [hasTrack, isPlaying, currentTrack.id, duration, pushNowPlaying]);
 
   React.useEffect(() => () => void clearNowPlaying(), []);
 

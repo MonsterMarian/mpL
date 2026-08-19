@@ -157,17 +157,19 @@ public class PlaybackService extends Service {
             return START_NOT_STICKY;
         }
 
-        // Po pauze zůstane notifikace viset, ale ze zámku se dá odsunout:
-        // hudba stojí, takže proces už nemá co držet.
-        if (!playing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(Service.STOP_FOREGROUND_DETACH);
-        }
-
         return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        // Notifikace musí odejít se službou. Odpojená by zůstala viset se
+        // stavem, který už dávno neplatí - a přesně to se dělo: v liště svítilo
+        // "pozastaveno" a 00:00, zatímco hudba hrála dál.
+        try {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE);
+        } catch (Exception error) {
+            // Služba v popředí nebyla - není co odklízet.
+        }
         if (session != null) {
             session.setActive(false);
             session.release();
@@ -233,12 +235,19 @@ public class PlaybackService extends Service {
         );
     }
 
-    /** Obal alba z MediaStore. Zmenšený - do notifikace se plnotučný nevejde. */
+    /**
+     * Obal alba z MediaStore. Zmenšený - do notifikace se plnotučný nevejde.
+     *
+     * Skladba bez obalu dostane značku appky. Bez ní kreslí systém svoji
+     * náhradní notu, která nepatří nikomu.
+     */
     private void loadArtwork(String uri) {
         if (uri == null || uri.isEmpty()) {
-            if (artwork != null) artwork.recycle();
-            artwork = null;
-            artworkUri = null;
+            if (!"brand".equals(artworkUri)) {
+                if (artwork != null) artwork.recycle();
+                artwork = brandArtwork();
+                artworkUri = artwork != null ? "brand" : null;
+            }
             return;
         }
         if (uri.equals(artworkUri) && artwork != null) return;
@@ -264,8 +273,21 @@ public class PlaybackService extends Service {
         }
 
         if (artwork != null) artwork.recycle();
-        artwork = loaded;
-        artworkUri = loaded != null ? uri : null;
+        if (loaded != null) {
+            artwork = loaded;
+            artworkUri = uri;
+        } else {
+            artwork = brandArtwork();
+            artworkUri = artwork != null ? "brand" : null;
+        }
+    }
+
+    private Bitmap brandArtwork() {
+        try {
+            return BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+        } catch (Exception error) {
+            return null;
+        }
     }
 
     private Notification buildNotification() {
