@@ -41,7 +41,14 @@ public class PlaybackPlugin extends Plugin {
         super.handleOnDestroy();
     }
 
-    /** Co hraje: název, interpret, obal, délka, pozice a jestli to běží. */
+    /**
+     * Co hraje: název, interpret, obal, délka, pozice a jestli to běží.
+     *
+     * Čísla se čtou přes `optDouble`, ne přes `call.getLong`. Ten vrací výchozí
+     * hodnotu pro všechno, co není přesně `Long` - a JSON z JavaScriptu dá
+     * `Integer`, takže délka i pozice do služby chodily jako nula a v liště
+     * svítilo 00:00 s posuvníkem na začátku.
+     */
     @PluginMethod
     public void update(PluginCall call) {
         PlaybackService.update(
@@ -50,11 +57,17 @@ public class PlaybackPlugin extends Plugin {
             call.getString("artist", ""),
             call.getString("album", ""),
             call.getString("artwork"),
-            call.getLong("durationMs", 0L),
-            call.getLong("positionMs", 0L),
+            millis(call, "durationMs"),
+            millis(call, "positionMs"),
             Boolean.TRUE.equals(call.getBoolean("playing", false))
         );
         call.resolve();
+    }
+
+    private long millis(PluginCall call, String name) {
+        double value = call.getData().optDouble(name, 0);
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) return 0;
+        return (long) value;
     }
 
     @PluginMethod

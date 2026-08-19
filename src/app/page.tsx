@@ -417,13 +417,19 @@ export default function HomePage() {
   const pushNowPlaying = React.useCallback((playing: boolean) => {
     const track = nowPlayingTrack.current;
     if (track.id === EMPTY_TRACK.id) return;
+    // Přehrávač umí u obsahu bez známé velikosti vrátit délku `Infinity`.
+    // Do systému musí jít číslo, jinak zůstane posuvník mrtvý.
+    const audio = audioRef.current;
+    const measured = audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    const seconds = measured || track.durationSeconds || 0;
+    const position = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     void updateNowPlaying({
       title: track.title,
       artist: track.artist,
       album: track.album,
       artwork: track.artworkSource ?? null,
-      durationMs: Math.round((audioRef.current?.duration || track.durationSeconds || 0) * 1000),
-      positionMs: Math.round((audioRef.current?.currentTime ?? 0) * 1000),
+      durationMs: Math.max(0, Math.round(seconds * 1000)),
+      positionMs: Math.max(0, Math.round(position * 1000)),
       playing,
     });
   }, []);
@@ -437,7 +443,7 @@ export default function HomePage() {
     // pěti vteřin, a rozklepané pauza/přehrát by ji spouštělo a rušilo naráz.
     // Čtvrt vteřiny nikdo nepozná a všechny takové dvojice se srazí do jedné.
     const timer = window.setTimeout(() => {
-      logPlayback(`služba: hlásím ${isPlaying ? "hraje" : "stojí"}`);
+      logPlayback(`služba: hlásím ${isPlaying ? "hraje" : "stojí"}, délka ${formatTime(duration)}`);
       pushNowPlaying(isPlaying);
     }, 250);
     return () => window.clearTimeout(timer);

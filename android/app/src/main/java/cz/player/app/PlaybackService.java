@@ -282,9 +282,14 @@ public class PlaybackService extends Service {
         }
     }
 
+    /**
+     * Značka appky jako obal. Schválně vlastní PNG, ne `R.mipmap.ic_launcher`:
+     * od Androidu 8 je z ikony adaptivní XML a `decodeResource` na něm vrací
+     * null - proto v liště zůstávala cizí systémová nota.
+     */
     private Bitmap brandArtwork() {
         try {
-            return BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+            return BitmapFactory.decodeResource(getResources(), R.drawable.brand_art);
         } catch (Exception error) {
             return null;
         }
