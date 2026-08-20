@@ -27,7 +27,11 @@ export function nativeStreamAvailable(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Stream");
 }
 
-/** Otevře video v ExoPlayeru. Vrací `false`, když nativní přehrávač není. */
+/**
+ * Pustí video v přehrávači aplikace. Ten si sám vybere, jestli na soubor stačí
+ * systémové dekodéry, nebo je potřeba VLC. Vrací `false`, když appka neběží
+ * v telefonu a nativní přehrávač tím pádem není.
+ */
 export async function playVideoNatively(uri: string, title?: string): Promise<boolean> {
   if (!nativeStreamAvailable()) return false;
   try {

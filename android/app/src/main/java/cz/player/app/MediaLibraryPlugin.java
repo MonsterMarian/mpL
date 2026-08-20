@@ -33,9 +33,16 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONException;
 
@@ -129,77 +136,239 @@ public class MediaLibraryPlugin extends Plugin {
      * „přístup ke všem souborům". Bez něj se vrátí prázdno a appka nabídne
      * povolení; ručně vybraný soubor funguje tak jako tak.
      */
+    /** Co se počítá jako dokument. Podle přípony, protože MIME typ často chybí. */
+    private static final String[] DOC_EXTENSIONS = { ".pdf", ".epub", ".txt", ".md" };
+
+    /** Kam se při procházení úložiště nechodí - jsou to data aplikací, ne knihovna. */
+    private static final Set<String> SKIPPED_DIRS = new HashSet<>(
+        Arrays.asList("data", "obb", ".thumbnails", ".trash", "cache")
+    );
+
+    /** Pojistka proti telefonu plnému složek - hlouběji a dál se nechodí. */
+    private static final int MAX_SCAN_DEPTH = 12;
+    private static final int MAX_DOCUMENTS = 3000;
+
     @PluginMethod
     public void listDocuments(PluginCall call) {
-        JSONArray documents = new JSONArray();
-
         if (!hasAllFiles()) {
             JSObject empty = new JSObject();
             empty.put("granted", false);
-            empty.put("documents", documents);
+            empty.put("documents", new JSONArray());
             call.resolve(empty);
             return;
         }
 
+        // Klíčem je cesta k souboru: stejnou knihu najde MediaStore i procházení
+        // úložiště a v seznamu má být jednou.
+        Map<String, JSObject> found = new LinkedHashMap<>();
+        try {
+            collectFromMediaStore(found);
+            // MediaStore zná jen to, co mu při skenu prošlo pod rukama. Knihy
+            // nakopírované přes kabel, stažené cizí aplikací nebo bez MIME typu
+            // v něm chybí - proto se úložiště ještě projde napřímo.
+            for (File root : storageRoots()) collectFromStorage(root, root, 0, found);
+        } catch (Exception error) {
+            call.reject("Dokumenty se nepodařilo přečíst.", "MEDIA_READ_FAILED", error);
+            return;
+        }
+
+        List<JSObject> sorted = new ArrayList<>(found.values());
+        // Nejnovější nahoře - stejné pořadí, jaké dřív vracel MediaStore.
+        Collections.sort(sorted, (left, right) -> Long.compare(right.optLong("addedAt"), left.optLong("addedAt")));
+
+        JSONArray documents = new JSONArray();
+        for (JSObject document : sorted) documents.put(document);
+
+        JSObject result = new JSObject();
+        result.put("granted", true);
+        result.put("documents", documents);
+        call.resolve(result);
+    }
+
+    /**
+     * Dokumenty, o kterých ví MediaStore.
+     *
+     * Hledá se podle MIME typu **i** podle přípony: spousta souborů má v databázi
+     * MIME prázdné nebo `application/octet-stream` a při hledání jen podle typu
+     * propadly. A projdou se všechny svazky, ne jen vnitřní paměť - na paměťové
+     * kartě je knihovna vedená zvlášť.
+     */
+    private void collectFromMediaStore(Map<String, JSObject> found) {
         String[] projection = {
             MediaStore.Files.FileColumns._ID,
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_ADDED,
             MediaStore.Files.FileColumns.MIME_TYPE,
-            MediaStore.Files.FileColumns.RELATIVE_PATH
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            MediaStore.Files.FileColumns.DATA
         };
-        String selection = MediaStore.Files.FileColumns.MIME_TYPE + " IN (?,?,?,?)";
-        String[] args = { "application/pdf", "application/epub+zip", "text/plain", "text/markdown" };
 
-        Cursor cursor = null;
-        try {
-            cursor = getContext()
-                .getContentResolver()
-                .query(
-                    MediaStore.Files.getContentUri("external"),
-                    projection,
-                    selection,
-                    args,
-                    MediaStore.Files.FileColumns.DATE_ADDED + " DESC"
-                );
+        StringBuilder selection = new StringBuilder(MediaStore.Files.FileColumns.MIME_TYPE + " IN (?,?,?,?)");
+        List<String> args = new ArrayList<>(
+            Arrays.asList("application/pdf", "application/epub+zip", "text/plain", "text/markdown")
+        );
+        for (String extension : DOC_EXTENSIONS) {
+            // LIKE v SQLite nerozlišuje velikost písmen, takže sedne i na ".PDF".
+            selection.append(" OR ").append(MediaStore.Files.FileColumns.DISPLAY_NAME).append(" LIKE ?");
+            args.add("%" + extension);
+        }
 
-            if (cursor != null) {
+        for (String volume : documentVolumes()) {
+            Uri content;
+            try {
+                content = MediaStore.Files.getContentUri(volume);
+            } catch (Exception ignored) {
+                continue;
+            }
+
+            Cursor cursor = null;
+            try {
+                cursor =
+                    getContext()
+                        .getContentResolver()
+                        .query(content, projection, selection.toString(), args.toArray(new String[0]), null);
+                if (cursor == null) continue;
+
                 int idIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID);
                 int nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME);
                 int sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE);
                 int addedIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED);
                 int mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE);
                 int pathIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH);
+                int dataIndex = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA);
 
-                while (cursor.moveToNext()) {
+                while (cursor.moveToNext() && found.size() < MAX_DOCUMENTS) {
+                    String name = valueOrFallback(cursor.getString(nameIndex), "");
+                    String data = dataIndex >= 0 ? cursor.getString(dataIndex) : null;
+                    if (name.isEmpty() && data != null) name = new File(data).getName();
+                    if (!looksLikeDocument(name)) continue;
+
                     long id = cursor.getLong(idIndex);
-                    String name = valueOrFallback(cursor.getString(nameIndex), "Bez názvu");
-                    String path = valueOrFallback(cursor.getString(pathIndex), "");
+                    String folder = valueOrFallback(cursor.getString(pathIndex), "").replaceAll("/$", "");
 
                     JSObject document = new JSObject();
                     document.put("id", String.valueOf(id));
                     document.put("name", name);
-                    document.put("uri", ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id).toString());
+                    document.put("uri", ContentUris.withAppendedId(content, id).toString());
                     document.put("sizeBytes", cursor.getLong(sizeIndex));
                     document.put("addedAt", cursor.getLong(addedIndex) * 1000L);
-                    document.put("mimeType", valueOrFallback(cursor.getString(mimeIndex), "application/pdf"));
-                    // Složka bez koncového lomítka - v seznamu se pak čte líp.
-                    document.put("folder", path.replaceAll("/$", ""));
-                    documents.put(document);
+                    document.put("mimeType", documentMime(name, cursor.getString(mimeIndex)));
+                    document.put("folder", folder);
+                    found.put(data != null ? key(data) : "id:" + volume + ":" + id, document);
                 }
+            } catch (Exception ignored) {
+                // Nečitelný svazek se přeskočí, ostatní se tím nekazí.
+            } finally {
+                if (cursor != null) cursor.close();
             }
-        } catch (Exception error) {
-            call.reject("Dokumenty se nepodařilo přečíst.", "MEDIA_READ_FAILED", error);
-            return;
-        } finally {
-            if (cursor != null) cursor.close();
         }
+    }
 
-        JSObject result = new JSObject();
-        result.put("granted", true);
-        result.put("documents", documents);
-        call.resolve(result);
+    /** Svazky, kde můžou dokumenty ležet - vnitřní paměť i karta. */
+    private List<String> documentVolumes() {
+        List<String> volumes = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                volumes.addAll(MediaStore.getExternalVolumeNames(getContext()));
+            } catch (Exception ignored) {
+                // Starší nebo upravený systém: zůstane jen výchozí svazek.
+            }
+        }
+        if (!volumes.contains("external")) volumes.add("external");
+        return volumes;
+    }
+
+    /** Kořeny úložiště: vnitřní paměť a připojené karty. */
+    private List<File> storageRoots() {
+        List<File> roots = new ArrayList<>();
+        File primary = Environment.getExternalStorageDirectory();
+        if (primary != null && primary.canRead()) roots.add(primary);
+
+        File[] mounted = new File("/storage").listFiles();
+        if (mounted != null) {
+            for (File candidate : mounted) {
+                String name = candidate.getName();
+                // "emulated" je vnitřní paměť (tu už máme), "self" je jen odkaz na ni.
+                if ("emulated".equals(name) || "self".equals(name)) continue;
+                if (candidate.isDirectory() && candidate.canRead()) roots.add(candidate);
+            }
+        }
+        return roots;
+    }
+
+    /**
+     * Projde složku a posbírá dokumenty, které v seznamu ještě nejsou.
+     *
+     * Do dat aplikací se nechodí - jsou to mezipaměti, ne knihovna. `Android/media`
+     * je výjimka: tam ukládají přílohy komunikátory, takže tam knihy bývají.
+     */
+    private void collectFromStorage(File root, File directory, int depth, Map<String, JSObject> found) {
+        if (depth > MAX_SCAN_DEPTH || found.size() >= MAX_DOCUMENTS) return;
+
+        File[] entries = directory.listFiles();
+        if (entries == null) return;
+
+        for (File entry : entries) {
+            if (found.size() >= MAX_DOCUMENTS) return;
+            String name = entry.getName();
+
+            if (entry.isDirectory()) {
+                if (name.startsWith(".") || SKIPPED_DIRS.contains(name.toLowerCase(Locale.ROOT))) continue;
+                collectFromStorage(root, entry, depth + 1, found);
+                continue;
+            }
+
+            if (!looksLikeDocument(name) || entry.length() <= 0) continue;
+            String key = key(entry.getAbsolutePath());
+            if (found.containsKey(key)) continue;
+
+            JSObject document = new JSObject();
+            // Adresou je rovnou cesta k souboru: `PdfRenderer` i webová vrstva
+            // si s ní poradí stejně jako s adresou z MediaStore.
+            document.put("id", entry.getAbsolutePath());
+            document.put("name", name);
+            document.put("uri", entry.getAbsolutePath());
+            document.put("sizeBytes", entry.length());
+            document.put("addedAt", entry.lastModified());
+            document.put("mimeType", documentMime(name, null));
+            document.put("folder", relativeFolder(root, entry));
+            found.put(key, document);
+        }
+    }
+
+    /** Cesta ke složce tak, jak ji zná uživatel - `Download`, `Documents/knihy`. */
+    private String relativeFolder(File root, File file) {
+        File parent = file.getParentFile();
+        if (parent == null) return "";
+        String path = parent.getAbsolutePath();
+        String base = root.getAbsolutePath();
+        if (path.equals(base)) return "";
+        if (path.startsWith(base + "/")) return path.substring(base.length() + 1);
+        return path;
+    }
+
+    private static String key(String path) {
+        return path.toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean looksLikeDocument(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String extension : DOC_EXTENSIONS) {
+            if (lower.endsWith(extension)) return true;
+        }
+        return false;
+    }
+
+    /** MIME typ z databáze bývá prázdný nebo obecný - pak rozhoduje přípona. */
+    private static String documentMime(String name, String stored) {
+        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".epub")) return "application/epub+zip";
+        if (lower.endsWith(".md")) return "text/markdown";
+        if (lower.endsWith(".txt")) return "text/plain";
+        return stored == null || stored.isEmpty() ? "application/octet-stream" : stored;
     }
 
     /**
@@ -224,7 +393,11 @@ public class MediaLibraryPlugin extends Plugin {
         Bitmap bitmap = null;
 
         try {
-            descriptor = getContext().getContentResolver().openFileDescriptor(Uri.parse(uri), "r");
+            // Dokumenty nalezené procházením úložiště nesou rovnou cestu k souboru,
+            // ty z MediaStore adresu `content://`. Otevřít jde obojí.
+            descriptor = uri.startsWith("/")
+                ? ParcelFileDescriptor.open(new File(uri), ParcelFileDescriptor.MODE_READ_ONLY)
+                : getContext().getContentResolver().openFileDescriptor(Uri.parse(uri), "r");
             if (descriptor == null) {
                 result.put("thumbnail", (String) null);
                 call.resolve(result);
@@ -416,31 +589,6 @@ public class MediaLibraryPlugin extends Plugin {
             bitmap.recycle();
         }
         call.resolve(result);
-    }
-
-    /**
-     * Otevře soubor v jiné aplikaci.
-     *
-     * WebView umí jen to, co má Android jako kodek pro web - MKV, AC3 a půlka
-     * filmů mu nic neříká. Než aby appka tvrdila „nejde přehrát", pustí soubor
-     * do přehrávače, který ho zvládne.
-     */
-    @PluginMethod
-    public void openExternally(PluginCall call) {
-        String uri = call.getString("uri");
-        if (uri == null || uri.trim().isEmpty()) {
-            call.reject("Chybí adresa souboru.", "MEDIA_BAD_REQUEST");
-            return;
-        }
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(Uri.parse(uri), call.getString("mimeType", "video/*"));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getContext().startActivity(Intent.createChooser(intent, "Otevřít v").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            call.resolve();
-        } catch (Exception error) {
-            call.reject("Soubor se nepodařilo otevřít.", "MEDIA_OPEN_FAILED", error);
-        }
     }
 
     @PluginMethod

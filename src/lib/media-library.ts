@@ -50,11 +50,6 @@ interface MediaLibraryPlugin {
    */
   deleteAudio(options: { ids: string[] }): Promise<{ deleted: boolean }>;
   /**
-   * Otevře soubor v jiné aplikaci. WebView umí jen webové kodeky, takže
-   * u filmů (MKV, AC3) je tohle jediná cesta, jak je přehrát.
-   */
-  openExternally(options: { uri: string; mimeType?: string }): Promise<void>;
-  /**
    * Stáhne soubor z přímé adresy. Obstará to systémový DownloadManager, takže
    * stahování přežije i zavřenou appku a hotový soubor se objeví v knihovně.
    */
