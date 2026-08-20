@@ -91,42 +91,101 @@ export function clampPage(page: number, pageCount: number): number {
 }
 
 /**
- * Text rozsekaný na kusy k předčítání.
+ * Kus textu k předčítání i s tím, kde na stránce leží.
+ *
+ * Pozice jsou nutné kvůli zvýrazňování: bez nich by se dalo říct jen „čte se
+ * kus číslo pět", ale ne který to je na obrazovce. Ukazují do **původního**
+ * textu stránky, ne do normalizovaného - do toho, co uživatel vidí.
+ */
+export interface SpeechSegment {
+  /** Text, jak jde do hlasového modulu: bez zalomení a zdvojených mezer. */
+  text: string;
+  /** Index prvního znaku v původním textu stránky. */
+  start: number;
+  /** Index za posledním znakem. */
+  end: number;
+}
+
+/** Hranice vět v původním textu. Rozsahy na sebe navazují, nic nevynechají. */
+function sentenceRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let start = 0;
+
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== "." && text[i] !== "!" && text[i] !== "?") continue;
+    // Interpunkce i mezera za ní patří k větě, která končí - jinak by příští
+    // věta začínala uprostřed bílého místa a zvýraznění by odsazovalo.
+    let end = i + 1;
+    while (end < text.length && (text[end] === "." || text[end] === "!" || text[end] === "?")) end += 1;
+    while (end < text.length && /\s/.test(text[end])) end += 1;
+    ranges.push([start, end]);
+    start = end;
+    i = end - 1;
+  }
+
+  if (start < text.length) ranges.push([start, text.length]);
+  return ranges;
+}
+
+/**
+ * Text rozsekaný na kusy k předčítání i s pozicemi na stránce.
  *
  * Řeč se nedá pozastavit uprostřed - plugin `text-to-speech` pauzu neumí
  * a zastavit se dá jen celé. Čte se proto po větách: pauza znamená dočíst
  * rozečtený kus a zapamatovat si, kolikátý to byl. Pokračování pak navazuje
  * tam, kde řeč utichla, ne na začátku stránky.
+ *
+ * Věty se hledají rovnou v původním textu, ne v normalizovaném. Normalizací
+ * by se ztratily pozice, a s nimi možnost ukázat na stránce, kde se zrovna je
+ * a odkud se má číst dál.
  */
-export function speechChunks(text: string, maxLength = 220): string[] {
-  const clean = text.replace(/\s+/g, " ").trim();
-  if (!clean) return [];
+export function speechSegments(text: string, maxLength = 220): SpeechSegment[] {
+  const out: SpeechSegment[] = [];
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
 
-  const sentences = clean.match(/[^.!?]+[.!?]*\s*/g) ?? [clean];
-  const out: string[] = [];
-  let buffer = "";
-
-  const flush = () => {
-    const value = buffer.trim();
-    if (value) out.push(value);
-    buffer = "";
+  const push = (start: number, end: number) => {
+    const raw = text.slice(start, end);
+    const value = normalize(raw);
+    if (!value) return;
+    // Bílé okraje ven z rozsahu: zvýraznění nemá sahat do mezer mezi větami.
+    const lead = raw.length - raw.replace(/^\s+/, "").length;
+    const trail = raw.length - raw.replace(/\s+$/, "").length;
+    out.push({ text: value, start: start + lead, end: end - trail });
   };
 
-  for (const sentence of sentences) {
+  let bufferStart = -1;
+  let bufferEnd = -1;
+  let bufferLength = 0;
+
+  const flush = () => {
+    if (bufferStart >= 0) push(bufferStart, bufferEnd);
+    bufferStart = -1;
+    bufferEnd = -1;
+    bufferLength = 0;
+  };
+
+  for (const [start, end] of sentenceRanges(text)) {
+    const length = normalize(text.slice(start, end)).length;
+
     // Jedna nekonečná věta (nebo text bez teček) se rozseká natvrdo - jinak by
     // šel do rozpoznávače celý odstavec a pauza by na něj čekala minutu.
-    if (sentence.length > maxLength) {
+    if (length > maxLength) {
       flush();
-      for (let i = 0; i < sentence.length; i += maxLength) {
-        const part = sentence.slice(i, i + maxLength).trim();
-        if (part) out.push(part);
-      }
+      for (let i = start; i < end; i += maxLength) push(i, Math.min(end, i + maxLength));
       continue;
     }
-    if ((buffer + sentence).length > maxLength) flush();
-    buffer += sentence;
+
+    if (bufferLength + length > maxLength) flush();
+    if (bufferStart < 0) bufferStart = start;
+    bufferEnd = end;
+    bufferLength += length;
   }
   flush();
 
   return out;
+}
+
+/** Jen texty kusů - pro hlasový modul, kterému je jedno, kde na stránce jsou. */
+export function speechChunks(text: string, maxLength = 220): string[] {
+  return speechSegments(text, maxLength).map((segment) => segment.text);
 }

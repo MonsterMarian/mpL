@@ -26,8 +26,12 @@ interface TextToSpeechPlugin {
     rate?: number;
     pitch?: number;
     volume?: number;
+    /** Pořadí hlasu v seznamu z `getSupportedVoices` - plugin jiný klíč nezná. */
+    voice?: number;
   }): Promise<void>;
   stop(): Promise<void>;
+  getSupportedVoices(): Promise<{ voices: Array<{ name: string; lang: string; default?: boolean }> }>;
+  getSupportedLanguages(): Promise<{ languages: string[] }>;
 }
 
 const TextToSpeech = registerPlugin<TextToSpeechPlugin>("TextToSpeech");
@@ -36,7 +40,129 @@ function isNative(): boolean {
   return Capacitor.isNativePlatform();
 }
 
-const LANGUAGE = "cs-CZ";
+export const DEFAULT_LANGUAGE = "cs-CZ";
+
+/** Hlas, jak si ho jde vybrat v Nastavení. */
+export interface SpeechVoice {
+  /**
+   * Klíč, který přežije restart.
+   *
+   * Plugin i prohlížeč adresují hlas pořadím v seznamu, jenže to se mezi
+   * spuštěními a po aktualizaci hlasového modulu posouvá - uložené číslo by
+   * pak ukazovalo na cizí hlas. Drží se proto jméno s jazykem a na pořadí se
+   * překládá až v okamžiku čtení.
+   */
+  id: string;
+  name: string;
+  lang: string;
+}
+
+const LANG_KEY = "microwins:speech_lang";
+const VOICE_KEY = "microwins:speech_voice";
+
+/** Poslední načtený seznam hlasů. Z něj se bere pořadí pro plugin. */
+let voiceCache: SpeechVoice[] = [];
+
+function read(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function write(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // soukromý režim - volba vydrží do zavření appky
+  }
+}
+
+function voiceId(name: string, lang: string): string {
+  return `${lang}|${name}`;
+}
+
+export function speechLanguage(): string {
+  return read(LANG_KEY) ?? DEFAULT_LANGUAGE;
+}
+
+export function setSpeechLanguage(lang: string): void {
+  write(LANG_KEY, !lang || lang === DEFAULT_LANGUAGE ? null : lang);
+}
+
+export function speechVoiceId(): string | null {
+  return read(VOICE_KEY);
+}
+
+/** `null` znamená „ten, co si systém vybere sám podle jazyka". */
+export function setSpeechVoiceId(id: string | null): void {
+  write(VOICE_KEY, id);
+}
+
+/**
+ * Hlasy, které zařízení umí.
+ *
+ * V telefonu je dodává hlasový modul Androidu (obvykle Google TTS), takže
+ * seznam závisí na tom, co má uživatel doinstalované. V prohlížeči je dodává
+ * `speechSynthesis`, a ten je hlásí **až po chvíli** - proto se na první
+ * prázdnou odpověď čeká na `voiceschanged`, jinak by nabídka zůstala prázdná.
+ */
+export async function listVoices(): Promise<SpeechVoice[]> {
+  try {
+    if (isNative()) {
+      const result = await TextToSpeech.getSupportedVoices();
+      voiceCache = (result?.voices ?? []).map((voice) => ({
+        id: voiceId(voice.name, voice.lang),
+        name: voice.name,
+        lang: voice.lang,
+      }));
+      return voiceCache;
+    }
+
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
+
+    const collect = () =>
+      window.speechSynthesis.getVoices().map((voice) => ({
+        id: voiceId(voice.name, voice.lang),
+        name: voice.name,
+        lang: voice.lang,
+      }));
+
+    let voices = collect();
+    if (!voices.length) {
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        window.speechSynthesis.addEventListener("voiceschanged", done, { once: true });
+        // Kdyby událost nedorazila, ať se nečeká donekonečna.
+        setTimeout(done, 1200);
+      });
+      voices = collect();
+    }
+    voiceCache = voices;
+    return voices;
+  } catch {
+    return [];
+  }
+}
+
+/** Jazyky, ve kterých zařízení umí mluvit - odvozené z hlasů, které nabízí. */
+export async function listLanguages(): Promise<string[]> {
+  const voices = voiceCache.length ? voiceCache : await listVoices();
+  const langs = new Set(voices.map((voice) => voice.lang).filter(Boolean));
+  // Čeština v nabídce být musí, i když k ní zrovna žádný hlas není: bez ní by
+  // nešlo vrátit se k výchozímu nastavení.
+  langs.add(DEFAULT_LANGUAGE);
+  return [...langs].sort();
+}
+
+/** Vybraný hlas, nebo `null` když si má systém vybrat sám. */
+function selectedVoice(): SpeechVoice | null {
+  const id = speechVoiceId();
+  if (!id) return null;
+  return voiceCache.find((voice) => voice.id === id) ?? null;
+}
 
 export const SPEECH_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 export type SpeechRate = (typeof SPEECH_RATES)[number];
@@ -57,8 +183,22 @@ export interface Speaker {
 }
 
 async function speakOnce(text: string, rate: number): Promise<void> {
+  // Vybraný hlas se překládá na pořadí v seznamu, takže seznam musí být po
+  // ruce. Po startu appky ještě není - načte se teď, jednou.
+  if (speechVoiceId() && !voiceCache.length) await listVoices();
+  const voice = selectedVoice();
+  const lang = voice?.lang ?? speechLanguage();
+
   if (isNative()) {
-    await TextToSpeech.speak({ text, lang: LANGUAGE, rate, pitch: 1, volume: 1 });
+    const index = voice ? voiceCache.findIndex((item) => item.id === voice.id) : -1;
+    await TextToSpeech.speak({
+      text,
+      lang,
+      rate,
+      pitch: 1,
+      volume: 1,
+      ...(index >= 0 ? { voice: index } : {}),
+    });
     return;
   }
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
@@ -66,7 +206,13 @@ async function speakOnce(text: string, rate: number): Promise<void> {
   }
   await new Promise<void>((resolve, reject) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = LANGUAGE;
+    utterance.lang = lang;
+    if (voice) {
+      const match = window.speechSynthesis
+        .getVoices()
+        .find((item) => item.name === voice.name && item.lang === voice.lang);
+      if (match) utterance.voice = match;
+    }
     utterance.rate = rate;
     utterance.onend = () => resolve();
     utterance.onerror = (event) =>
@@ -86,6 +232,18 @@ async function stopSpeaking(): Promise<void> {
   } catch {
     // Nemluví se - není co zastavovat.
   }
+}
+
+/**
+ * Krátká ukázka vybraným hlasem.
+ *
+ * Bez ní se volba pozná až uprostřed knihy - jména hlasů jsou v telefonu
+ * nicneříkající (`cs-cz-x-jfk#female_1`) a poslech je jediný způsob, jak
+ * poznat, který je který.
+ */
+export async function previewVoice(text = "Takhle bude znít předčítání."): Promise<void> {
+  await stopSpeaking();
+  await speakOnce(text, 1);
 }
 
 export function createSpeaker(handlers: SpeakerHandlers): Speaker {

@@ -8,6 +8,7 @@ import {
   isImageOnly,
   pageText,
   speechChunks,
+  speechSegments,
   type DocumentPage,
 } from "./documents";
 
@@ -98,5 +99,49 @@ describe("kusy k předčítání", () => {
     const bare = (value: string) => value.replace(/\s+/g, "");
 
     expect(bare(speechChunks(text, 30).join(""))).toBe(bare(text));
+  });
+});
+
+/* Bez správných pozic nejde zvýraznit, co se zrovna čte, ani klepnutím do textu
+   posunout, odkud se má číst dál. */
+describe("pozice kusů na stránce", () => {
+  it("rozsah ukazuje na ten samý text, který se čte", () => {
+    const text = "První věta. Druhá věta!";
+
+    for (const segment of speechSegments(text, 20)) {
+      expect(text.slice(segment.start, segment.end)).toBe(segment.text);
+    }
+  });
+
+  it("rozsahy jdou po sobě a nepřekrývají se", () => {
+    const segments = speechSegments("Jedna. Dvě. Tři je delší věta, co pokračuje.", 12);
+
+    expect(segments.length).toBeGreaterThan(1);
+    for (let i = 1; i < segments.length; i += 1) {
+      expect(segments[i].start).toBeGreaterThanOrEqual(segments[i - 1].end);
+    }
+  });
+
+  it("zalomené řádky pozice neposunou", () => {
+    const text = "Nadpis\n\nPrvní věta odstavce. Druhá věta.";
+    const segments = speechSegments(text, 40);
+
+    expect(segments[0].start).toBe(0);
+    for (const segment of segments) {
+      // Text jde do hlasu bez zalomení, rozsah ale musí sedět na původní text.
+      expect(text.slice(segment.start, segment.end).replace(/\s+/g, " ")).toBe(segment.text);
+    }
+  });
+
+  it("mezi kusy zůstávají jen mezery, nic k přečtení", () => {
+    const text = "Jedna věta. Druhá věta. Třetí věta.";
+    const segments = speechSegments(text, 12);
+
+    let at = 0;
+    for (const segment of segments) {
+      expect(text.slice(at, segment.start).trim()).toBe("");
+      at = segment.end;
+    }
+    expect(text.slice(at).trim()).toBe("");
   });
 });

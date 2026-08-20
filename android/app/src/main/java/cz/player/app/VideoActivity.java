@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -68,6 +69,9 @@ public class VideoActivity extends Activity {
     /** Kolik vteřin se čeká, než se mlčící ExoPlayer prohlásí za neúspěch. */
     private static final long EXO_TIMEOUT_MS = 9000;
 
+    private static final String VIDEO_PREFS = "cz.player.app.video";
+    private static final String BRIGHTNESS_KEY = "brightness";
+
     private String source;
     private String title;
 
@@ -94,6 +98,11 @@ public class VideoActivity extends Activity {
     private ProgressBar spinner;
     private TextView statusText;
     private Button statusButton;
+
+    private View settingsPanel;
+    private SeekBar brightnessBar;
+    /** Jas okna, `-1` = jak má systém. Drží se mezi filmy. */
+    private float brightness = -1f;
 
     /** Ukázal se obraz? Bez toho je "konec filmu" ve skutečnosti chyba. */
     private boolean started;
@@ -127,6 +136,8 @@ public class VideoActivity extends Activity {
 
             addTopBar();
             addStatus();
+            addSettingsPanel();
+            applyBrightness(loadBrightness());
         } catch (Throwable error) {
             // Bez obrazovky se nedá nic ukázat; jediné, co zbývá, je stopa.
             CrashLog.record(this, error);
@@ -401,10 +412,156 @@ public class VideoActivity extends Activity {
         name.setPadding(dp(8), 0, 0, 0);
         row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
+        ImageButton settings = new ImageButton(this);
+        settings.setBackgroundColor(Color.TRANSPARENT);
+        settings.setImageResource(android.R.drawable.ic_menu_preferences);
+        settings.setColorFilter(Color.WHITE);
+        settings.setContentDescription("Nastavení filmu");
+        settings.setOnClickListener(v -> toggleSettings());
+        row.addView(settings, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
         root.addView(
             row,
             new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP)
         );
+    }
+
+    /**
+     * Nastavení filmu: zatím jas.
+     *
+     * Vlastní panel, ne položka do nabídky ExoPlayeru - do té se zvenčí přidat
+     * nedá a s VLC by stejně zmizela. Takhle je jas na stejném místě u obou
+     * přehrávačů.
+     *
+     * Jas se drží u okna, ne u systému: po zavření filmu se displej vrátí tam,
+     * kde byl, a appka nesahá na nastavení telefonu.
+     */
+    private void addSettingsPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(Color.argb(230, 0, 0, 0));
+        panel.setPadding(dp(20), dp(16), dp(20), dp(16));
+        panel.setVisibility(View.GONE);
+        // Klepnutí do panelu nesmí propadnout na obraz pod ním.
+        panel.setClickable(true);
+
+        TextView heading = new TextView(this);
+        heading.setText("Jas");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        panel.addView(heading);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, 0);
+
+        brightnessBar = new SeekBar(this);
+        brightnessBar.setMax(100);
+        brightnessBar.setProgress(Math.round(currentBrightness() * 100));
+
+        TextView value = new TextView(this);
+        value.setTextColor(Color.WHITE);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        value.setText(brightnessBar.getProgress() + " %");
+        value.setMinWidth(dp(48));
+        value.setGravity(Gravity.END);
+
+        brightnessBar.setOnSeekBarChangeListener(
+            new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    if (!fromUser) return;
+                    // Nula by displej zhasla úplně a panel by zmizel i s posuvníkem.
+                    float level = Math.max(0.02f, progress / 100f);
+                    applyBrightness(level);
+                    value.setText(progress + " %");
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar seekBar) {}
+
+                @Override
+                public void onStopTrackingTouch(SeekBar seekBar) {
+                    saveBrightness(brightness);
+                }
+            }
+        );
+
+        row.addView(brightnessBar, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(value);
+        panel.addView(row);
+
+        TextView reset = new TextView(this);
+        reset.setText("Vrátit systémový jas");
+        reset.setTextColor(Color.WHITE);
+        reset.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        reset.setPadding(0, dp(14), 0, 0);
+        reset.setOnClickListener(v -> {
+            applyBrightness(-1f);
+            saveBrightness(-1f);
+            brightnessBar.setProgress(Math.round(currentBrightness() * 100));
+            value.setText(brightnessBar.getProgress() + " %");
+        });
+        panel.addView(reset);
+
+        settingsPanel = panel;
+        root.addView(
+            panel,
+            new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM)
+        );
+    }
+
+    private void toggleSettings() {
+        if (settingsPanel == null) return;
+        boolean show = settingsPanel.getVisibility() != View.VISIBLE;
+        if (show && brightnessBar != null) brightnessBar.setProgress(Math.round(currentBrightness() * 100));
+        settingsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    /** Jas okna. `-1` znamená „jak má systém". */
+    private void applyBrightness(float level) {
+        brightness = level;
+        try {
+            WindowManager.LayoutParams params = getWindow().getAttributes();
+            params.screenBrightness = level < 0 ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : Math.min(1f, level);
+            getWindow().setAttributes(params);
+        } catch (Throwable error) {
+            CrashLog.record(this, error);
+        }
+    }
+
+    /**
+     * Kde posuvník začíná.
+     *
+     * Když si film jas nepřenastavil, ukáže se ten, který má zrovna telefon -
+     * jinak by posuvník skočil na nesmyslnou hodnotu a první dotek by jasem
+     * trhnul.
+     */
+    private float currentBrightness() {
+        if (brightness >= 0) return brightness;
+        try {
+            int system = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+            return Math.min(1f, Math.max(0.02f, system / 255f));
+        } catch (Throwable error) {
+            return 0.5f;
+        }
+    }
+
+    private float loadBrightness() {
+        try {
+            return getSharedPreferences(VIDEO_PREFS, MODE_PRIVATE).getFloat(BRIGHTNESS_KEY, -1f);
+        } catch (Throwable error) {
+            return -1f;
+        }
+    }
+
+    private void saveBrightness(float level) {
+        try {
+            getSharedPreferences(VIDEO_PREFS, MODE_PRIVATE).edit().putFloat(BRIGHTNESS_KEY, level).apply();
+        } catch (Throwable ignored) {
+            // Zapamatovat se nepovedlo - film tím netrpí.
+        }
     }
 
     /** Kolečko a hláška uprostřed. Jeden prvek pro čekání i pro nezdar. */

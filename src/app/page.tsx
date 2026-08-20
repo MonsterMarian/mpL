@@ -87,7 +87,7 @@ import {
   documentId,
   isImageOnly,
   pageText,
-  speechChunks,
+  speechSegments,
   type DocumentPage,
   type StoredDocument,
 } from "@/lib/documents";
@@ -267,6 +267,8 @@ export default function HomePage() {
   const [documentError, setDocumentError] = React.useState<string | null>(null);
   /** Kus věty, u kterého řeč stojí - odtud se po pauze pokračuje. */
   const [speechChunk, setSpeechChunk] = React.useState(0);
+  /** Rozečtená věta na stránce - drží se v zorném poli, ať čtenář stačí. */
+  const activeChunk = React.useRef<HTMLSpanElement | null>(null);
   /** Žádost o čtení: `null` = ticho. Nový objekt spustí čtení znovu. */
   const [readRequest, setReadRequest] = React.useState<{ from: number } | null>(null);
   const [speechRate, setSpeechRate] = React.useState<number>(1);
@@ -341,10 +343,17 @@ export default function HomePage() {
   const documentName = activeDoc?.name ?? null;
   const activeDocument = documentPages[documentPage];
   const readablePage = activeDoc !== null && !activeDoc.imageOnly && Boolean(activeDocument?.text);
-  const chunks = React.useMemo(
-    () => (readablePage ? speechChunks(activeDocument.text) : []),
+  /*
+    Kusy k předčítání i s tím, kde na stránce leží. Pozice jsou to podstatné:
+    bez nich by šlo říct jen „čte se pátý kus", ale ne který to je v textu -
+    a zvýraznit rozečtenou větu ani klepnutím posunout, odkud se má číst, by
+    nešlo vůbec.
+  */
+  const segments = React.useMemo(
+    () => (readablePage ? speechSegments(activeDocument.text) : []),
     [readablePage, activeDocument],
   );
+  const chunks = React.useMemo(() => segments.map((segment) => segment.text), [segments]);
 
   const loadDeviceMusic = React.useCallback(async (requestPermission = false) => {
     if (!canReadDeviceMedia()) {
@@ -1353,6 +1362,35 @@ export default function HomePage() {
     setReadRequest({ from: speechChunk });
   };
 
+  /**
+   * Zavře dokument a vrátí se k policím.
+   *
+   * Postup se neztrácí - ten si drží `saveProgress`, takže se dá pokračovat
+   * tam, kde se skončilo.
+   */
+  const closeDocument = () => {
+    stopReading();
+    setSpeechChunk(0);
+    setDocumentId(null);
+    setDocumentQuery("");
+    setDocumentError(null);
+  };
+
+  /**
+   * Přesune čtení na vybranou větu.
+   *
+   * Dřív se dala vybrat jen stránka, takže „pusť to odsud" znamenalo
+   * poslouchat všechno od jejího začátku. Zvýraznění je proto zároveň ukazatel
+   * i ovládání: kam se klepne, odtud se čte.
+   */
+  const jumpToChunk = (index: number) => {
+    if (!chunks.length) return;
+    const at = Math.min(Math.max(index, 0), chunks.length - 1);
+    setSpeechChunk(at);
+    // Když se zrovna čte, navázat hned. Jinak si to jen zapamatovat na Přehrát.
+    if (readRequest) setReadRequest({ from: at });
+  };
+
   const changeSpeechRate = (rate: number) => {
     setSpeechRate(rate);
     // Nová rychlost se chytne na rozečteném místě, ne na začátku stránky.
@@ -1419,6 +1457,17 @@ export default function HomePage() {
     void saveProgress(documentId_, documentPage, documentBookmarks);
   }, [documentId_, documentPage, documentBookmarks]);
 
+  /*
+    Rozečtená věta se drží na obrazovce. Bez tohohle se zvýraznění po pár
+    větách vyroluje pryč a poslouchající kouká na kus stránky, který se dávno
+    přečetl. Posouvá se jen při čtení - když si někdo listuje sám, nemá mu nic
+    skákat pod rukama.
+  */
+  React.useEffect(() => {
+    if (!isReadingDocument) return;
+    activeChunk.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [speechChunk, isReadingDocument]);
+
   const toggleBookmark = () => {
     setDocumentBookmarks((previous) => previous.includes(documentPage) ? previous.filter((page) => page !== documentPage) : [...previous, documentPage]);
   };
@@ -1465,6 +1514,54 @@ export default function HomePage() {
     if (!documentQuery) return text;
     const escaped = documentQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return text.split(new RegExp(`(${escaped})`, "ig")).map((part, index) => part.toLowerCase() === documentQuery.toLowerCase() ? <mark key={index} className="rounded bg-brand/35 px-0.5 text-inherit">{part}</mark> : part);
+  };
+
+  /**
+   * Stránka s vyznačenou větou.
+   *
+   * Text se skládá po kusech k předčítání, ne jako jeden blok: jinak by nebylo
+   * kam pověsit zvýraznění ani na co klepnout. Mezi kusy jsou jen mezery
+   * a zalomení, takže se stránka vykreslí přesně jak vypadá v souboru.
+   */
+  const renderReadablePage = (text: string) => {
+    if (!segments.length) return renderDocumentText(text);
+
+    const out: React.ReactNode[] = [];
+    let at = 0;
+
+    segments.forEach((segment, index) => {
+      if (segment.start > at) out.push(text.slice(at, segment.start));
+      const active = index === speechChunk;
+      out.push(
+        <span
+          key={`chunk-${index}`}
+          ref={active ? activeChunk : undefined}
+          role="button"
+          tabIndex={0}
+          onClick={() => jumpToChunk(index)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            jumpToChunk(index);
+          }}
+          title="Číst od téhle věty"
+          className={cn(
+            "cursor-pointer rounded-sm transition-colors",
+            active
+              ? isReadingDocument
+                ? "bg-brand/30 text-white"
+                : "bg-white/[0.14] text-white"
+              : "hover:bg-white/[0.06]",
+          )}
+        >
+          {renderDocumentText(text.slice(segment.start, segment.end))}
+        </span>,
+      );
+      at = segment.end;
+    });
+
+    if (at < text.length) out.push(text.slice(at));
+    return out;
   };
 
   return (
@@ -1578,18 +1675,25 @@ export default function HomePage() {
 
         {activeView === "reader" && addons.reader ? (
           <section className="animate-in-up">
+            {/*
+              Otevřená kniha nahradí police, nezůstane pod nimi.
+              Čtení je celá obrazovka: seznam souborů nad textem je při čtení
+              jen překážka, ke které se navíc pořád rolovalo zpátky.
+            */}
+            {activeDoc ? null : (
             <div className="mb-6">
               <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Dokumenty</h1>
               <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky.</p>
               <label className="mt-5 flex h-11 w-fit cursor-pointer items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
             </div>
+            )}
 
             {/*
               Co leží v telefonu. Ruční výběr souboru zůstává, ale jako záloha -
               knihy a skripta jsou v telefonu už teď a hledat je přes systémový
               dialog je práce navíc.
             */}
-            {allFiles === false ? (
+            {allFiles === false && !activeDoc ? (
               <div className="mb-6 flex flex-col items-start gap-2 rounded-2xl border border-dashed border-white/10 px-4 py-4">
                 <p className="text-sm font-medium">Dokumenty v telefonu appka nevidí</p>
                 <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
@@ -1606,7 +1710,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {deviceDocs.length > 0 ? (
+            {deviceDocs.length > 0 && !activeDoc ? (
               <div className="mb-6">
                 <div className="mb-3 flex items-center gap-2">
                   <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1661,7 +1765,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {documents.length > 0 ? (
+            {documents.length > 0 && !activeDoc ? (
               /*
                 Police s náhledy, ne řádka štítků: podle obálky se pozná, co je
                 co, dřív než podle názvu souboru. Pruh pod dlaždicí ukazuje, kam
@@ -1722,6 +1826,14 @@ export default function HomePage() {
                 <div className="min-w-0">
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={closeDocument}
+                        aria-label="Zpět na knihovnu dokumentů"
+                        className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+                      >
+                        <ChevronLeft className="size-4" /> Knihovna
+                      </button>
                       <FileText className="size-4 shrink-0 text-brand" />
                       <span className="truncate text-sm font-medium">{documentName}</span>
                       <span className="hidden rounded-md bg-white/[0.06] px-2 py-1 text-[10px] text-muted-foreground sm:block">{activeDocument?.label}</span>
@@ -1753,6 +1865,10 @@ export default function HomePage() {
                       {readablePage || isReadingDocument ? (
                         <>
                           <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage === 0} onClick={() => goToPage(documentPage - 1)} aria-label="Stránka zpět"><SkipBack className="size-4 fill-current" /></button>
+                          {/* Skok po větách: klepnout se do textu dá taky, ale
+                              tohle je přesnější, když se poslouchá se zhasnutým
+                              displejem v ruce. */}
+                          <button type="button" className="reader-tool disabled:opacity-30" disabled={speechChunk === 0} onClick={() => jumpToChunk(speechChunk - 1)} aria-label="O větu zpět"><ChevronLeft className="size-4" /></button>
                           <button
                             type="button"
                             onClick={toggleDocumentReading}
@@ -1762,6 +1878,7 @@ export default function HomePage() {
                             {isReadingDocument ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}
                             {isReadingDocument ? "Pauza" : speechChunk > 0 ? "Pokračovat" : "Číst nahlas"}
                           </button>
+                          <button type="button" className="reader-tool disabled:opacity-30" disabled={speechChunk >= chunks.length - 1} onClick={() => jumpToChunk(speechChunk + 1)} aria-label="O větu vpřed"><ChevronRight className="size-4" /></button>
                           <button type="button" className="reader-tool disabled:opacity-30" disabled={documentPage >= documentPages.length - 1} onClick={() => goToPage(documentPage + 1)} aria-label="Stránka vpřed"><SkipForward className="size-4 fill-current" /></button>
                           <select
                             value={speechRate}
@@ -1783,7 +1900,13 @@ export default function HomePage() {
                   <div className="reader-paper min-h-[520px] overflow-auto rounded-b-2xl border-x border-b border-white/[0.08] p-6 shadow-2xl sm:p-12">
                     <article className="mx-auto max-w-2xl origin-top transition-transform" style={{ transform: `scale(${documentZoom / 100})`, transformOrigin: "top center", marginBottom: `${(documentZoom - 100) * 3}px` }}>
                       <p className="mb-8 text-xs font-semibold uppercase tracking-[0.18em] text-brand">{activeDocument?.label}</p>
-                      <div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-white/90">{activeDocument ? renderDocumentText(activeDocument.text) : ""}</div>
+                      <div className="whitespace-pre-wrap font-serif text-[1.04rem] leading-[1.9] text-white/90">
+                        {activeDocument
+                          ? readablePage
+                            ? renderReadablePage(activeDocument.text)
+                            : renderDocumentText(activeDocument.text)
+                          : ""}
+                      </div>
                     </article>
                   </div>
 

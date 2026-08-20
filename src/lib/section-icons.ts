@@ -12,18 +12,34 @@ export type SectionIconId =
   | "music"
   | "disc"
   | "headphones"
+  | "audio-lines"
+  | "radio"
+  | "list-music"
+  | "cassette"
   | "book-open-text"
   | "book"
   | "file-text"
   | "notebook"
+  | "book-marked"
+  | "book-text"
+  | "newspaper"
+  | "scroll-text"
   | "film"
   | "video"
   | "clapperboard"
   | "monitor-play"
+  | "tv"
+  | "popcorn"
+  | "circle-play"
+  | "videotape"
   | "download"
   | "arrow-down-to-line"
   | "cloud-download"
-  | "inbox";
+  | "inbox"
+  | "hard-drive-download"
+  | "folder-down"
+  | "circle-arrow-down"
+  | "package-open";
 
 export interface SectionIconChoice {
   id: SectionIconId;
@@ -37,24 +53,40 @@ export const SECTION_ICONS: Record<SectionId, SectionIconChoice[]> = {
     { id: "music", label: "Nota" },
     { id: "disc", label: "Deska" },
     { id: "headphones", label: "Sluchátka" },
+    { id: "audio-lines", label: "Vlna" },
+    { id: "radio", label: "Rádio" },
+    { id: "list-music", label: "Seznam" },
+    { id: "cassette", label: "Kazeta" },
   ],
   reader: [
     { id: "book-open-text", label: "Otevřená kniha" },
     { id: "book", label: "Kniha" },
     { id: "file-text", label: "Stránka" },
     { id: "notebook", label: "Sešit" },
+    { id: "book-marked", label: "Kniha se záložkou" },
+    { id: "book-text", label: "Kniha s textem" },
+    { id: "newspaper", label: "Noviny" },
+    { id: "scroll-text", label: "Svitek" },
   ],
   video: [
     { id: "film", label: "Filmový pás" },
     { id: "video", label: "Kamera" },
     { id: "clapperboard", label: "Klapka" },
     { id: "monitor-play", label: "Obrazovka" },
+    { id: "tv", label: "Televize" },
+    { id: "popcorn", label: "Popcorn" },
+    { id: "circle-play", label: "Přehrát" },
+    { id: "videotape", label: "Videokazeta" },
   ],
   downloads: [
     { id: "download", label: "Šipka do složky" },
     { id: "arrow-down-to-line", label: "Šipka k čáře" },
     { id: "cloud-download", label: "Mrak" },
     { id: "inbox", label: "Schránka" },
+    { id: "hard-drive-download", label: "Disk" },
+    { id: "folder-down", label: "Složka" },
+    { id: "circle-arrow-down", label: "Šipka v kolečku" },
+    { id: "package-open", label: "Balík" },
   ],
 };
 

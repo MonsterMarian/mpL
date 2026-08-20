@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,16 @@ import {
 } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
+import {
+  DEFAULT_LANGUAGE,
+  listVoices,
+  previewVoice,
+  setSpeechLanguage,
+  setSpeechVoiceId,
+  speechLanguage,
+  speechVoiceId,
+  type SpeechVoice,
+} from "@/lib/speech";
 import { SectionIcon } from "@/components/ui/section-icon";
 import {
   SECTION_ICONS,
@@ -146,6 +156,7 @@ export function SettingsDialog({
               mediaPermission={mediaPermission} 
               onRequestMediaAccess={onRequestMediaAccess} 
             />
+            <SpeechSection open={open} />
             <SystemPlaybackSection open={open} />
             <PlaybackLogSection open={open} />
             <NativeCrashSection open={open} />
@@ -283,6 +294,111 @@ function AddonChoice({
  * Sáhnout uživateli na ikony bez ptaní byl omyl - tvar, který jednomu sedí,
  * druhého tahá za oči. Výchozí zůstávají ty původní.
  */
+/**
+ * Hlas a jazyk předčítání.
+ *
+ * Hlasy dodává hlasový modul telefonu, ne appka - co je v nabídce, závisí na
+ * tom, co má kdo doinstalované. Seznam se proto čte ze zařízení a nedrží se
+ * jako pevný výčet: napevno zadaná čeština znamená na telefonu bez českého
+ * hlasu jen ticho, a nikde by se nedalo poznat proč.
+ *
+ * Jména hlasů jsou přitom nicneříkající (`cs-cz-x-jfk#female_1`), takže k volbě
+ * patří tlačítko, které je nechá promluvit.
+ */
+function SpeechSection({ open }: { open: boolean }) {
+  const [voices, setVoices] = React.useState<SpeechVoice[] | null>(null);
+  const [lang, setLang] = React.useState(DEFAULT_LANGUAGE);
+  const [voice, setVoice] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setLang(speechLanguage());
+    setVoice(speechVoiceId());
+    void listVoices().then(setVoices);
+  }, [open]);
+
+  const pickLanguage = (next: string) => {
+    setLang(next);
+    setSpeechLanguage(next);
+    // Hlas z jiného jazyka by novou volbu přebil - vybraný hlas totiž určuje
+    // i jazyk, kterým se mluví.
+    if (voice && !voice.startsWith(`${next}|`)) {
+      setVoice(null);
+      setSpeechVoiceId(null);
+    }
+  };
+
+  const pickVoice = (next: string) => {
+    const value = next || null;
+    setVoice(value);
+    setSpeechVoiceId(value);
+  };
+
+  if (!voices) {
+    return (
+      <Section title="Hlas předčítání">
+        <p className="px-1 text-xs text-muted-foreground">Ptám se zařízení, co umí…</p>
+      </Section>
+    );
+  }
+
+  if (!voices.length) {
+    return (
+      <Section title="Hlas předčítání" hint="Hlasy dodává systém. V Androidu je najdeš v Nastavení → Usnadnění → Převod textu na řeč.">
+        <p className="px-1 text-xs text-muted-foreground">
+          Zařízení nehlásí žádný hlas. Předčítání pojede tím, co si systém vybere sám.
+        </p>
+      </Section>
+    );
+  }
+
+  const languages = [...new Set([DEFAULT_LANGUAGE, ...voices.map((item) => item.lang)])].sort();
+  const forLanguage = voices.filter((item) => item.lang === lang);
+
+  return (
+    <Section title="Hlas předčítání" hint="Vybraný hlas určuje i jazyk, kterým se čte. Vyzkoušej ho - podle jména se poznat nedá.">
+      <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5">
+        <label className="flex items-center justify-between gap-3 text-sm">
+          Jazyk
+          <select
+            value={lang}
+            onChange={(event) => pickLanguage(event.target.value)}
+            className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-transparent px-2 text-xs outline-none"
+          >
+            {languages.map((item) => (
+              <option key={item} value={item} className="bg-black">{item}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex items-center justify-between gap-3 text-sm">
+          Hlas
+          <select
+            value={voice ?? ""}
+            onChange={(event) => pickVoice(event.target.value)}
+            className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-transparent px-2 text-xs outline-none"
+          >
+            <option value="" className="bg-black">Systémový</option>
+            {forLanguage.map((item) => (
+              <option key={item.id} value={item.id} className="bg-black">{item.name}</option>
+            ))}
+          </select>
+        </label>
+
+        {forLanguage.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            K jazyku {lang} zařízení žádný hlas nemá. Doinstaluj ho v systému, jinak zůstane ticho.
+          </p>
+        ) : null}
+
+        <Button variant="outline" size="sm" className="self-start" onClick={() => void previewVoice()}>
+          <Volume2 className="size-4" /> Vyzkoušet
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
 function SectionIconChoice({ open, onChange }: { open: boolean; onChange?: (icons: SectionIcons) => void }) {
   const [icons, setIcons] = React.useState<SectionIcons | null>(null);
 

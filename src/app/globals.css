@@ -25,7 +25,15 @@
   --secondary: rgb(255 255 255 / 9%);
   --secondary-foreground: var(--white);
   --muted: rgb(255 255 255 / 6%);
-  --muted-foreground: rgb(255 255 255 / 58%);
+  /*
+   * Ztlumený text a ikony: 58 % bílé nad černou, ale **namíchané, ne průsvitné**.
+   *
+   * Kreslené ikony jsou tahy čar a průsvitná barva se v každém překřížení
+   * složí sama přes sebe - v místě, kde se dvě čáry potkají, vyskočí světlejší
+   * flek. U neaktivních záložek to vypadá jako vada ikony. Namíchaný odstín
+   * vydá nad černým pozadím ten samý tón a žádné křížení nezesvětlí.
+   */
+  --muted-foreground: color-mix(in srgb, var(--white) 58%, var(--black));
   --accent: rgb(255 255 255 / 8%);
   --accent-foreground: var(--white);
   /* I chyba mluví žlutě - červená by byla čtvrtá barva. */
