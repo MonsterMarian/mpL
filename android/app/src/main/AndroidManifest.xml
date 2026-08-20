@@ -27,7 +27,7 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
             android:supportsPictureInPicture="true"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
         <!-- Drží proces naživu, dokud hraje hudba. Sama nic nepřehrává. -->
         <service
@@ -60,4 +60,8 @@
     <!-- Mazání skladby ze zařízení. Od Androidu 10 se na to místo oprávnění
          ptá systém vlastním oknem, tam už tohle právo nic neznamená. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Čtečka: PDF a EPUB nejsou z pohledu Androidu média, takže je povolení
+         k hudbě ani k videím nekryje. Bez tohohle je appka v telefonu nenajde
+         a zbývá jen ruční výběr souboru. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 </manifest>

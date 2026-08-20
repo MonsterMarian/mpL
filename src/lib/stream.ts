@@ -17,6 +17,8 @@ export interface ResolvedStream {
 interface StreamPlugin {
   playVideo(options: { uri: string; title?: string }): Promise<void>;
   resolve(options: { url: string; kind: "audio" | "video" }): Promise<ResolvedStream>;
+  lastCrash(): Promise<{ crash: string | null }>;
+  clearCrash(): Promise<void>;
 }
 
 const Stream = registerPlugin<StreamPlugin>("Stream");
@@ -33,6 +35,31 @@ export async function playVideoNatively(uri: string, title?: string): Promise<bo
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Poslední pád nativní části.
+ *
+ * Když spadne obrazovka v Javě, appka zmizí a v telefonu po ní nezůstane nic,
+ * co by šlo přečíst - logcat je bez kabelu k ničemu. Tohle je ta stopa.
+ */
+export async function lastNativeCrash(): Promise<string | null> {
+  if (!nativeStreamAvailable()) return null;
+  try {
+    const result = await Stream.lastCrash();
+    return result?.crash ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearNativeCrash(): Promise<void> {
+  if (!nativeStreamAvailable()) return;
+  try {
+    await Stream.clearCrash();
+  } catch {
+    // není co mazat
   }
 }
 

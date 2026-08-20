@@ -119,6 +119,118 @@ public class MediaLibraryPlugin extends Plugin {
     }
 
     /**
+     * Dokumenty v telefonu.
+     *
+     * PDF ani EPUB nejsou z pohledu Androidu média, takže je nekryje povolení
+     * k hudbě ani k videím - na jejich čtení chce systém od Androidu 11
+     * „přístup ke všem souborům". Bez něj se vrátí prázdno a appka nabídne
+     * povolení; ručně vybraný soubor funguje tak jako tak.
+     */
+    @PluginMethod
+    public void listDocuments(PluginCall call) {
+        JSONArray documents = new JSONArray();
+
+        if (!hasAllFiles()) {
+            JSObject empty = new JSObject();
+            empty.put("granted", false);
+            empty.put("documents", documents);
+            call.resolve(empty);
+            return;
+        }
+
+        String[] projection = {
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_ADDED,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.RELATIVE_PATH
+        };
+        String selection = MediaStore.Files.FileColumns.MIME_TYPE + " IN (?,?,?,?)";
+        String[] args = { "application/pdf", "application/epub+zip", "text/plain", "text/markdown" };
+
+        Cursor cursor = null;
+        try {
+            cursor = getContext()
+                .getContentResolver()
+                .query(
+                    MediaStore.Files.getContentUri("external"),
+                    projection,
+                    selection,
+                    args,
+                    MediaStore.Files.FileColumns.DATE_ADDED + " DESC"
+                );
+
+            if (cursor != null) {
+                int idIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID);
+                int nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME);
+                int sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE);
+                int addedIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED);
+                int mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE);
+                int pathIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH);
+
+                while (cursor.moveToNext()) {
+                    long id = cursor.getLong(idIndex);
+                    String name = valueOrFallback(cursor.getString(nameIndex), "Bez názvu");
+                    String path = valueOrFallback(cursor.getString(pathIndex), "");
+
+                    JSObject document = new JSObject();
+                    document.put("id", String.valueOf(id));
+                    document.put("name", name);
+                    document.put("uri", ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id).toString());
+                    document.put("sizeBytes", cursor.getLong(sizeIndex));
+                    document.put("addedAt", cursor.getLong(addedIndex) * 1000L);
+                    document.put("mimeType", valueOrFallback(cursor.getString(mimeIndex), "application/pdf"));
+                    // Složka bez koncového lomítka - v seznamu se pak čte líp.
+                    document.put("folder", path.replaceAll("/$", ""));
+                    documents.put(document);
+                }
+            }
+        } catch (Exception error) {
+            call.reject("Dokumenty se nepodařilo přečíst.", "MEDIA_READ_FAILED", error);
+            return;
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+
+        JSObject result = new JSObject();
+        result.put("granted", true);
+        result.put("documents", documents);
+        call.resolve(result);
+    }
+
+    /** Má appka přístup ke všem souborům? Bez něj PDF v telefonu nevidí. */
+    @PluginMethod
+    public void checkAllFilesAccess(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("granted", hasAllFiles());
+        call.resolve(result);
+    }
+
+    /** Otevře systémovou obrazovku, kde se přístup ke všem souborům povoluje. */
+    @PluginMethod
+    public void requestAllFilesAccess(PluginCall call) {
+        try {
+            Intent intent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getContext().getPackageName()))
+                : new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Nastavení se nepodařilo otevřít.", "MEDIA_SETTINGS_FAILED", error);
+        }
+    }
+
+    private boolean hasAllFiles() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager();
+        }
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
+            == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /**
      * Stáhne soubor z přímé adresy do telefonu.
      *
      * Obstará to systémový DownloadManager: umí pokračovat po výpadku sítě,

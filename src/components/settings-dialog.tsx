@@ -15,6 +15,7 @@ import {
   type PlaybackEvent,
 } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
+import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
 import { SectionIcon } from "@/components/ui/section-icon";
 import {
   SECTION_ICONS,
@@ -147,6 +148,7 @@ export function SettingsDialog({
             />
             <SystemPlaybackSection open={open} />
             <PlaybackLogSection open={open} />
+            <NativeCrashSection open={open} />
             <UpdateSection />
             <ErrorSection open={open} />
           </div>
@@ -391,6 +393,58 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
             Povolit notifikace
           </Button>
         )}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * Poslední pád nativní části.
+ *
+ * Pád v Javě appku zavře a nezůstane po něm nic, co by šlo z telefonu přečíst.
+ * Tady je výpis, který se dá zkopírovat a poslat - jinak se hledá poslepu.
+ */
+function NativeCrashSection({ open }: { open: boolean }) {
+  const [crash, setCrash] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (open) void lastNativeCrash().then(setCrash);
+  }, [open]);
+
+  if (!crash) return null;
+
+  const newline = String.fromCharCode(10);
+  const [stamp, ...rest] = crash.split(newline);
+  const when = Number(stamp);
+  const trace = rest.join(newline);
+
+  return (
+    <Section title="Poslední pád appky" hint="Tohle mi pošli, když appka spadne - je z toho vidět, kde přesně.">
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+        <div className="flex items-center gap-2 text-xs text-destructive">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          <span className="tabular-nums">
+            {Number.isFinite(when) ? new Date(when).toLocaleString("cs") : "neznámo kdy"}
+          </span>
+        </div>
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-muted-foreground">
+          {trace}
+        </pre>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => void navigator.clipboard?.writeText(crash)}>
+          Zkopírovat
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void clearNativeCrash();
+            setCrash(null);
+          }}
+        >
+          Vymazat
+        </Button>
       </div>
     </Section>
   );

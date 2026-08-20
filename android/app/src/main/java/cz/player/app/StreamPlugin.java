@@ -46,6 +46,20 @@ public class StreamPlugin extends Plugin {
     private final OkHttpClient http = new OkHttpClient();
     private boolean extractorReady = false;
 
+    /** Poslední pád nativní části - Nastavení ho umí ukázat. */
+    @PluginMethod
+    public void lastCrash(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("crash", CrashLog.read(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void clearCrash(PluginCall call) {
+        CrashLog.clear(getContext());
+        call.resolve();
+    }
+
     /** Spustí nativní přehrávač videa (ExoPlayer) - ten umí i to, co WebView ne. */
     @PluginMethod
     public void playVideo(PluginCall call) {
@@ -62,6 +76,7 @@ public class StreamPlugin extends Plugin {
             getContext().startActivity(intent);
             call.resolve();
         } catch (Exception error) {
+            CrashLog.record(getContext(), error);
             call.reject("Přehrávač se nepodařilo otevřít.", "STREAM_PLAY_FAILED", error);
         }
     }

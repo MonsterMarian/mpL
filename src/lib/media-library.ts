@@ -26,6 +26,18 @@ export interface NativeVideo {
   mimeType: string;
 }
 
+/** Dokument nalezený v telefonu - ještě nerozebraný, jen položka v seznamu. */
+export interface NativeDocument {
+  id: string;
+  name: string;
+  uri: string;
+  sizeBytes: number;
+  addedAt: number;
+  mimeType: string;
+  /** Složka, ve které leží - `Download`, `Documents/knihy`… */
+  folder: string;
+}
+
 interface MediaLibraryPlugin {
   checkPermission(): Promise<{ granted: boolean }>;
   requestPermission(): Promise<{ granted: boolean }>;
@@ -47,6 +59,13 @@ interface MediaLibraryPlugin {
    * stahování přežije i zavřenou appku a hotový soubor se objeví v knihovně.
    */
   download(options: { url: string; fileName?: string }): Promise<{ id: string; fileName: string }>;
+  /**
+   * Dokumenty v telefonu (PDF, EPUB, TXT). Chce to „přístup ke všem souborům" -
+   * PDF nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.
+   */
+  listDocuments(): Promise<{ granted: boolean; documents: NativeDocument[] }>;
+  checkAllFilesAccess(): Promise<{ granted: boolean }>;
+  requestAllFilesAccess(): Promise<void>;
   /** Náhled videa jako data URI. `null`, když ho MediaStore nemá. */
   videoThumbnail(options: { id: string }): Promise<{ thumbnail: string | null }>;
   /**

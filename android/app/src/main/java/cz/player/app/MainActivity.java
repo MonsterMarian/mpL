@@ -21,6 +21,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Co nejdřív: pád, který se stane při startu, je ten, co se nejhůř hledá.
+        CrashLog.install(this);
         registerPlugin(MediaLibraryPlugin.class);
         registerPlugin(PlaybackPlugin.class);
         registerPlugin(StreamPlugin.class);

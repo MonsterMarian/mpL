@@ -11,6 +11,7 @@ import {
   ChevronRight,
   FileText,
   FileUp,
+  FolderOpen,
   Loader2,
   Music2,
   Pause,
@@ -40,7 +41,13 @@ import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
-import { MediaLibrary, NativeAudioTrack, canReadDeviceMedia, playableMediaSource } from "@/lib/media-library";
+import {
+  MediaLibrary,
+  NativeAudioTrack,
+  canReadDeviceMedia,
+  playableMediaSource,
+  type NativeDocument,
+} from "@/lib/media-library";
 import {
   EMPTY_QUEUE,
   appendToQueue,
@@ -251,6 +258,10 @@ export default function HomePage() {
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
   /** Přehled stránek - otevírá se číslem stránky pod textem. */
   const [pagesOpen, setPagesOpen] = React.useState(false);
+  /** Dokumenty nalezené v telefonu a složka, ve které se zrovna listuje. */
+  const [deviceDocs, setDeviceDocs] = React.useState<NativeDocument[]>([]);
+  const [allFiles, setAllFiles] = React.useState<boolean | null>(null);
+  const [docFolder, setDocFolder] = React.useState<string | null>(null);
   const [isReadingDocument, setIsReadingDocument] = React.useState(false);
   const [documentError, setDocumentError] = React.useState<string | null>(null);
   /** Kus věty, u kterého řeč stojí - odtud se po pauze pokračuje. */
@@ -303,6 +314,27 @@ export default function HomePage() {
 
   currentTimeRef.current = currentTime;
 
+  /**
+   * Složky z toho, co se v telefonu našlo.
+   *
+   * Bere se celá cesta, ne jen poslední úsek: `Download` a `Documents/skripta`
+   * jsou dvě různá místa a splynout nemají.
+   */
+  const documentFolders = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const doc of deviceDocs) {
+      const key = doc.folder || "Jinde";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({
+        name,
+        count,
+        label: name.split("/").filter(Boolean).pop() ?? name,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [deviceDocs]);
+
   const activeDoc = documents.find((doc) => doc.id === documentId_) ?? null;
   const documentPages: DocumentPage[] = activeDoc?.pages ?? [];
   const documentName = activeDoc?.name ?? null;
@@ -352,6 +384,27 @@ export default function HomePage() {
       setLibraryReady(true);
     }
   }, [toast]);
+
+  /**
+   * Co leží v telefonu.
+   *
+   * Bez „přístupu ke všem souborům" Android PDF neukáže - povolení k hudbě
+   * na ně nestačí, protože dokumenty za média nepovažuje.
+   */
+  const loadDeviceDocuments = React.useCallback(async () => {
+    if (!canReadDeviceMedia()) {
+      setAllFiles(false);
+      return;
+    }
+    try {
+      const result = await MediaLibrary.listDocuments();
+      setAllFiles(Boolean(result?.granted));
+      setDeviceDocs(result?.documents ?? []);
+    } catch (error) {
+      console.error("Dokumenty se nepodařilo načíst", error);
+      setAllFiles(false);
+    }
+  }, []);
 
   const openMediaSettings = React.useCallback(async () => {
     if (!canReadDeviceMedia()) return;
@@ -413,6 +466,7 @@ export default function HomePage() {
 
     setAddons(loadAddons());
     setSectionIcons(loadSectionIcons());
+    void loadDeviceDocuments();
     setStorageReady(true);
     void loadDeviceMusic();
 
@@ -745,11 +799,14 @@ export default function HomePage() {
    */
   React.useEffect(() => {
     let cleanup = () => {};
-    void onAppResume(() => void loadDeviceMusic()).then((fn) => {
+    void onAppResume(() => {
+      void loadDeviceMusic();
+      void loadDeviceDocuments();
+    }).then((fn) => {
       cleanup = fn;
     });
     return () => cleanup();
-  }, [loadDeviceMusic]);
+  }, [loadDeviceMusic, loadDeviceDocuments]);
 
   const toggleLike = (trackId: string) => {
     setLiked((previous) => {
@@ -1154,7 +1211,36 @@ export default function HomePage() {
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
+    await importDocument(file);
+  };
+
+  /**
+   * Otevře dokument nalezený v telefonu.
+   *
+   * Soubor se natáhne přes adresu, kterou WebView umí, a dál jde stejnou
+   * cestou jako ručně vybraný - rozebrat na stránky se musí tak jako tak.
+   */
+  const openDeviceDocument = async (doc: NativeDocument) => {
+    const known = documents.find((item) => item.name === doc.name);
+    if (known) {
+      openDocument(known);
+      return;
+    }
+    setIsLoadingDocument(true);
+    try {
+      const response = await fetch(playableMediaSource(doc.uri));
+      const blob = await response.blob();
+      await importDocument(new File([blob], doc.name, { type: doc.mimeType }));
+    } catch (error) {
+      console.error("Dokument se nepodařilo otevřít", error);
+      setDocumentError("Soubor se nepodařilo přečíst. Zkus ho otevřít ručně.");
+      setIsLoadingDocument(false);
+    }
+  };
+
+  const importDocument = async (file: File) => {
     setIsLoadingDocument(true);
     setDocumentError(null);
     try {
@@ -1219,7 +1305,6 @@ export default function HomePage() {
       setDocumentError("Soubor se nepodařilo otevřít. Čtečka umí PDF a textové soubory (TXT, MD).");
     } finally {
       setIsLoadingDocument(false);
-      event.target.value = "";
     }
   };
 
@@ -1484,6 +1569,85 @@ export default function HomePage() {
               <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky.</p>
               <label className="mt-5 flex h-11 w-fit cursor-pointer items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
             </div>
+
+            {/*
+              Co leží v telefonu. Ruční výběr souboru zůstává, ale jako záloha -
+              knihy a skripta jsou v telefonu už teď a hledat je přes systémový
+              dialog je práce navíc.
+            */}
+            {allFiles === false ? (
+              <div className="mb-6 flex flex-col items-start gap-2 rounded-2xl border border-dashed border-white/10 px-4 py-4">
+                <p className="text-sm font-medium">Dokumenty v telefonu appka nevidí</p>
+                <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
+                  PDF ani EPUB nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.
+                  Přístup ke všem souborům se povoluje v systémovém nastavení.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void MediaLibrary.requestAllFilesAccess().catch(() => {})}
+                  className="mt-1 flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-xs font-semibold text-black"
+                >
+                  <FolderOpen className="size-3.5" /> Povolit přístup
+                </button>
+              </div>
+            ) : null}
+
+            {deviceDocs.length > 0 ? (
+              <div className="mb-6">
+                <div className="mb-3 flex items-center gap-2">
+                  <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {docFolder ? docFolder : "Složky"}
+                  </h2>
+                  {docFolder ? (
+                    <button
+                      type="button"
+                      onClick={() => setDocFolder(null)}
+                      className="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <ChevronLeft className="size-3.5" /> Zpět na složky
+                    </button>
+                  ) : null}
+                </div>
+
+                {docFolder === null ? (
+                  <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                    {documentFolders.map((folder) => (
+                      <button
+                        key={folder.name}
+                        type="button"
+                        onClick={() => setDocFolder(folder.name)}
+                        className="flex flex-col items-center gap-1.5 rounded-xl border border-white/[0.08] px-2 py-4 text-center transition-colors hover:bg-white/[0.04]"
+                      >
+                        <FolderOpen className="size-7 text-brand" />
+                        <span className="w-full truncate text-xs font-medium">{folder.label}</span>
+                        <span className="text-[11px] text-muted-foreground">{folder.count} souborů</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                    {deviceDocs
+                      .filter((doc) => (doc.folder || "Jinde") === docFolder)
+                      .map((doc) => (
+                        <button
+                          key={doc.id}
+                          type="button"
+                          onClick={() => void openDeviceDocument(doc)}
+                          className="text-left"
+                        >
+                          <span className="flex aspect-[3/4] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.05]">
+                            <FileText className="size-7 text-muted-foreground" />
+                          </span>
+                          <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             {documents.length > 0 ? (
               /*
