@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
-import { playVideoNatively } from "@/lib/stream";
+import { nativeStreamAvailable, playVideoNatively } from "@/lib/stream";
 import { cn } from "@/lib/utils";
 
 /**
@@ -106,22 +106,38 @@ function VideoThumbnail({ video }: { video: VideoItem }) {
 export function VideoLibrary({
   onBeforePlay,
   onToast,
+  onPlayerChange,
 }: {
   /** Zavolá se, než se video rozjede - hlavní obrazovka na to ztlumí zbytek. */
   onBeforePlay: () => void;
   onToast?: (message: { tone: "info" | "warn" | "win"; title: string; description?: string }) => void;
+  /**
+   * Ohlásí, jestli je otevřený přehrávač uvnitř appky, a jak ho zavřít.
+   * Hardwarové Zpět řeší hlavní obrazovka na jednom místě, takže potřebuje
+   * vědět, že je nad ní ještě něco navrchu.
+   */
+  onPlayerChange?: (close: (() => void) | null) => void;
 }) {
   const [videos, setVideos] = React.useState<VideoItem[]>([]);
   const [permission, setPermission] = React.useState<Permission>("unknown");
   const [loading, setLoading] = React.useState(false);
   const [currentId, setCurrentId] = React.useState<string | null>(null);
-  /** Video, které WebView odmítl - nabídne se jiný přehrávač. */
+  /** Video, které WebView odmítl - i s důvodem, proč se sem vůbec dostalo. */
   const [failed, setFailed] = React.useState<string | null>(null);
+  const [failedReason, setFailedReason] = React.useState<string | null>(null);
   const [playing, setPlaying] = React.useState(false);
   const [position, setPosition] = React.useState(0);
   const [length, setLength] = React.useState(0);
   const [controlsVisible, setControls] = React.useState(true);
   const [query, setQuery] = React.useState("");
+  /**
+   * Je v telefonu nainstalovaná appka, která umí nativní přehrávač?
+   *
+   * Zjišťuje se až po připojení, ne při vykreslení: `out/` se předgeneruje na
+   * počítači, kde žádný Capacitor není, a rozdíl proti telefonu by rozbil
+   * hydrataci. `null` znamená „ještě nevíme".
+   */
+  const [nativePlayer, setNativePlayer] = React.useState<boolean | null>(null);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const objectUrls = React.useRef<string[]>([]);
 
@@ -173,6 +189,10 @@ export function VideoLibrary({
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    setNativePlayer(nativeStreamAvailable());
+  }, []);
+
   // Vybrané soubory žijí na adresách, které je potřeba po sobě uklidit.
   React.useEffect(
     () => () => {
@@ -211,16 +231,41 @@ export function VideoLibrary({
     void play(added[0].id);
   };
 
+  /**
+   * Spustí film.
+   *
+   * Nativní přehrávač umí i to, co WebView ne (MKV, HEVC, AC3), a nese si
+   * vlastní ovládání - film z telefonu jde vždycky tam. Obrazovka uvnitř appky
+   * zůstává pro ručně vybraný soubor, pro prohlížeč a jako záchrana, když
+   * nativní cesta odmítne.
+   *
+   * Nic z toho se nesmí stát potichu: dokud se nezdar jen polykal, vypadalo
+   * klepnutí na film tak, že appka nedělá vůbec nic.
+   */
   const play = async (id: string) => {
     onBeforePlay();
     const video = videos.find((item) => item.id === id);
+    if (!video) return;
 
-    // Nativní přehrávač umí i to, co WebView ne (MKV, HEVC), a nese si vlastní
-    // ovládání. Vlastní obrazovka appky zůstává pro ručně vybraný soubor
-    // a pro prohlížeč.
-    if (video?.uri && (await playVideoNatively(video.uri, video.title))) return;
+    let reason: string | null = null;
+
+    if (video.uri) {
+      const result = await playVideoNatively(video.uri, video.title);
+      if (result.started) return;
+
+      reason =
+        result.reason === "no-native"
+          ? "Nativní přehrávač v nainstalované appce chybí. Filmy hraje nativní část, a tu živá aktualizace nevymění - je potřeba novější APK."
+          : result.message;
+      onToast?.({
+        tone: "warn",
+        title: "Nativní přehrávač film nevzal",
+        description: reason,
+      });
+    }
 
     setFailed(null);
+    setFailedReason(reason);
     setPosition(0);
     setLength(0);
     setControls(true);
@@ -236,6 +281,13 @@ export function VideoLibrary({
       // Autoplay může systém odmítnout - uživatel klepne na přehrát ve videu.
     });
   }, [currentId]);
+
+  // Hardwarové Zpět patří tomu, co je navrchu. Přehrávač je přes celou
+  // obrazovku, takže se má zavřít dřív, než se odejde ze sekce.
+  React.useEffect(() => {
+    onPlayerChange?.(currentId ? () => setCurrentId(null) : null);
+    return () => onPlayerChange?.(null);
+  }, [currentId, onPlayerChange]);
 
   // Povolení k videím se uděluje v systémovém nastavení - po návratu se
   // knihovna přečte znovu, jinak to vypadá, že povolení nezabralo.
@@ -378,12 +430,29 @@ export function VideoLibrary({
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center">
                 <p className="text-sm font-medium text-white">Tohle video se nepodařilo přehrát</p>
                 <p className="max-w-xs text-xs leading-relaxed text-white/70">
-                  Zkus ho otevřít znovu - filmy jedou přes nativní přehrávač, tenhle je
-                  jen záloha pro ručně vybrané soubory.
+                  {failedReason ??
+                    "Tenhle přehrávač umí jen to, co zvládne prohlížeč — MP4 s H.264. Filmy jinak jedou přes nativní přehrávač."}
                 </p>
+                <Button size="sm" variant="secondary" onClick={() => setCurrentId(null)}>
+                  Zavřít
+                </Button>
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+      {/*
+        Nativní přehrávač je v APK, ne v balíku živé aktualizace. Když appka
+        v telefonu pochází z doby před ním, filmy se přes prohlížeč nerozjedou
+        a bez tohohle upozornění to vypadá jako záhadná porucha.
+      */}
+      {nativePlayer === false && permission !== "unavailable" ? (
+        <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+          <span className="font-medium text-foreground">Chybí nativní přehrávač.</span> Tahle
+          instalace appky je starší než on a živá aktualizace ho nedoveze — je v APK. Filmy
+          (MKV, HEVC, AC3) půjdou přehrát až po instalaci novějšího APK; zatím se zkusí
+          přehrávač prohlížeče, který umí jen MP4 s H.264.
         </div>
       ) : null}
 

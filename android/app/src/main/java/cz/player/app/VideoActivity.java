@@ -15,12 +15,16 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import androidx.annotation.OptIn;
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -49,7 +53,11 @@ import org.videolan.libvlc.util.VLCVideoLayout;
  *    naskočí až když první přehrávač ohlásí chybu.
  *
  * Přepnutí je automatické: uživatel u toho nic neřeší, jen film chvíli počká.
- * Obrazovka se vzdá, teprve když neuspěje ani VLC.
+ *
+ * **Obrazovka nezmizí sama.** Dřív se při nezdaru zavřela a v telefonu to
+ * vypadalo, že klepnutí na film neudělalo vůbec nic - přehrávač přitom naskočil,
+ * neuspěl a hned se poroučel. Teď každý konec kromě dohraného filmu napíše, co
+ * se stalo, a čeká na uživatele.
  */
 @OptIn(markerClass = UnstableApi.class)
 public class VideoActivity extends Activity {
@@ -57,9 +65,16 @@ public class VideoActivity extends Activity {
     static final String EXTRA_URI = "uri";
     static final String EXTRA_TITLE = "title";
 
+    /** Kolik vteřin se čeká, než se mlčící ExoPlayer prohlásí za neúspěch. */
+    private static final long EXO_TIMEOUT_MS = 9000;
+
     private String source;
     private String title;
+
+    /** Kořen obrazovky. Horní lišta a hlášení v něm přežijí výměnu přehrávače. */
     private FrameLayout root;
+    /** Sem se sází přehrávač. Při přepnutí na VLC se vyprázdní jen tohle. */
+    private FrameLayout stage;
 
     private ExoPlayer player;
     private PlayerView view;
@@ -68,11 +83,23 @@ public class VideoActivity extends Activity {
     private MediaPlayer vlcPlayer;
     private VLCVideoLayout vlcView;
     private ParcelFileDescriptor descriptor;
+
     private View controls;
     private ImageButton toggle;
     private SeekBar bar;
     private TextView clock;
     private boolean dragging;
+
+    private LinearLayout statusBox;
+    private ProgressBar spinner;
+    private TextView statusText;
+    private Button statusButton;
+
+    /** Ukázal se obraz? Bez toho je "konec filmu" ve skutečnosti chyba. */
+    private boolean started;
+    /** Vzdáno - ani VLC to nedal. Pozdější hlášení už tenhle stav nepřepíšou. */
+    private boolean surrendered;
+
     private final Handler ticker = new Handler(Looper.getMainLooper());
 
     @Override
@@ -82,11 +109,9 @@ public class VideoActivity extends Activity {
         Intent intent = getIntent();
         source = intent != null ? intent.getStringExtra(EXTRA_URI) : null;
         title = intent != null ? intent.getStringExtra(EXTRA_TITLE) : null;
-        if (source == null || source.isEmpty()) {
-            finish();
-            return;
-        }
 
+        // Obrazovka se staví dřív, než se sáhne na cokoli, co může selhat.
+        // Kdyby se stavěla až po přehrávači, neúspěch by neměl kam napsat proč.
         try {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             hideSystemBars();
@@ -95,18 +120,40 @@ public class VideoActivity extends Activity {
             root.setBackgroundColor(Color.BLACK);
             setContentView(root);
 
+            stage = new FrameLayout(this);
+            root.addView(stage, fill());
+
+            addTopBar();
+            addStatus();
+        } catch (Throwable error) {
+            // Bez obrazovky se nedá nic ukázat; jediné, co zbývá, je stopa.
+            CrashLog.record(this, error);
+            finish();
+            return;
+        }
+
+        if (source == null || source.trim().isEmpty()) {
+            surrender("Film přišel bez adresy souboru.");
+            return;
+        }
+
+        working("Načítám film…");
+        try {
             startExo();
         } catch (Throwable error) {
             CrashLog.record(this, error);
-            startVlc();
+            startVlc("ExoPlayer se nepodařilo spustit");
         }
     }
+
+    // --- první pokus: systémové dekodéry -----------------------------------
 
     /** První pokus: systémové dekodéry přes ExoPlayer. */
     private void startExo() {
         view = new PlayerView(this);
         view.setKeepContentOnPlayerReset(true);
-        root.addView(view, fill());
+        view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
+        stage.addView(view, fill());
 
         // Když první dekodér souboru nesedne, zkusí se další v pořadí. Bez
         // tohohle stačí jeden zaseklý dekodér a video "nejde přehrát", přestože
@@ -116,17 +163,29 @@ public class VideoActivity extends Activity {
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
 
         player = new ExoPlayer.Builder(this, renderers).build();
+        // O zvuk se přehrávač přihlásí u systému. Bez toho hraje film přes
+        // cokoli, co v telefonu zrovna běží.
+        player.setAudioAttributes(
+            new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
+            true
+        );
         player.addListener(
             new Player.Listener() {
                 @Override
                 public void onPlayerError(PlaybackException error) {
-                    CrashLog.note(VideoActivity.this, "Video: " + error.getErrorCodeName() + " -> VLC");
-                    startVlc();
+                    // Přepnout se smí až po návratu z tohohle volání: uvnitř
+                    // vlastního posluchače se ExoPlayer uvolňovat nemá.
+                    String reason = error.getErrorCodeName();
+                    ticker.post(() -> startVlc("ExoPlayer: " + reason));
                 }
 
                 @Override
                 public void onPlaybackStateChanged(int state) {
-                    if (state == Player.STATE_READY) ticker.removeCallbacks(watchdog);
+                    if (state == Player.STATE_READY) {
+                        ticker.removeCallbacks(watchdog);
+                        started = true;
+                        playing();
+                    }
                 }
             }
         );
@@ -134,7 +193,7 @@ public class VideoActivity extends Activity {
         player.setMediaItem(MediaItem.fromUri(Uri.parse(source)));
         player.prepare();
         player.setPlayWhenReady(true);
-        ticker.postDelayed(watchdog, 9000);
+        ticker.postDelayed(watchdog, EXO_TIMEOUT_MS);
     }
 
     /**
@@ -146,10 +205,11 @@ public class VideoActivity extends Activity {
         @Override
         public void run() {
             if (player == null || player.getPlaybackState() == Player.STATE_READY) return;
-            CrashLog.note(VideoActivity.this, "Video: ExoPlayer se nerozjel -> VLC");
-            startVlc();
+            startVlc("ExoPlayer se nerozjel do " + (EXO_TIMEOUT_MS / 1000) + " s");
         }
     };
+
+    // --- druhý pokus: libVLC ------------------------------------------------
 
     /**
      * Druhý pokus: libVLC.
@@ -158,13 +218,17 @@ public class VideoActivity extends Activity {
      * nemá. Ovládání je vlastní - libVLC kreslí jen obraz, tlačítka k němu
      * žádná nepatří.
      */
-    private void startVlc() {
-        if (vlcPlayer != null) return;
+    private void startVlc(String why) {
+        if (vlcPlayer != null || surrendered || isFinishing()) return;
 
+        CrashLog.note(this, "Video -> VLC (" + why + ")");
         ticker.removeCallbacks(watchdog);
         releaseExo();
+        started = false;
+        working("Zkouším druhý přehrávač…");
+
         try {
-            if (root.getChildCount() > 0) root.removeAllViews();
+            stage.removeAllViews();
 
             ArrayList<String> options = new ArrayList<>();
             // Zahazování snímků se u filmů projeví trháním obrazu; radši ne.
@@ -174,27 +238,39 @@ public class VideoActivity extends Activity {
             vlc = new LibVLC(this, options);
 
             vlcView = new VLCVideoLayout(this);
-            root.addView(vlcView, fill());
+            stage.addView(vlcView, fill());
             addControls();
 
             vlcPlayer = new MediaPlayer(vlc);
             vlcPlayer.attachViews(vlcView, null, false, false);
             vlcPlayer.setEventListener(
                 event -> {
-                    if (event.type == MediaPlayer.Event.EncounteredError) showProblem("přehrávač si se souborem neporadil");
-                    if (event.type == MediaPlayer.Event.EndReached) finish();
-                    if (event.type == MediaPlayer.Event.Playing || event.type == MediaPlayer.Event.Paused) refreshToggle();
+                    if (event.type == MediaPlayer.Event.EncounteredError) {
+                        surrender("Přehrávač si se souborem neporadil.");
+                    } else if (event.type == MediaPlayer.Event.Playing) {
+                        started = true;
+                        playing();
+                        refreshToggle();
+                    } else if (event.type == MediaPlayer.Event.Paused) {
+                        refreshToggle();
+                    } else if (event.type == MediaPlayer.Event.EndReached) {
+                        // Konec dřív, než se cokoli ukázalo, není dohraný film,
+                        // ale soubor, který se nepodařilo otevřít. Zavřít se kvůli
+                        // tomu nesmí - vypadalo by to, že se nestalo vůbec nic.
+                        if (started) finish();
+                        else surrender("Ze souboru se nepodařilo přečíst obraz.");
+                    }
                 }
             );
 
             Uri parsed = Uri.parse(source);
             Media media;
             if ("content".equals(parsed.getScheme())) {
-                // Adresu `content://` VLC sám neotevře - dostane rovnou otevřený
+                // Adresu content:// VLC sám neotevře - dostane rovnou otevřený
                 // soubor. Popisovač proto musí žít až do konce přehrávání.
                 descriptor = getContentResolver().openFileDescriptor(parsed, "r");
                 if (descriptor == null) {
-                    showProblem("soubor se nepodařilo otevřít");
+                    surrender("Soubor se nepodařilo otevřít - možná už v telefonu není.");
                     return;
                 }
                 media = new Media(vlc, descriptor.getFileDescriptor());
@@ -209,26 +285,16 @@ public class VideoActivity extends Activity {
             ticker.post(tick);
         } catch (Throwable error) {
             CrashLog.record(this, error);
-            showProblem(error.getClass().getSimpleName());
+            surrender("Přehrávač selhal: " + error.getClass().getSimpleName());
         }
     }
 
-    /** Ovládání k VLC: pozastavit, posunout se, vidět čas a název filmu. */
+    /** Ovládání k VLC: pozastavit, posunout se, vidět čas. */
     private void addControls() {
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setBackgroundColor(Color.argb(140, 0, 0, 0));
         column.setPadding(dp(16), dp(12), dp(16), dp(20));
-
-        if (title != null && !title.isEmpty()) {
-            TextView name = new TextView(this);
-            name.setText(title);
-            name.setTextColor(Color.WHITE);
-            name.setMaxLines(1);
-            name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            name.setPadding(0, 0, 0, dp(8));
-            column.addView(name);
-        }
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -282,7 +348,7 @@ public class VideoActivity extends Activity {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM
         );
-        root.addView(column, place);
+        stage.addView(column, place);
         controls = column;
 
         // Klepnutí do obrazu ovládání schová - film má být vidět celý.
@@ -307,6 +373,104 @@ public class VideoActivity extends Activity {
         toggle.setImageResource(vlcPlayer.isPlaying() ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play);
     }
 
+    // --- lišta a hlášení ----------------------------------------------------
+
+    /** Název filmu a křížek. Patří k oběma přehrávačům, proto sedí nad nimi. */
+    private void addTopBar() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackgroundColor(Color.argb(120, 0, 0, 0));
+        row.setPadding(dp(8), dp(8), dp(16), dp(8));
+
+        ImageButton close = new ImageButton(this);
+        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        close.setColorFilter(Color.WHITE);
+        close.setContentDescription("Zavřít video");
+        close.setOnClickListener(v -> finish());
+        row.addView(close, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        TextView name = new TextView(this);
+        name.setText(title != null ? title : "");
+        name.setTextColor(Color.WHITE);
+        name.setMaxLines(1);
+        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        name.setPadding(dp(8), 0, 0, 0);
+        row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(
+            row,
+            new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP)
+        );
+    }
+
+    /** Kolečko a hláška uprostřed. Jeden prvek pro čekání i pro nezdar. */
+    private void addStatus() {
+        statusBox = new LinearLayout(this);
+        statusBox.setOrientation(LinearLayout.VERTICAL);
+        statusBox.setGravity(Gravity.CENTER);
+        statusBox.setPadding(dp(32), dp(32), dp(32), dp(32));
+
+        spinner = new ProgressBar(this);
+        statusBox.addView(spinner, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        statusText = new TextView(this);
+        statusText.setTextColor(Color.WHITE);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        statusText.setPadding(0, dp(16), 0, 0);
+        statusBox.addView(
+            statusText,
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        );
+
+        statusButton = new Button(this);
+        statusButton.setText("Zavřít");
+        statusButton.setVisibility(View.GONE);
+        statusButton.setOnClickListener(v -> finish());
+        statusBox.addView(
+            statusButton,
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        );
+
+        root.addView(
+            statusBox,
+            new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+        );
+    }
+
+    /** Něco se děje a uživatel na to čeká. */
+    private void working(String message) {
+        if (statusBox == null || surrendered) return;
+        statusBox.setVisibility(View.VISIBLE);
+        spinner.setVisibility(View.VISIBLE);
+        statusButton.setVisibility(View.GONE);
+        statusText.setText(message);
+    }
+
+    /** Obraz běží - hlášení jde pryč. */
+    private void playing() {
+        if (statusBox != null && !surrendered) statusBox.setVisibility(View.GONE);
+    }
+
+    /** Konec pokusů. Napíše se proč a čeká se na uživatele, nezavírá se. */
+    private void surrender(String detail) {
+        if (surrendered || isFinishing()) return;
+        surrendered = true;
+        ticker.removeCallbacks(watchdog);
+        ticker.removeCallbacks(tick);
+        CrashLog.note(this, "Video se nepodařilo přehrát: " + detail);
+        if (statusBox == null) {
+            finish();
+            return;
+        }
+        statusBox.setVisibility(View.VISIBLE);
+        spinner.setVisibility(View.GONE);
+        statusText.setText("Tohle video se nepodařilo přehrát.\n\n" + detail);
+        statusButton.setVisibility(View.VISIBLE);
+    }
+
     private static String clock(long millis) {
         if (millis <= 0) return "0:00";
         long total = millis / 1000;
@@ -316,27 +480,6 @@ public class VideoActivity extends Activity {
         return hours > 0
             ? String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
             : String.format(Locale.US, "%d:%02d", minutes, seconds);
-    }
-
-    /** Když neuspěl ani VLC, napíše se to na obrazovku i s důvodem. */
-    private void showProblem(String detail) {
-        try {
-            if (root == null) {
-                finish();
-                return;
-            }
-            root.removeAllViews();
-
-            TextView message = new TextView(this);
-            message.setTextColor(Color.WHITE);
-            message.setGravity(Gravity.CENTER);
-            message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-            message.setPadding(dp(24), dp(24), dp(24), dp(24));
-            message.setText("Tohle video se nepodařilo přehrát.\n\n" + detail + "\n\nZpět gestem nebo tlačítkem.");
-            root.addView(message, fill());
-        } catch (Throwable ignored) {
-            finish();
-        }
     }
 
     private FrameLayout.LayoutParams fill() {
@@ -370,7 +513,7 @@ public class VideoActivity extends Activity {
     private void releaseExo() {
         if (view != null) {
             view.setPlayer(null);
-            root.removeView(view);
+            stage.removeView(view);
             view = null;
         }
         if (player != null) {

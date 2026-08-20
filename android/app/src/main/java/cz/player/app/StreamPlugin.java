@@ -1,11 +1,14 @@
 package cz.player.app;
 
 import android.content.Intent;
+import android.net.Uri;
+import android.os.ParcelFileDescriptor;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -60,7 +63,15 @@ public class StreamPlugin extends Plugin {
         call.resolve();
     }
 
-    /** Spustí nativní přehrávač videa (ExoPlayer) - ten umí i to, co WebView ne. */
+    /**
+     * Spustí nativní přehrávač videa (ExoPlayer, v záloze VLC) - ten umí i to,
+     * co WebView ne.
+     *
+     * Soubor se otevře **ještě tady**, dřív než se pustí přehrávač. Nečitelný
+     * soubor tak skončí chybou, kterou appka umí ukázat, místo aby se rozsvítila
+     * a hned zhasla cizí obrazovka - to v telefonu vypadá, jako by klepnutí na
+     * film neudělalo vůbec nic.
+     */
     @PluginMethod
     public void playVideo(PluginCall call) {
         String uri = call.getString("uri");
@@ -69,6 +80,22 @@ public class StreamPlugin extends Plugin {
             return;
         }
         try {
+            Uri parsed = Uri.parse(uri.trim());
+            if ("content".equals(parsed.getScheme())) {
+                try (ParcelFileDescriptor probe = getContext().getContentResolver().openFileDescriptor(parsed, "r")) {
+                    if (probe == null) {
+                        call.reject("Soubor se nepodařilo otevřít.", "STREAM_UNREADABLE");
+                        return;
+                    }
+                } catch (SecurityException error) {
+                    call.reject("Aplikace nemá přístup k tomuhle souboru.", "STREAM_FORBIDDEN", error);
+                    return;
+                } catch (FileNotFoundException error) {
+                    call.reject("Soubor v telefonu už není.", "STREAM_MISSING", error);
+                    return;
+                }
+            }
+
             Intent intent = new Intent(getContext(), VideoActivity.class)
                 .putExtra(VideoActivity.EXTRA_URI, uri)
                 .putExtra(VideoActivity.EXTRA_TITLE, call.getString("title", ""))

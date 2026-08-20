@@ -28,17 +28,36 @@ export function nativeStreamAvailable(): boolean {
 }
 
 /**
- * Pustí video v přehrávači aplikace. Ten si sám vybere, jestli na soubor stačí
- * systémové dekodéry, nebo je potřeba VLC. Vrací `false`, když appka neběží
- * v telefonu a nativní přehrávač tím pádem není.
+ * Jak dopadl pokus pustit film v nativním přehrávači.
+ *
+ * Pouhé `false` tady nestačilo. Selhání a „tohle zařízení nativní přehrávač
+ * nemá" vypadaly stejně, takže se obojí tiše propadlo do přehrávače
+ * v prohlížeči a uživatel se nedozvěděl nic - klepnutí na film prostě
+ * neudělalo nic.
  */
-export async function playVideoNatively(uri: string, title?: string): Promise<boolean> {
-  if (!nativeStreamAvailable()) return false;
+export type NativePlayResult =
+  | { started: true }
+  | { started: false; reason: "no-native"; message: string }
+  | { started: false; reason: "failed"; message: string };
+
+/**
+ * Pustí video v přehrávači aplikace. Ten si sám vybere, jestli na soubor stačí
+ * systémové dekodéry, nebo je potřeba VLC.
+ */
+export async function playVideoNatively(uri: string, title?: string): Promise<NativePlayResult> {
+  if (!nativeStreamAvailable()) {
+    return {
+      started: false,
+      reason: "no-native",
+      message: "Nativní přehrávač v téhle verzi appky není.",
+    };
+  }
   try {
     await Stream.playVideo({ uri, title });
-    return true;
-  } catch {
-    return false;
+    return { started: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { started: false, reason: "failed", message };
   }
 }
 

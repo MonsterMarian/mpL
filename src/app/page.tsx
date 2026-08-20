@@ -749,9 +749,22 @@ export default function HomePage() {
   /**
    * Hardwarové Zpět zavírá to, co je zrovna navrchu. Na knihovně se nechá
    * systém appku ukončit - tak se chová každá Android appka.
+   *
+   * Sekce s videem si sem zapíše, jak zavřít svůj přehrávač: rozhodovat, co je
+   * navrchu, má jedno místo, ne každá sekce zvlášť.
    */
+  const closeVideoPlayer = React.useRef<(() => void) | null>(null);
+  const trackVideoPlayer = React.useCallback((close: (() => void) | null) => {
+    closeVideoPlayer.current = close;
+  }, []);
+
   const handleBack = React.useRef<() => boolean>(() => false);
   handleBack.current = () => {
+    // Přehrávač videa je přes celou obrazovku, takže je navrchu vždycky on.
+    if (closeVideoPlayer.current) {
+      closeVideoPlayer.current();
+      return true;
+    }
     if (menuTracks.length) {
       setMenuTracks([]);
       return true;
@@ -1795,7 +1808,7 @@ export default function HomePage() {
         ) : null}
 
         {activeView === "video" && addons.video ? (
-          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} />
+          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} />
         ) : null}
 
         {activeView === "downloads" && addons.downloads ? (
