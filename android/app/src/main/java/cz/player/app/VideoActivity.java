@@ -2,36 +2,43 @@ package cz.player.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 import androidx.annotation.OptIn;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
 /**
  * Přehrávač videa.
  *
- * Video běží v ExoPlayeru, ne ve WebView: ten umí jen webové kodeky, takže na
- * filmech (MKV, HEVC) mlčel. ExoPlayer zvládne, co má Android v systému, a nese
- * si vlastní ovládání - posuvník, časy, rychlost - takže ho appka nemusí
- * kreslit znovu.
+ * Video běží v ExoPlayeru: WebView uměl jen webové kodeky, takže na filmech
+ * (MKV, HEVC) mlčel. ExoPlayer si nese vlastní rozbalovače kontejnerů, takže
+ * MKV, AVI ani MOV pro něj nejsou problém, a obraz se zvukem dekóduje tím, co
+ * má telefon v systému.
+ *
+ * Přehrává se **tady**, ne v cizí aplikaci. Když dekodér selže, zkusí se druhý
+ * v pořadí (`setEnableDecoderFallback`) - výrobci jich do telefonu dávají víc
+ * a první nemusí souboru sednout. Teprve když neuspěje ani jeden, obrazovka to
+ * napíše i s kódem chyby, ať je vidět, co přesně chybí.
  *
  * Obyčejná `Activity` a systémové téma schválně: PlayerView žádnou knihovnu
  * témat nepotřebuje a čím míň věcí se tu musí najít v prostředcích, tím míň
  * má obrazovka jak spadnout.
- *
- * Když se přehrávač nerozjede (chybí kodek, soubor je pryč), obrazovka se
- * nezhroutí - pošle video do jiné aplikace a zavře se.
  */
 @OptIn(markerClass = UnstableApi.class)
 public class VideoActivity extends Activity {
@@ -41,14 +48,14 @@ public class VideoActivity extends Activity {
 
     private ExoPlayer player;
     private PlayerView view;
-    private String uri;
+    private FrameLayout root;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         Intent intent = getIntent();
-        uri = intent != null ? intent.getStringExtra(EXTRA_URI) : null;
+        String uri = intent != null ? intent.getStringExtra(EXTRA_URI) : null;
         if (uri == null || uri.isEmpty()) {
             finish();
             return;
@@ -58,8 +65,8 @@ public class VideoActivity extends Activity {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             hideSystemBars();
 
-            FrameLayout root = new FrameLayout(this);
-            root.setBackgroundColor(0xFF000000);
+            root = new FrameLayout(this);
+            root.setBackgroundColor(Color.BLACK);
             view = new PlayerView(this);
             view.setKeepContentOnPlayerReset(true);
             root.addView(
@@ -71,15 +78,20 @@ public class VideoActivity extends Activity {
             );
             setContentView(root);
 
-            player = new ExoPlayer.Builder(this).build();
+            // Když první dekodér souboru nesedne, zkusí se další v pořadí.
+            // Bez tohohle stačí jeden zaseklý dekodér a video "nejde přehrát",
+            // přestože ho telefon umí.
+            DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+
+            player = new ExoPlayer.Builder(this, renderers).build();
             player.addListener(
                 new Player.Listener() {
                     @Override
                     public void onPlayerError(PlaybackException error) {
-                        // Kodek, který Android nemá, nemá cenu obcházet - ať se
-                        // toho ujme přehrávač, který ho umí.
                         CrashLog.note(VideoActivity.this, "Video: " + error.getErrorCodeName());
-                        openElsewhere();
+                        showProblem(error);
                     }
                 }
             );
@@ -89,7 +101,42 @@ public class VideoActivity extends Activity {
             player.setPlayWhenReady(true);
         } catch (Throwable error) {
             CrashLog.record(this, error);
-            openElsewhere();
+            showProblem(null);
+        }
+    }
+
+    /**
+     * Co se nepovedlo, se napíše na obrazovku.
+     *
+     * Do jiné aplikace se nikam neodkazuje - film patří sem. Kód chyby je
+     * v textu schválně: podle něj se pozná, jestli chybí dekodér obrazu, zvuku,
+     * nebo je vadný soubor.
+     */
+    private void showProblem(PlaybackException error) {
+        try {
+            if (root == null) {
+                finish();
+                return;
+            }
+            if (view != null) view.setVisibility(View.GONE);
+
+            TextView message = new TextView(this);
+            message.setTextColor(Color.WHITE);
+            message.setGravity(Gravity.CENTER);
+            message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            message.setPadding(48, 48, 48, 48);
+            String detail = error != null ? error.getErrorCodeName() : "neznámá chyba";
+            message.setText("Tohle video se nepodařilo přehrát.\n\n" + detail + "\n\nZpět gestem nebo tlačítkem.");
+
+            root.addView(
+                message,
+                new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            );
+        } catch (Throwable ignored) {
+            finish();
         }
     }
 
@@ -111,18 +158,6 @@ public class VideoActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 );
         }
-    }
-
-    private void openElsewhere() {
-        try {
-            Intent open = new Intent(Intent.ACTION_VIEW)
-                .setDataAndType(Uri.parse(uri), "video/*")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(open, "Otevřít v"));
-        } catch (Exception ignored) {
-            // Žádný přehrávač v telefonu - víc se dělat nedá.
-        }
-        finish();
     }
 
     @Override

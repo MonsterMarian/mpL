@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ExternalLink, Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Upload, X } from "lucide-react";
+import { Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
@@ -227,19 +227,6 @@ export function VideoLibrary({
     setCurrentId(id);
   };
 
-  /** Formát, který WebView neumí, dostane přehrávač, který ho umí. */
-  const openElsewhere = async (video: VideoItem) => {
-    if (!video.uri || !canReadDeviceMedia()) {
-      onToast?.({ tone: "warn", title: "Otevřít jinde nejde", description: "Ručně vybraný soubor umí jen tahle appka." });
-      return;
-    }
-    try {
-      await MediaLibrary.openExternally({ uri: video.uri, mimeType: video.mimeType ?? "video/*" });
-    } catch {
-      onToast?.({ tone: "warn", title: "Žádný přehrávač", description: "V telefonu není aplikace, která by video otevřela." });
-    }
-  };
-
   React.useEffect(() => {
     if (!currentId) return;
     const element = videoRef.current;
@@ -299,15 +286,7 @@ export function VideoLibrary({
               <X className="size-6" />
             </button>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{current.title}</span>
-            <button
-              type="button"
-              onClick={() => void openElsewhere(current)}
-              aria-label="Otevřít v jiné aplikaci"
-              title="Otevřít v jiné aplikaci"
-              className="rounded-full p-2 text-white/80 transition-colors hover:text-white"
-            >
-              <ExternalLink className="size-5" />
-            </button>
+
           </div>
 
           <div className="relative flex flex-1 items-center justify-center">
@@ -397,14 +376,11 @@ export function VideoLibrary({
             ) : null}
             {failed === current.id ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center">
-                <p className="text-sm font-medium text-white">Tenhle formát appka nepřehraje</p>
+                <p className="text-sm font-medium text-white">Tohle video se nepodařilo přehrát</p>
                 <p className="max-w-xs text-xs leading-relaxed text-white/70">
-                  Filmy bývají v kontejnerech (MKV) a se zvukem (AC3), které umí jen samostatný
-                  přehrávač. Soubor se dá otevřít v něm.
+                  Zkus ho otevřít znovu - filmy jedou přes nativní přehrávač, tenhle je
+                  jen záloha pro ručně vybrané soubory.
                 </p>
-                <Button size="sm" onClick={() => void openElsewhere(current)}>
-                  <ExternalLink className="size-4" /> Otevřít v jiné aplikaci
-                </Button>
               </div>
             ) : null}
           </div>

@@ -12,10 +12,13 @@ import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.pdf.PdfRenderer;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
@@ -197,6 +200,71 @@ public class MediaLibraryPlugin extends Plugin {
         result.put("granted", true);
         result.put("documents", documents);
         call.resolve(result);
+    }
+
+    /**
+     * Obálka dokumentu - první stránka PDF jako obrázek.
+     *
+     * Kreslí ji systémový `PdfRenderer`, ne appka: soubor tak nemusí přes
+     * webovou vrstvu, kde by se třináctimegová kniha musela celá natáhnout do
+     * paměti jen kvůli náhledu.
+     */
+    @PluginMethod
+    public void documentThumbnail(PluginCall call) {
+        String uri = call.getString("uri");
+        if (uri == null || uri.trim().isEmpty()) {
+            call.reject("Chybí adresa dokumentu.", "MEDIA_BAD_REQUEST");
+            return;
+        }
+
+        JSObject result = new JSObject();
+        ParcelFileDescriptor descriptor = null;
+        PdfRenderer renderer = null;
+        PdfRenderer.Page page = null;
+        Bitmap bitmap = null;
+
+        try {
+            descriptor = getContext().getContentResolver().openFileDescriptor(Uri.parse(uri), "r");
+            if (descriptor == null) {
+                result.put("thumbnail", (String) null);
+                call.resolve(result);
+                return;
+            }
+            renderer = new PdfRenderer(descriptor);
+            if (renderer.getPageCount() < 1) {
+                result.put("thumbnail", (String) null);
+                call.resolve(result);
+                return;
+            }
+
+            page = renderer.openPage(0);
+            // Šířka dlaždice stačí; víc pixelů je jen práce navíc.
+            int width = 320;
+            int height = Math.max(1, Math.round(width * (page.getHeight() / (float) page.getWidth())));
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            bitmap.eraseColor(Color.WHITE);
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+
+            try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 75, out);
+                result.put("thumbnail", "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+            }
+            result.put("pages", renderer.getPageCount());
+            call.resolve(result);
+        } catch (Exception error) {
+            // Zaheslované nebo poškozené PDF náhled nedá - dlaždice zůstane s ikonou.
+            result.put("thumbnail", (String) null);
+            call.resolve(result);
+        } finally {
+            if (bitmap != null) bitmap.recycle();
+            try {
+                if (page != null) page.close();
+                if (renderer != null) renderer.close();
+                if (descriptor != null) descriptor.close();
+            } catch (Exception ignored) {
+                // zavřít se nepovedlo - dál se s tím nic dělat nedá
+            }
+        }
     }
 
     /** Má appka přístup ke všem souborům? Bez něj PDF v telefonu nevidí. */

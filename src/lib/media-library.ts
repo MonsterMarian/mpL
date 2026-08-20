@@ -64,6 +64,8 @@ interface MediaLibraryPlugin {
    * PDF nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.
    */
   listDocuments(): Promise<{ granted: boolean; documents: NativeDocument[] }>;
+  /** Obálka dokumentu - první stránka PDF jako data URI. */
+  documentThumbnail(options: { uri: string }): Promise<{ thumbnail: string | null; pages?: number }>;
   checkAllFilesAccess(): Promise<{ granted: boolean }>;
   requestAllFilesAccess(): Promise<void>;
   /** Náhled videa jako data URI. `null`, když ho MediaStore nemá. */

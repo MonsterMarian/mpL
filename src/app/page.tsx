@@ -107,6 +107,7 @@ import {
 } from "@/lib/playback-service";
 import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
+import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, onAppResume, registerBackButton, syncStatusBar } from "@/lib/native";
@@ -1635,9 +1636,7 @@ export default function HomePage() {
                           onClick={() => void openDeviceDocument(doc)}
                           className="text-left"
                         >
-                          <span className="flex aspect-[3/4] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.05]">
-                            <FileText className="size-7 text-muted-foreground" />
-                          </span>
+                          <DocumentCover document={doc} className="aspect-[3/4] w-full" />
                           <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
                           <span className="block text-[11px] text-muted-foreground">
                             {Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB
