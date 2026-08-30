@@ -96,8 +96,13 @@ export function Dialog({
           // Dlouhý obsah (typicky Nastavení) se musí dát doscrollovat, jinak
           // konec zůstane pod okrajem obrazovky. Spodní odsazení počítá
           // s pruhem gest, aby poslední tlačítko nekončilo pod ním.
+          //
+          // Výška je pevná (`h-[100dvh]`), ne minimální. `min-h` totiž nechá
+          // panel vyrůst do výšky obsahu - a `overflow-y-auto` pak nemá co
+          // odříznout, takže se nikde neroluje a konec nastavení je
+          // nedosažitelný. S pevnou výškou má panel kam scrollovat.
           fullScreen
-            ? "min-h-[100dvh] overflow-y-auto px-5 pb-[calc(2rem+var(--mw-safe-bottom))] pt-[calc(1.5rem+var(--mw-safe-top))] sm:min-h-0 sm:max-h-[85dvh] sm:max-w-md sm:rounded-xl sm:border sm:p-5 sm:pb-8"
+            ? "h-[100dvh] overflow-y-auto px-5 pb-[calc(2rem+var(--mw-safe-bottom))] pt-[calc(1.5rem+var(--mw-safe-top))] sm:h-auto sm:max-h-[85dvh] sm:max-w-md sm:rounded-xl sm:border sm:p-5 sm:pb-8"
             : "max-h-[calc(100dvh-4rem-var(--mw-safe-top)-var(--mw-safe-bottom))] max-w-md overflow-y-auto rounded-xl border p-5 pb-10 sm:max-h-[85dvh] sm:pb-8",
           className,
         )}
