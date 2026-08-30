@@ -34,7 +34,14 @@ export interface PdfPageViewProps {
   /** Ořezat prázdné okraje? */
   crop: boolean;
   marks: PageMark[];
-  /** Poměr stran, dokud se nezná ten skutečný - drží místo v seznamu. */
+  /**
+   * Jak velká stránka bude, až se vykreslí.
+   *
+   * Drží místo v seznamu. Musí sedět na hotovou stránku, jinak se v okamžiku
+   * vykreslení celý sloupec posune a čtenáři ujede text pod prstem.
+   */
+  expected: { width: number; height: number } | null;
+  /** Poměr stran, dokud se nezná ani ten - poslední záchrana. */
   fallbackAspect: number;
   /** Klepnutí do textu: pozice znaku v textu stránky. */
   onTextTap?: (page: number, offset: number) => void;
@@ -69,6 +76,7 @@ export const PdfPageView = React.memo(function PdfPageView({
   scale,
   crop,
   marks,
+  expected,
   fallbackAspect,
   onTextTap,
   onReady,
@@ -197,7 +205,9 @@ export const PdfPageView = React.memo(function PdfPageView({
       style={
         size
           ? { width: `${Math.round(visibleWidth)}px`, height: `${Math.round(visibleHeight)}px` }
-          : { aspectRatio: String(fallbackAspect || 0.72), width: "100%" }
+          : expected
+            ? { width: `${Math.round(expected.width)}px`, height: `${Math.round(expected.height)}px` }
+            : { aspectRatio: String(fallbackAspect || 0.72), width: "100%" }
       }
     >
       <div

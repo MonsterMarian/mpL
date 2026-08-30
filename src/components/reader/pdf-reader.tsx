@@ -171,9 +171,30 @@ export function PdfReader({
 
   React.useEffect(() => {
     cropMeasured.current = false;
+    restored.current = false;
     setCropWidth(1);
     setBase(null);
   }, [pdf]);
+
+  /**
+   * Jak velká bude stránka, až se vykreslí.
+   *
+   * **Tohle je to skákání.** Stránka se kreslí, teprve když se k ní čtenář
+   * blíží, a do té doby drží místo jen náhradní obdélník. Ten byl široký přes
+   * celý sloupec, kdežto hotová stránka je o okraje užší - a tedy i nižší.
+   * Každá stránka se v okamžiku vykreslení srazila o pár desítek bodů. Kreslí
+   * se přitom i stránky nad viditelnou částí, takže se text pod prstem
+   * pokaždé posunul nahoru. Při rolování dlouhou knihou to ubíhalo pořád.
+   *
+   * Náhradní obdélník má proto přesně tu velikost, kterou bude mít hotová
+   * stránka. Pak se při vykreslení nezmění vůbec nic.
+   */
+  const pageBox = React.useMemo(() => {
+    if (!viewWidth) return null;
+    const width = Math.max(160, viewWidth - GUTTER * 2) * prefs.zoom;
+    const ratio = base ? base.width / base.height : aspect || 0.72;
+    return { width, height: width / (ratio || 0.72) };
+  }, [viewWidth, prefs.zoom, base, aspect]);
 
   const pageReady = React.useCallback((index: number, info: PageInfo) => {
     setBase((previous) => previous ?? { width: info.width, height: info.height });
@@ -219,11 +240,20 @@ export function PdfReader({
     scrollToPage(page);
   }, [page, scrollToPage]);
 
-  // První vykreslení: skočit tam, kde se skončilo minule.
+  /**
+   * První vykreslení: skočit tam, kde se skončilo minule.
+   *
+   * Jen jednou a jen dokud čtenář sám nikam nešel. Velikost stránky se zná až
+   * po vykreslení první z nich, což můžou být vteřiny - a kdo si mezitím
+   * odroloval jinam, ten by se ocitl zpátky, kde nechtěl.
+   */
+  const restored = React.useRef(false);
+
   React.useEffect(() => {
-    if (!base) return;
+    if (!base || restored.current) return;
+    restored.current = true;
+    if ((scroller.current?.scrollTop ?? 0) > 4) return;
     scrollToPage(wanted.current);
-    // Jen jednou, jakmile se zná velikost stránky.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
 
@@ -619,6 +649,7 @@ export function PdfReader({
               scale={scale}
               crop={prefs.crop}
               marks={marks.get(index) ?? NO_MARKS}
+              expected={pageBox}
               fallbackAspect={aspect}
               onTextTap={tapText}
               onReady={pageReady}

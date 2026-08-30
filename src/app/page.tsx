@@ -1757,10 +1757,20 @@ export default function HomePage() {
     [],
   );
 
-  // Postup ve čtení patří na disk: appka se zavírá i uprostřed stránky.
+  /**
+   * Postup ve čtení patří na disk: appka se zavírá i uprostřed stránky.
+   *
+   * Se zpožděním, ne z každé změny. Zápis přepisuje celý seznam knihovny -
+   * u tlusté knihy jsou to megabajty textu - a při rolování by se to dělo
+   * několikrát za vteřinu. Vteřina zpoždění se na ztrátě postupu neprojeví,
+   * na plynulosti čtení ano.
+   */
   React.useEffect(() => {
     if (!documentId_) return;
-    void saveProgress(documentId_, documentPage, documentBookmarks);
+    const timer = window.setTimeout(() => {
+      void saveProgress(documentId_, documentPage, documentBookmarks);
+    }, 1000);
+    return () => window.clearTimeout(timer);
   }, [documentId_, documentPage, documentBookmarks]);
 
   /*
