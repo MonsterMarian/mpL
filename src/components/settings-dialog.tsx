@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, RefreshCw, Volume2 } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -16,17 +16,8 @@ import {
 } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
-import {
-  DEFAULT_LANGUAGE,
-  listVoices,
-  previewVoice,
-  setSpeechLanguage,
-  setSpeechVoiceId,
-  speechLanguage,
-  speechVoiceId,
-  type SpeechVoice,
-} from "@/lib/speech";
 import { SectionIcon } from "@/components/ui/section-icon";
+import { VIDEO_LAYOUTS, loadVideoLayout, saveVideoLayout, type VideoLayout } from "@/lib/video-layout";
 import {
   SECTION_ICONS,
   loadSectionIcons,
@@ -104,6 +95,7 @@ interface SettingsDialogProps {
   mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
   onRequestMediaAccess?: () => Promise<void> | void;
   onSectionIconsChange?: (icons: SectionIcons) => void;
+  onVideoLayoutChange?: (layout: VideoLayout) => void;
 }
 
 export function SettingsDialog({
@@ -114,6 +106,7 @@ export function SettingsDialog({
   mediaPermission = "unknown",
   onRequestMediaAccess,
   onSectionIconsChange,
+  onVideoLayoutChange,
 }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = React.useState<Tab>("main");
   
@@ -156,7 +149,11 @@ export function SettingsDialog({
               mediaPermission={mediaPermission} 
               onRequestMediaAccess={onRequestMediaAccess} 
             />
-            <SpeechSection open={open} />
+            {addons.video ? (
+              <Section title="Galerie videí" hint="Vyber, jak se videa ukazují v seznamu.">
+                <VideoLayoutChoice open={open} onChange={onVideoLayoutChange} />
+              </Section>
+            ) : null}
             <SystemPlaybackSection open={open} />
             <PlaybackLogSection open={open} />
             <NativeCrashSection open={open} />
@@ -295,107 +292,54 @@ function AddonChoice({
  * druhého tahá za oči. Výchozí zůstávají ty původní.
  */
 /**
- * Hlas a jazyk předčítání.
+ * Podoba galerie videí.
  *
- * Hlasy dodává hlasový modul telefonu, ne appka - co je v nabídce, závisí na
- * tom, co má kdo doinstalované. Seznam se proto čte ze zařízení a nedrží se
- * jako pevný výčet: napevno zadaná čeština znamená na telefonu bez českého
- * hlasu jen ticho, a nikde by se nedalo poznat proč.
- *
- * Jména hlasů jsou přitom nicneříkající (`cs-cz-x-jfk#female_1`), takže k volbě
- * patří tlačítko, které je nechá promluvit.
+ * Tři varianty, ne jedna "správná": velký náhled je k ničemu u nahrávek
+ * z telefonu, kde rozhoduje název, a seznam zase u filmů, kde obrázek řekne
+ * všechno. Ať si vybere ten, kdo se na to dívá.
  */
-function SpeechSection({ open }: { open: boolean }) {
-  const [voices, setVoices] = React.useState<SpeechVoice[] | null>(null);
-  const [lang, setLang] = React.useState(DEFAULT_LANGUAGE);
-  const [voice, setVoice] = React.useState<string | null>(null);
+function VideoLayoutChoice({ open, onChange }: { open: boolean; onChange?: (layout: VideoLayout) => void }) {
+  const [layout, setLayout] = React.useState<VideoLayout | null>(null);
 
   React.useEffect(() => {
-    if (!open) return;
-    setLang(speechLanguage());
-    setVoice(speechVoiceId());
-    void listVoices().then(setVoices);
+    if (open) setLayout(loadVideoLayout());
   }, [open]);
 
-  const pickLanguage = (next: string) => {
-    setLang(next);
-    setSpeechLanguage(next);
-    // Hlas z jiného jazyka by novou volbu přebil - vybraný hlas totiž určuje
-    // i jazyk, kterým se mluví.
-    if (voice && !voice.startsWith(`${next}|`)) {
-      setVoice(null);
-      setSpeechVoiceId(null);
-    }
-  };
-
-  const pickVoice = (next: string) => {
-    const value = next || null;
-    setVoice(value);
-    setSpeechVoiceId(value);
-  };
-
-  if (!voices) {
-    return (
-      <Section title="Hlas předčítání">
-        <p className="px-1 text-xs text-muted-foreground">Ptám se zařízení, co umí…</p>
-      </Section>
-    );
-  }
-
-  if (!voices.length) {
-    return (
-      <Section title="Hlas předčítání" hint="Hlasy dodává systém. V Androidu je najdeš v Nastavení → Usnadnění → Převod textu na řeč.">
-        <p className="px-1 text-xs text-muted-foreground">
-          Zařízení nehlásí žádný hlas. Předčítání pojede tím, co si systém vybere sám.
-        </p>
-      </Section>
-    );
-  }
-
-  const languages = [...new Set([DEFAULT_LANGUAGE, ...voices.map((item) => item.lang)])].sort();
-  const forLanguage = voices.filter((item) => item.lang === lang);
+  if (!layout) return null;
 
   return (
-    <Section title="Hlas předčítání" hint="Vybraný hlas určuje i jazyk, kterým se čte. Vyzkoušej ho - podle jména se poznat nedá.">
-      <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5">
-        <label className="flex items-center justify-between gap-3 text-sm">
-          Jazyk
-          <select
-            value={lang}
-            onChange={(event) => pickLanguage(event.target.value)}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-transparent px-2 text-xs outline-none"
+    <div className="flex flex-col gap-2">
+      {VIDEO_LAYOUTS.map((item) => {
+        const on = layout === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => {
+              setLayout(item.id);
+              saveVideoLayout(item.id);
+              onChange?.(item.id);
+            }}
+            aria-pressed={on}
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+              on ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
+            )}
           >
-            {languages.map((item) => (
-              <option key={item} value={item} className="bg-black">{item}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex items-center justify-between gap-3 text-sm">
-          Hlas
-          <select
-            value={voice ?? ""}
-            onChange={(event) => pickVoice(event.target.value)}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-transparent px-2 text-xs outline-none"
-          >
-            <option value="" className="bg-black">Systémový</option>
-            {forLanguage.map((item) => (
-              <option key={item.id} value={item.id} className="bg-black">{item.name}</option>
-            ))}
-          </select>
-        </label>
-
-        {forLanguage.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            K jazyku {lang} zařízení žádný hlas nemá. Doinstaluj ho v systému, jinak zůstane ticho.
-          </p>
-        ) : null}
-
-        <Button variant="outline" size="sm" className="self-start" onClick={() => void previewVoice()}>
-          <Volume2 className="size-4" /> Vyzkoušet
-        </Button>
-      </div>
-    </Section>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{item.label}</span>
+              <span className="block text-xs text-muted-foreground">{item.hint}</span>
+            </span>
+            <span
+              className={cn(
+                "size-4 shrink-0 rounded-full border-2",
+                on ? "border-brand bg-brand" : "border-muted-foreground/40",
+              )}
+            />
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

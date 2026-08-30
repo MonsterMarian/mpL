@@ -41,16 +41,30 @@ export function pdfjs(): Promise<PdfjsModule> {
  *
  * Kopie je schválně: pdf.js si buffer převezme do workeru a původní pole tím
  * osiří. Kdo si data drží (knihovna, druhé otevření), přišel by o ně.
+ *
+ * `onProgress` hlásí, kolik z dokumentu je rozebráno. U velké knihy to trvá
+ * vteřiny a bez čísla uživatel kouká na zamlžené okno a neví, jestli se něco
+ * děje, nebo se appka zasekla. Celková velikost nemusí být známá hned - do té
+ * doby chodí `null` a ukazatel se hlásí jako "zatím nevím".
  */
-export async function openPdf(bytes: Uint8Array | ArrayBuffer): Promise<PDFDocumentProxy> {
+export async function openPdf(
+  bytes: Uint8Array | ArrayBuffer,
+  onProgress?: (percent: number | null) => void,
+): Promise<PDFDocumentProxy> {
   const lib = await pdfjs();
   const data = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes.slice(0));
-  return lib.getDocument({
+  const task = lib.getDocument({
     data,
     // Náhradní písma pro PDF, které si své písmo nenese (Helvetica, Times…).
     // Bez téhle adresy vykreslování stránky uvázne - viz copy-pdf-worker.mjs.
     standardFontDataUrl: `${window.location.origin}/pdf-fonts/`,
-  }).promise;
+  });
+  if (onProgress) {
+    task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+      onProgress(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null);
+    };
+  }
+  return task.promise;
 }
 
 /** Kus textové vrstvy: kde leží v textu stránky. */

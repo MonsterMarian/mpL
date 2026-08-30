@@ -24,6 +24,7 @@ import {
   Timer,
   TimerReset,
   Video,
+  Volume2,
   X,
   ZoomIn,
   ZoomOut,
@@ -96,6 +97,7 @@ import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib
 import { readDocumentFile, readFileByUri, removeDocumentFile, saveDocumentFile } from "@/lib/document-file";
 import { openPdf, TEXT_LAYOUT_VERSION, textFromContent } from "@/lib/pdf";
 import { PdfReader } from "@/components/reader/pdf-reader";
+import { SpeechSettings } from "@/components/speech-settings";
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
@@ -113,6 +115,7 @@ import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
 import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
+import { loadVideoLayout, type VideoLayout } from "@/lib/video-layout";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, onAppResume, registerBackButton, syncStatusBar } from "@/lib/native";
 
@@ -166,13 +169,17 @@ async function renderPageThumbnail(page: PDFPageProxy): Promise<string | null> {
  * (viz `lib/pdf.ts`). Jen díky tomu jde větu, kterou zrovna čte hlas, obtáhnout
  * přesně tam, kde na stránce je - jinak by zvýraznění ukazovalo vedle.
  */
-async function extractPages(pdf: PDFDocumentProxy): Promise<DocumentPage[]> {
+async function extractPages(
+  pdf: PDFDocumentProxy,
+  onProgress?: (percent: number) => void,
+): Promise<DocumentPage[]> {
   const pages: DocumentPage[] = [];
   for (let index = 1; index <= pdf.numPages; index += 1) {
     const page = await pdf.getPage(index);
     const content = await page.getTextContent();
     pages.push({ text: pageText(textFromContent(content).text), label: `Strana ${index}` });
     page.cleanup();
+    onProgress?.(Math.round((index / pdf.numPages) * 100));
   }
   return pages;
 }
@@ -232,6 +239,7 @@ export default function HomePage() {
   const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true, downloads: true });
   /** Ikony sekcí si vybírá uživatel v Nastavení. */
   const [sectionIcons, setSectionIcons] = React.useState<SectionIcons>(defaultSectionIcons);
+  const [videoLayout, setVideoLayout] = React.useState<VideoLayout>("grid");
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
   /**
@@ -279,6 +287,19 @@ export default function HomePage() {
   const [documentZoom, setDocumentZoom] = React.useState(100);
   const [documentBookmarks, setDocumentBookmarks] = React.useState<number[]>([]);
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
+  /** Volba hlasu u textového dokumentu. Ve vykreslené čtečce sedí ve své liště. */
+  const [voiceOpen, setVoiceOpen] = React.useState(false);
+  /**
+   * Co se s dokumentem zrovna děje.
+   *
+   * U velké knihy trvá otevření vteřiny a zamlžené okno bez čísla vypadá jako
+   * zaseknutá appka. `percent` je `null`, dokud se nedá spočítat - třeba než
+   * pdf.js zjistí velikost souboru.
+   */
+  const [documentProgress, setDocumentProgress] = React.useState<{ label: string; percent: number | null }>({
+    label: "Otevírám dokument…",
+    percent: null,
+  });
   /** Otevřené PDF, ze kterého se kreslí stránky. `null` = jen holý text. */
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   /** Přehled stránek - otevírá se číslem stránky pod textem. */
@@ -506,6 +527,7 @@ export default function HomePage() {
 
     setAddons(loadAddons());
     setSectionIcons(loadSectionIcons());
+    setVideoLayout(loadVideoLayout());
     void loadDeviceDocuments();
     setStorageReady(true);
     void loadDeviceMusic();
@@ -1297,6 +1319,7 @@ export default function HomePage() {
     // Rychlé přeskakování mezi knihami: platí vždycky jen poslední otevření.
     const token = openedAt.current + 1;
     openedAt.current = token;
+    setDocumentProgress({ label: "Hledám soubor…", percent: null });
     setIsLoadingDocument(true);
     try {
       const bytes = origin.kind === "device" ? await readFileByUri(origin.uri) : await readDocumentFile(doc.id);
@@ -1306,7 +1329,10 @@ export default function HomePage() {
         return;
       }
 
-      const opened = await openPdf(bytes);
+      setDocumentProgress({ label: "Otevírám dokument…", percent: 0 });
+      const opened = await openPdf(bytes, (percent) => {
+        if (token === openedAt.current) setDocumentProgress({ label: "Otevírám dokument…", percent });
+      });
       if (token !== openedAt.current) {
         void opened.loadingTask.destroy().catch(() => {});
         return;
@@ -1318,7 +1344,10 @@ export default function HomePage() {
       // Dokument uložený starším pravidlem má text posunutý proti textové
       // vrstvě a zvýraznění čtené věty by ukazovalo vedle. Přečte se znovu.
       if ((doc.textVersion ?? 1) < TEXT_LAYOUT_VERSION) {
-        const pages = await extractPages(opened);
+        setDocumentProgress({ label: "Připravuji text stránek…", percent: 0 });
+        const pages = await extractPages(opened, (percent) => {
+          if (token === openedAt.current) setDocumentProgress({ label: "Připravuji text stránek…", percent });
+        });
         if (token !== openedAt.current || !pages.length) return;
         const next: StoredDocument = {
           ...doc,
@@ -1356,6 +1385,7 @@ export default function HomePage() {
       openDocument(known);
       return;
     }
+    setDocumentProgress({ label: "Stahuji dokument z telefonu…", percent: null });
     setIsLoadingDocument(true);
     try {
       const response = await fetch(playableMediaSource(doc.uri));
@@ -1378,6 +1408,7 @@ export default function HomePage() {
    * soubor jinou adresu nemá, takže se uloží k sobě.
    */
   const importDocument = async (file: File, device?: { uri: string }) => {
+    setDocumentProgress({ label: "Čtu soubor…", percent: null });
     setIsLoadingDocument(true);
     setDocumentError(null);
     try {
@@ -1390,9 +1421,14 @@ export default function HomePage() {
 
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        opened = await openPdf(bytes);
-        pages = await extractPages(opened);
+        setDocumentProgress({ label: "Otevírám dokument…", percent: 0 });
+        opened = await openPdf(bytes, (percent) => setDocumentProgress({ label: "Otevírám dokument…", percent }));
+        setDocumentProgress({ label: "Připravuji text stránek…", percent: 0 });
+        pages = await extractPages(opened, (percent) =>
+          setDocumentProgress({ label: "Připravuji text stránek…", percent }),
+        );
 
+        setDocumentProgress({ label: "Kreslím obálku…", percent: null });
         const first = await opened.getPage(1);
         const view = first.getViewport({ scale: 1 });
         aspect = view.height > 0 ? view.width / view.height : null;
@@ -2066,6 +2102,10 @@ export default function HomePage() {
                               <option key={rate} value={rate} className="bg-black">{rate}×</option>
                             ))}
                           </select>
+                          {/* Hlas se řeší tady, u čtení - ne v nastavení celé appky. */}
+                          <button type="button" className="reader-tool" onClick={() => setVoiceOpen(true)} aria-label="Hlas předčítání">
+                            <Volume2 className="size-4" />
+                          </button>
                         </>
                       ) : (
                         <span className="px-2 text-[11px] text-muted-foreground">čtení nahlas nejde</span>
@@ -2101,13 +2141,43 @@ export default function HomePage() {
               </div>
             )}
 
-            {isLoadingDocument ? <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 backdrop-blur-sm"><div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-popover px-5 py-4 text-sm shadow-xl"><Loader2 className="size-4 animate-spin text-brand" /> Zpracovávám dokument…</div></div> : null}
+            {/*
+              Okno o průběhu, ne jen mlha přes obrazovku. Velká kniha se otevírá
+              vteřiny a bez čísla to vypadá, že se appka zasekla - proto je vidět,
+              co se zrovna děje a kolik z toho je hotové. Dokud se procenta
+              spočítat nedají, běží pruh sám od sebe.
+            */}
+            {isLoadingDocument ? (
+              <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 px-8 backdrop-blur-sm">
+                <div className="flex w-full max-w-xs flex-col gap-3 rounded-2xl border border-white/10 bg-popover px-5 py-4 shadow-xl">
+                  <div className="flex items-center gap-3 text-sm">
+                    <Loader2 className="size-4 shrink-0 animate-spin text-brand" />
+                    <span className="min-w-0 flex-1 truncate">{documentProgress.label}</span>
+                    {documentProgress.percent !== null ? (
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                        {documentProgress.percent} %
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                    {documentProgress.percent !== null ? (
+                      <div
+                        className="h-full rounded-full bg-brand transition-[width] duration-200"
+                        style={{ width: `${documentProgress.percent}%` }}
+                      />
+                    ) : (
+                      <div className="progress-drift h-full w-1/3 rounded-full bg-brand" />
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {documentError ? <div className="mt-4 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-xs text-brand"><X className="size-4" /> {documentError}</div> : null}
           </section>
         ) : null}
 
         {activeView === "video" && addons.video ? (
-          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} />
+          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} layout={videoLayout} />
         ) : null}
 
         {activeView === "downloads" && addons.downloads ? (
@@ -2257,6 +2327,15 @@ export default function HomePage() {
       />
 
       <Dialog
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        title="Hlas předčítání"
+        description="Platí pro čtení dokumentů nahlas."
+      >
+        <SpeechSettings open={voiceOpen} />
+      </Dialog>
+
+      <Dialog
         open={sleepOpen}
         onOpenChange={setSleepOpen}
         title="Časovač spánku"
@@ -2332,6 +2411,7 @@ export default function HomePage() {
         mediaPermission={mediaPermission}
         onRequestMediaAccess={requestMediaAccess}
         onSectionIconsChange={setSectionIcons}
+        onVideoLayoutChange={setVideoLayout}
       />
     </div>
   );

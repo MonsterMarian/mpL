@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
 import { nativeStreamAvailable, playVideoNatively } from "@/lib/stream";
+import { type VideoLayout } from "@/lib/video-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -107,6 +108,7 @@ export function VideoLibrary({
   onBeforePlay,
   onToast,
   onPlayerChange,
+  layout = "grid",
 }: {
   /** Zavolá se, než se video rozjede - hlavní obrazovka na to ztlumí zbytek. */
   onBeforePlay: () => void;
@@ -117,6 +119,8 @@ export function VideoLibrary({
    * vědět, že je nad ní ještě něco navrchu.
    */
   onPlayerChange?: (close: (() => void) | null) => void;
+  /** Podoba galerie. Vybírá se v nastavení, viz `lib/video-layout.ts`. */
+  layout?: VideoLayout;
 }) {
   const [videos, setVideos] = React.useState<VideoItem[]>([]);
   const [permission, setPermission] = React.useState<Permission>("unknown");
@@ -492,33 +496,7 @@ export function VideoLibrary({
             placeholder="Hledat video"
             className="h-9 text-sm"
           />
-          {/*
-            Mřížka s náhledy, ne řádky: u videa se pozná podle obrázku, o co
-            jde, mnohem dřív než podle názvu souboru. Délka sedí v rohu dlaždice
-            jako v galerii telefonu.
-          */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {shown.map((video) => (
-              <button
-                key={video.id}
-                type="button"
-                onClick={() => void play(video.id)}
-                className="group text-left"
-              >
-                <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">
-                  <VideoThumbnail video={video} />
-                  <span className="absolute bottom-1 right-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
-                    {formatTime(video.durationSeconds)}
-                  </span>
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Play className="size-8 fill-white text-white" />
-                  </span>
-                </span>
-                <span className="mt-1.5 block truncate text-xs font-medium">{video.title}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">{formatSize(video.sizeBytes)}</span>
-              </button>
-            ))}
-          </div>
+          <VideoGallery layout={layout} videos={shown} onPlay={(id) => void play(id)} />
           {shown.length === 0 ? (
             <p className="px-1 text-xs text-muted-foreground">Nic neodpovídá hledání.</p>
           ) : null}
@@ -529,5 +507,102 @@ export function VideoLibrary({
         </p>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Galerie ve třech podobách.
+ *
+ * Náhled ze všeho nejvíc napoví, o jaké video jde - proto je i v seznamu, jen
+ * menší. Rozdíl je v tom, čeho je víc: mřížka nabízí nejvíc videí naráz,
+ * seznam nejvíc textu (celý název, délka, velikost) a plátna největší obrázek.
+ */
+function VideoGallery({
+  layout,
+  videos,
+  onPlay,
+}: {
+  layout: VideoLayout;
+  videos: VideoItem[];
+  onPlay: (id: string) => void;
+}) {
+  if (layout === "list") {
+    return (
+      <div className="flex flex-col gap-1.5">
+        {videos.map((video) => (
+          <button
+            key={video.id}
+            type="button"
+            onClick={() => onPlay(video.id)}
+            className="group flex items-center gap-3 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.05]"
+          >
+            <span className="relative block aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.06]">
+              <VideoThumbnail video={video} />
+              <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
+                <Play className="size-5 fill-white text-white" />
+              </span>
+            </span>
+            <span className="min-w-0 flex-1">
+              {/* Název na dva řádky: soubory z telefonu se jmenují dlouze a v jednom řádku z nich zbude "VID_2026083…". */}
+              <span className="line-clamp-2 text-sm font-medium leading-snug">{video.title}</span>
+              <span className="mt-0.5 block text-[11px] tabular-nums text-muted-foreground">
+                {formatTime(video.durationSeconds)}
+                {video.sizeBytes ? ` · ${formatSize(video.sizeBytes)}` : ""}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (layout === "cinema") {
+    return (
+      <div className="flex flex-col gap-3">
+        {videos.map((video) => (
+          <button
+            key={video.id}
+            type="button"
+            onClick={() => onPlay(video.id)}
+            className="group relative block aspect-video w-full overflow-hidden rounded-2xl bg-white/[0.06] text-left"
+          >
+            <VideoThumbnail video={video} />
+            {/* Popis leží v obrázku, ne pod ním - jinak by se z plátna stala dlaždice s velkou mezerou. */}
+            <span className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-4 pb-3 pt-10">
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-white">{video.title}</span>
+                <span className="block text-[11px] tabular-nums text-white/70">
+                  {formatTime(video.durationSeconds)}
+                  {video.sizeBytes ? ` · ${formatSize(video.sizeBytes)}` : ""}
+                </span>
+              </span>
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors group-hover:bg-white/25">
+                <Play className="size-5 fill-white text-white" />
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {videos.map((video) => (
+        <button key={video.id} type="button" onClick={() => onPlay(video.id)} className="group text-left">
+          <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">
+            <VideoThumbnail video={video} />
+            <span className="absolute bottom-1 right-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
+              {formatTime(video.durationSeconds)}
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
+              <Play className="size-8 fill-white text-white" />
+            </span>
+          </span>
+          <span className="mt-1.5 block truncate text-xs font-medium">{video.title}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">{formatSize(video.sizeBytes)}</span>
+        </button>
+      ))}
+    </div>
   );
 }

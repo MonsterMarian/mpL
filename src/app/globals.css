@@ -1027,3 +1027,18 @@
   background: var(--white);
   color: var(--black);
 }
+
+/*
+ * Pruh, který jde tam a zpět, dokud se procenta nedají spočítat.
+ *
+ * Nehybný pruh na nule je horší než žádný - vypadá jako zamrzlá appka. Tenhle
+ * se hýbe, takže je vidět, že se pracuje, i když se neví jak dlouho.
+ */
+@keyframes progress-drift {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.progress-drift {
+  animation: progress-drift 1.1s ease-in-out infinite;
+}

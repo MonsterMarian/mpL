@@ -18,6 +18,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Volume2,
   X,
 } from "lucide-react";
 import { PdfPageView, type PageInfo, type PageMark } from "./pdf-page-view";
@@ -30,6 +31,7 @@ import {
   type ReaderPrefs,
   type ReaderTheme,
 } from "@/lib/reader-prefs";
+import { SpeechSettings } from "@/components/speech-settings";
 import type { SpeechSegment } from "@/lib/documents";
 import { cn } from "@/lib/utils";
 
@@ -72,7 +74,7 @@ export interface PdfReaderProps {
   speech?: ReaderSpeech;
 }
 
-type Panel = "none" | "toc" | "find" | "look";
+type Panel = "none" | "toc" | "find" | "look" | "voice";
 
 /** Kolik místa zbude po stranách stránky. */
 const GUTTER = 8;
@@ -359,6 +361,20 @@ export function PdfReader({
         >
           {marked ? <BookmarkCheck className="size-5" /> : <Bookmark className="size-5" />}
         </button>
+        {/*
+          Hlas patří ke čtečce, ne do nastavení celé appky: řeší se přesně
+          tehdy, když si někdo pustí knihu nahlas a hlas mu nesedí.
+        */}
+        {speech ? (
+          <button
+            type="button"
+            onClick={() => setPanel(panel === "voice" ? "none" : "voice")}
+            className={cn("pdf-tool", panel === "voice" && "pdf-tool-on")}
+            aria-label="Hlas předčítání"
+          >
+            <Volume2 className="size-5" />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setPanel(panel === "look" ? "none" : "look")}
@@ -368,6 +384,12 @@ export function PdfReader({
           <Settings2 className="size-5" />
         </button>
       </div>
+
+      {panel === "voice" ? (
+        <div className="pdf-panel">
+          <SpeechSettings open />
+        </div>
+      ) : null}
 
       {panel === "find" ? (
         <div className="pdf-panel">
