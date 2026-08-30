@@ -94,7 +94,13 @@ import {
   type StoredDocument,
 } from "@/lib/documents";
 import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
-import { readDocumentFile, readFileByUri, removeDocumentFile, saveDocumentFile } from "@/lib/document-file";
+import {
+  MAX_STORED_BYTES,
+  readDocumentFile,
+  readFileByUri,
+  removeDocumentFile,
+  saveDocumentFile,
+} from "@/lib/document-file";
 import { openPdf, TEXT_LAYOUT_VERSION, textFromContent } from "@/lib/pdf";
 import { PdfReader } from "@/components/reader/pdf-reader";
 import { SpeechSettings } from "@/components/speech-settings";
@@ -138,11 +144,23 @@ const EMPTY_TRACK: Track = {
 };
 
 /**
+ * Jak dlouho se čeká na obálku, než se na ni zapomene.
+ *
+ * `page.render` umí uvíznout - třeba když se nedaří stáhnout náhradní písmo -
+ * a nic to neohlásí. Bez stropu na to čekal celý import: kniha se nikdy
+ * neuložila do knihovny a uživatel koukal na okno, které nikam nevede.
+ */
+const THUMBNAIL_TIMEOUT_MS = 8000;
+
+/**
  * Náhled stránky PDF.
  *
  * Kreslí se do plátna v paměti a ukládá jako JPEG - jinak by knihovna
  * dokumentů byla řádka stejných šedých obdélníků a nešlo by v nich poznat,
  * co je co.
+ *
+ * Obálka je ozdoba, ne podmínka: když se nepovede nebo se do osmi vteřin
+ * nestihne, kniha se uloží bez ní.
  */
 async function renderPageThumbnail(page: PDFPageProxy): Promise<string | null> {
   try {
@@ -154,7 +172,16 @@ async function renderPageThumbnail(page: PDFPageProxy): Promise<string | null> {
     canvas.height = Math.round(viewport.height);
     const context = canvas.getContext("2d");
     if (!context) return null;
-    await page.render({ canvasContext: context, viewport, canvas }).promise;
+    const task = page.render({ canvasContext: context, viewport, canvas });
+    const drawn = await Promise.race([
+      task.promise.then(() => true),
+      new Promise<boolean>((resolve) => window.setTimeout(() => resolve(false), THUMBNAIL_TIMEOUT_MS)),
+    ]);
+    if (!drawn) {
+      // Rozkreslené plátno by dalo do knihovny půlku stránky. Radši nic.
+      task.cancel();
+      return null;
+    }
     return canvas.toDataURL("image/jpeg", 0.7);
   } catch {
     // Náhled je ozdoba - bez něj se dokument otevře stejně.
@@ -289,6 +316,15 @@ export default function HomePage() {
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
   /** Volba hlasu u textového dokumentu. Ve vykreslené čtečce sedí ve své liště. */
   const [voiceOpen, setVoiceOpen] = React.useState(false);
+  /**
+   * Dokumentu chybí soubor, takže z něj zbyl jen vytažený text.
+   *
+   * Týká se to knih přidaných dřív, než čtečka uměla kreslit stránky - těm se
+   * ukládal jen text. Dřív se v takovém případě prostě ukázal text a nikde
+   * nestálo proč; teď se soubor nejdřív zkusí najít v telefonu a když se
+   * nenajde, řekne si o něj.
+   */
+  const [missingFile, setMissingFile] = React.useState(false);
   /**
    * Co se s dokumentem zrovna děje.
    *
@@ -537,9 +573,15 @@ export default function HomePage() {
     void listDocuments().then((stored) => {
       if (!stored.length) return;
       setDocuments(stored);
-      setDocumentId(stored[0].id);
-      setDocumentPage(stored[0].page);
-      setDocumentBookmarks(stored[0].bookmarks);
+      const last = stored[0];
+      setDocumentId(last.id);
+      setDocumentPage(last.page);
+      setDocumentBookmarks(last.bookmarks);
+      // Tohle je ten důvod, proč se kniha po startu appky ukazovala jako holý
+      // text: obnovil se záznam z knihovny, ale soubor, ze kterého se kreslí
+      // stránky, si nikdo nevyžádal. Čtečka pak neměla co vykreslit a spadla
+      // na náhradní zobrazení - a vypadalo to, že vykreslování prostě nefunguje.
+      void loadDocumentFile(last);
     });
   }, [loadDeviceMusic]);
 
@@ -1286,6 +1328,7 @@ export default function HomePage() {
    */
   const showDocument = (doc: StoredDocument, opened: PDFDocumentProxy | null) => {
     stopReading();
+    setMissingFile(false);
     const previous = pdfRef.current;
     pdfRef.current = opened;
     if (previous && previous !== opened) void previous.loadingTask.destroy().catch(() => {});
@@ -1305,26 +1348,61 @@ export default function HomePage() {
     void loadDocumentFile(doc);
   };
 
+  /** Kniha stejného jména ležící v telefonu. Podle ní se dohledá ztracený soubor. */
+  const findDeviceDocument = async (name: string): Promise<NativeDocument | null> => {
+    const known = deviceDocs.find((item) => item.name === name);
+    if (known) return known;
+    if (!canReadDeviceMedia()) return null;
+    try {
+      const result = await MediaLibrary.listDocuments();
+      const list = result?.documents ?? [];
+      setDeviceDocs(list);
+      return list.find((item) => item.name === name) ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Zapamatuje si, kde soubor dokumentu leží - podruhé se už hledat nemusí. */
+  const rememberOrigin = async (doc: StoredDocument, origin: DocumentOrigin) => {
+    const next: StoredDocument = { ...doc, origin };
+    await saveDocument(next);
+    setDocuments((previous) => previous.map((item) => (item.id === doc.id ? next : item)));
+  };
+
   /**
    * Natáhne soubor, ze kterého se kreslí stránky.
    *
-   * Když ho appka nemá - starý záznam z doby, kdy si čtečka nechávala jen
-   * text, nebo kniha, kterou uživatel v telefonu smazal - zůstane holý text.
-   * Číst se dá pořád, jen se nedá ukázat stránka tak, jak vypadá.
+   * Knihy přidané dřív, než čtečka uměla kreslit stránky, mají v knihovně jen
+   * vytažený text a žádnou adresu souboru. Dřív se u nich tahle funkce potichu
+   * otočila ve dveřích: uživatel viděl holý text a nikde nestálo proč. Většina
+   * takových knih přitom v telefonu pořád leží, takže se soubor napřed zkusí
+   * najít podle jména - a když se nenajde, čtečka si o něj řekne.
    */
   const loadDocumentFile = async (doc: StoredDocument) => {
-    const origin = doc.origin ?? { kind: "none" };
-    if (origin.kind === "none") return;
-
     // Rychlé přeskakování mezi knihami: platí vždycky jen poslední otevření.
     const token = openedAt.current + 1;
     openedAt.current = token;
+    setMissingFile(false);
     setDocumentProgress({ label: "Hledám soubor…", percent: null });
     setIsLoadingDocument(true);
     try {
+      let origin: DocumentOrigin = doc.origin ?? { kind: "none" };
+      if (origin.kind === "none") {
+        const found = await findDeviceDocument(doc.name);
+        if (token !== openedAt.current) return;
+        if (!found) {
+          setMissingFile(true);
+          return;
+        }
+        origin = { kind: "device", uri: found.uri };
+        await rememberOrigin(doc, origin);
+      }
+
       const bytes = origin.kind === "device" ? await readFileByUri(origin.uri) : await readDocumentFile(doc.id);
       if (token !== openedAt.current) return;
       if (!bytes) {
+        setMissingFile(true);
         setDocumentError("Soubor dokumentu se nepodařilo najít. Zůstal jen vytažený text.");
         return;
       }
@@ -1351,6 +1429,7 @@ export default function HomePage() {
         if (token !== openedAt.current || !pages.length) return;
         const next: StoredDocument = {
           ...doc,
+          origin,
           pages,
           textVersion: TEXT_LAYOUT_VERSION,
           imageOnly: isImageOnly(pages),
@@ -1360,10 +1439,53 @@ export default function HomePage() {
       }
     } catch (error) {
       console.error("Stránky dokumentu se nepodařilo připravit", error);
-      if (token === openedAt.current) setDocumentError("Stránky se nepodařilo vykreslit. Zůstal jen vytažený text.");
+      if (token === openedAt.current) {
+        setMissingFile(true);
+        setDocumentError("Stránky se nepodařilo vykreslit. Zůstal jen vytažený text.");
+      }
     } finally {
       if (token === openedAt.current) setIsLoadingDocument(false);
     }
+  };
+
+  /**
+   * Dodá soubor k dokumentu, který už v knihovně je.
+   *
+   * Nezakládá se nový záznam: stránka, na které uživatel skončil, i záložky
+   * mají zůstat. Text se přečte znovu (v `loadDocumentFile`), protože starý
+   * vznikl jiným pravidlem a zvýraznění čtené věty by ukazovalo vedle.
+   */
+  const attachDocumentFile = async (file: File) => {
+    const doc = activeDoc;
+    if (!doc) return;
+
+    setMissingFile(false);
+    setDocumentError(null);
+    setDocumentProgress({ label: "Ukládám soubor…", percent: null });
+    setIsLoadingDocument(true);
+    let next: StoredDocument | null = null;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!(await saveDocumentFile(doc.id, bytes))) {
+        setMissingFile(true);
+        setDocumentError(
+          `Soubor se nepodařilo uložit - čtečka si nechává knihy do ${Math.round(MAX_STORED_BYTES / (1024 * 1024))} MB. Otevři ho ze složky v telefonu.`,
+        );
+        return;
+      }
+      next = { ...doc, origin: { kind: "stored" } };
+      await saveDocument(next);
+      setDocuments((previous) => previous.map((item) => (item.id === doc.id ? next! : item)));
+    } catch (error) {
+      console.error("Soubor se nepodařilo přiložit k dokumentu", error);
+      setMissingFile(true);
+      setDocumentError("Soubor se nepodařilo přečíst.");
+      return;
+    } finally {
+      setIsLoadingDocument(false);
+    }
+
+    await loadDocumentFile(next);
   };
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2060,6 +2182,38 @@ export default function HomePage() {
                     <div className="mb-3 flex items-start gap-2 rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-xs text-brand">
                       <BookOpenText className="mt-0.5 size-4 shrink-0" />
                       <span>Tenhle dokument je obrázkový - stránky jsou naskenované a text v nich není. Listovat jde, číst nahlas ani hledat ne. Pomůže PDF s textovou vrstvou.</span>
+                    </div>
+                  ) : null}
+
+                  {/*
+                    Holý text místo vykreslené knihy není stav, který by měl
+                    nastat potichu. Knize chybí soubor - buď je v knihovně
+                    z doby, kdy si čtečka nechávala jen text, nebo ho uživatel
+                    v telefonu smazal. Dá se to spravit, tak ať je vidět jak.
+                  */}
+                  {missingFile ? (
+                    <div className="mb-3 flex flex-col gap-2.5 rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-xs text-brand">
+                      <span className="flex items-start gap-2">
+                        <FileText className="mt-0.5 size-4 shrink-0" />
+                        <span className="leading-relaxed">
+                          Z tohohle dokumentu má knihovna jen vytažený text - soubor k němu chybí,
+                          takže stránky nejdou vykreslit. Najdi ho a kniha se ukáže tak, jak vypadá.
+                          Stránka i záložky zůstanou.
+                        </span>
+                      </span>
+                      <label className="flex h-9 w-fit cursor-pointer items-center gap-2 rounded-lg border border-brand/40 px-3 font-medium transition-colors hover:bg-brand/15">
+                        <FileUp className="size-4" /> Najít soubor
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            event.target.value = "";
+                            if (file) void attachDocumentFile(file);
+                          }}
+                          className="hidden"
+                        />
+                      </label>
                     </div>
                   ) : null}
 

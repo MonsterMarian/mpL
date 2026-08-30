@@ -136,8 +136,11 @@ export async function saveDocument(document: StoredDocument): Promise<void> {
     const next = [document, ...rest];
     if (isNative()) await writeNative(next);
     else await writeWeb(next);
-  } catch {
+  } catch (error) {
     // Plný disk nebo soukromý režim: dokument dočte aspoň tenhle běh appky.
+    // Zapsat se to musí - potichu ztracená kniha vypadá jako chyba appky
+    // a nikde se nedá zjistit, že za to může úložiště.
+    console.error("Dokument se nepodařilo uložit do knihovny", error);
   }
 }
 
