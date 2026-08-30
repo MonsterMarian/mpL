@@ -149,12 +149,27 @@ public class PlaybackService extends Service {
                 }
             }
         );
-        session.setActive(true);
+        // Aktivní se sezení stává až se skladbou (viz open). Aktivní sezení bez
+        // skladby je pro systém přehrávač, který hraje - a ten se v liště ukáže,
+        // i když není co přehrát.
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
+
+        // Bez načtené skladby nemá služba co ovládat.
+        //
+        // Sem se dřív dalo dostat i tak, že si appka jen sáhla na pauzu - třeba
+        // při rozjezdu videa nebo po otevření. Služba tím teprve vznikla, nic
+        // načteného neměla, a přesto se přihlásila do popředí: v liště pak visel
+        // přehrávač s náhradním názvem, textem "Přehrává se", nulovým časem a bez
+        // obalu. Nic nehrálo, jen to tak vypadalo. Když není co ovládat, služba
+        // rovnou končí.
+        if (!ACTION_LOAD.equals(action) && !hasTrack()) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         if (ACTION_COMMAND.equals(action)) {
             String command = intent.getStringExtra(EXTRA_COMMAND);
@@ -214,6 +229,9 @@ public class PlaybackService extends Service {
     private void open(String uri, long positionMs, boolean autoplay) {
         release();
         if (uri == null || uri.isEmpty()) return;
+
+        // Teď už systém ví o čem: sezení se smí hlásit do lišty.
+        if (session != null) session.setActive(true);
 
         prepared = false;
         playWhenReady = autoplay;
@@ -305,6 +323,11 @@ public class PlaybackService extends Service {
         prepared = false;
     }
 
+    /** Má služba vůbec skladbu? Bez ní není co ovládat ani co hlásit. */
+    private boolean hasTrack() {
+        return currentUri != null && !currentUri.isEmpty();
+    }
+
     private boolean isPlaying() {
         try {
             return player != null && prepared && player.isPlaying();
@@ -379,6 +402,9 @@ public class PlaybackService extends Service {
     // --- notifikace -------------------------------------------------------
 
     private void foreground() {
+        // Notifikace o přehrávání bez skladby by lhala. Druhá pojistka k té
+        // v onStartCommand - do popředí vede víc cest.
+        if (!hasTrack()) return;
         try {
             Notification notification = buildNotification();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -531,6 +557,9 @@ public class PlaybackService extends Service {
     }
 
     static void command(Context context, String action, long positionMs) {
+        // Neběžící službu příkaz neprobouzí. Pauza ani posun nemají co dělat
+        // s tichem a start jen kvůli nim by vyrobil notifikaci o ničem.
+        if (instance == null) return;
         Intent intent = new Intent(context, PlaybackService.class).setAction(action).putExtra(EXTRA_POSITION, positionMs);
         start(context, intent);
     }
