@@ -165,7 +165,8 @@ public class VideoActivity extends Activity {
     private View controls;
     private ImageButton toggle;
     private SeekBar bar;
-    private TextView clock;
+    private TextView clockNow;
+    private TextView clockTotal;
     private boolean dragging;
 
     private LinearLayout statusBox;
@@ -482,28 +483,53 @@ public class VideoActivity extends Activity {
         root.addView(catcher, fill());
     }
 
-    /** Spodní lišta: přehrát, skoky, posuvník, čas. */
+    /**
+     * Spodní lišta: tlačítka uprostřed, pod nimi čas a posuvník.
+     *
+     * Tlačítka patří doprostřed, ne k jednomu okraji. U kraje je palec trefí
+     * jen jednou rukou a druhá půlka lišty zeje prázdnotou; uprostřed jsou na
+     * dosah zleva i zprava a přehrávač vypadá jako přehrávač.
+     */
     private void addControls() {
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setBackgroundColor(Color.argb(150, 0, 0, 0));
-        column.setPadding(dp(12), dp(8), dp(12), dp(18));
+        column.setPadding(dp(12), dp(6), dp(12), dp(14));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.CENTER);
+
+        ImageButton back = iconButton(R.drawable.ic_player_back10, "Zpět o 10 vteřin");
+        back.setOnClickListener(v -> jump(-JUMP_MS));
+        LinearLayout.LayoutParams sideSize = new LinearLayout.LayoutParams(dp(48), dp(48));
+        sideSize.setMargins(dp(18), 0, dp(18), 0);
+        buttons.addView(back, sideSize);
+
+        toggle = iconButton(R.drawable.ic_player_pause, "Pozastavit");
+        buttons.addView(toggle, new LinearLayout.LayoutParams(dp(60), dp(60)));
+
+        ImageButton forward = iconButton(R.drawable.ic_player_forward10, "Vpřed o 10 vteřin");
+        forward.setOnClickListener(v -> jump(JUMP_MS));
+        LinearLayout.LayoutParams otherSide = new LinearLayout.LayoutParams(dp(48), dp(48));
+        otherSide.setMargins(dp(18), 0, dp(18), 0);
+        buttons.addView(forward, otherSide);
+
+        column.addView(buttons);
+
+        toggle.setOnClickListener(v -> togglePlay());
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(2), 0, 0);
 
-        ImageButton back = iconButton(R.drawable.ic_player_back10, "Zpět o 10 vteřin");
-        back.setOnClickListener(v -> jump(-JUMP_MS));
-        row.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
-
-        toggle = iconButton(R.drawable.ic_player_pause, "Pozastavit");
-        toggle.setOnClickListener(v -> togglePlay());
-        row.addView(toggle, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
-        ImageButton forward = iconButton(R.drawable.ic_player_forward10, "Vpřed o 10 vteřin");
-        forward.setOnClickListener(v -> jump(JUMP_MS));
-        row.addView(forward, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        clockNow = new TextView(this);
+        clockNow.setTextColor(Color.WHITE);
+        clockNow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        clockNow.setText("0:00");
+        clockNow.setMinWidth(dp(46));
+        row.addView(clockNow);
 
         bar = new SeekBar(this);
         bar.setMax(1000);
@@ -529,14 +555,16 @@ public class VideoActivity extends Activity {
             }
         );
         LinearLayout.LayoutParams barSize = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        barSize.setMargins(dp(8), 0, dp(8), 0);
+        barSize.setMargins(dp(6), 0, dp(6), 0);
         row.addView(bar, barSize);
 
-        clock = new TextView(this);
-        clock.setTextColor(Color.WHITE);
-        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        clock.setText("0:00");
-        row.addView(clock);
+        clockTotal = new TextView(this);
+        clockTotal.setTextColor(Color.WHITE);
+        clockTotal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        clockTotal.setText("0:00");
+        clockTotal.setMinWidth(dp(46));
+        clockTotal.setGravity(Gravity.END);
+        row.addView(clockTotal);
 
         column.addView(row);
 
@@ -625,7 +653,8 @@ public class VideoActivity extends Activity {
             long total = duration();
             long at = position();
             if (bar != null && !dragging) bar.setProgress(total > 0 ? (int) (at * 1000 / total) : 0);
-            if (clock != null) clock.setText(clock(at) + " / " + clock(total));
+            if (clockNow != null) clockNow.setText(clock(at));
+            if (clockTotal != null) clockTotal.setText(clock(total));
             ticker.postDelayed(this, 500);
         }
     };
