@@ -56,7 +56,14 @@ const MAX_PIXEL_RATIO = 2;
 /** Kolik obrazovek dopředu a dozadu se kreslí. */
 const NEAR_SCREENS = "150% 0px";
 
-export function PdfPageView({
+/**
+ * Stránka se překresluje jen tehdy, když se opravdu změnila.
+ *
+ * Rodič se překresluje při každém posunutí prstu (číslo stránky, značky,
+ * hledání) a bez tohohle by s ním šla dolů i každá stránka na obrazovce -
+ * i když se na ní nezměnilo vůbec nic.
+ */
+export const PdfPageView = React.memo(function PdfPageView({
   pdf,
   index,
   scale,
@@ -210,7 +217,7 @@ export function PdfPageView({
       {size ? null : <span className="pdf-page-number">{index + 1}</span>}
     </div>
   );
-}
+});
 
 /**
  * Obdélníky pod textem.

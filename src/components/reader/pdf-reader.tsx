@@ -76,6 +76,9 @@ export interface PdfReaderProps {
 
 type Panel = "none" | "toc" | "find" | "look" | "voice";
 
+/** Jedno prázdné pole pro všechny stránky bez značek - nové by je překreslovalo. */
+const NO_MARKS: PageMark[] = [];
+
 /** Kolik místa zbude po stranách stránky. */
 const GUTTER = 8;
 
@@ -148,15 +151,37 @@ export function PdfReader({
   const scale = React.useMemo(() => {
     if (!base || !viewWidth) return 1;
     const usable = Math.max(160, viewWidth - GUTTER * 2);
-    return (usable / (base.width * cropWidth)) * prefs.zoom;
-  }, [base, viewWidth, cropWidth, prefs.zoom]);
+    // Ořez se do měřítka promítne jen tehdy, když se opravdu ořezává. Jinak
+    // by se stránka zvětšovala podle okrajů, které jsou pořád vidět.
+    const share = prefs.crop ? cropWidth : 1;
+    return (usable / (base.width * share)) * prefs.zoom;
+  }, [base, viewWidth, cropWidth, prefs.crop, prefs.zoom]);
+
+  /**
+   * Okraje se změří jednou za knihu.
+   *
+   * Tohle byla ta blikačka. Ořez se počítá z vykreslených pixelů, měřítko se
+   * počítá z ořezu - a stránka se překresluje, když se měřítko změní. Jedno
+   * tak dokola krmilo druhé: nové měřítko dalo jinak vypadající plátno, z něj
+   * vyšel o kousek jiný ořez, ten zase pohnul měřítkem. Stránka se překreslovala
+   * několikrát za vteřinu, text pod prstem mizel a předčítání se nemělo čeho
+   * chytit. Změřit stačí jednou; kniha má okraje po celou dobu stejné.
+   */
+  const cropMeasured = React.useRef(false);
+
+  React.useEffect(() => {
+    cropMeasured.current = false;
+    setCropWidth(1);
+    setBase(null);
+  }, [pdf]);
 
   const pageReady = React.useCallback((index: number, info: PageInfo) => {
     setBase((previous) => previous ?? { width: info.width, height: info.height });
-    if (index === 0 || index === wanted.current) {
-      const width = info.crop.right - info.crop.left;
-      setCropWidth(width > 0.2 ? width : 1);
-    }
+    if (cropMeasured.current) return;
+    if (index !== 0 && index !== wanted.current) return;
+    cropMeasured.current = true;
+    const width = info.crop.right - info.crop.left;
+    setCropWidth(width > 0.2 ? width : 1);
   }, []);
 
   // --- listování ------------------------------------------------------------
@@ -202,12 +227,24 @@ export function PdfReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
 
+  /**
+   * Hlášení stránky ven počká, až se rolování zastaví.
+   *
+   * Rodič si na každé změně stránky přepíše stav, zapíše postup na disk
+   * a předčítání pošle na začátek stránky. Při hlášení z každého snímku
+   * rolování se tím appka dusila a čtení nahlas se pořád restartovalo.
+   */
+  const settle = React.useRef(0);
+
+  React.useEffect(() => () => window.clearTimeout(settle.current), []);
+
   const onScroll = () => {
     if (scrolling.current) return;
     const at = readCurrentPage();
     if (at === wanted.current) return;
     wanted.current = at;
-    onPage(at);
+    window.clearTimeout(settle.current);
+    settle.current = window.setTimeout(() => onPage(at), 140);
   };
 
   // --- štípnutí dvěma prsty --------------------------------------------------
@@ -295,7 +332,10 @@ export function PdfReader({
     if (spoken) add(page, { start: spoken.start, end: spoken.end, kind: "speech" });
 
     return map;
-  }, [hits, hit, speech, page]);
+    // Rodič skládá `speech` při každém překreslení znovu, takže se sleduje
+    // jeho obsah, ne totožnost objektu - jinak se značky počítají pořád dokola.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hits, hit, speech?.segments, speech?.active, page]);
 
   /**
    * Čtená věta zůstává na obrazovce.
@@ -307,17 +347,29 @@ export function PdfReader({
     if (!speech?.reading) return;
     const timer = window.setTimeout(() => {
       const mark = scroller.current?.querySelector<HTMLElement>('.pdf-mark[data-mark="speech"]');
-      mark?.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (!mark) return;
+      // Posun za čtenou větou se nesmí vrátit zpátky jako "čtenář listuje".
+      // Bez tohohle si čtečka z vlastního posunu odvodila jinou stránku,
+      // ohlásila ji ven, rodič poslal čtení na začátek nové stránky - a řeč
+      // s obrazem se honily dokola po celé knize.
+      scrolling.current = true;
+      mark.scrollIntoView({ block: "center", behavior: "smooth" });
+      window.setTimeout(() => {
+        scrolling.current = false;
+      }, 600);
     }, 90);
     return () => window.clearTimeout(timer);
   }, [speech?.active, speech?.reading, page]);
 
   /** Klepnutí do textu: odsud číst dál. */
-  const tapText = (index: number, offset: number) => {
-    if (!speech || index !== page) return;
-    const at = speech.segments.findIndex((segment) => offset >= segment.start && offset < segment.end);
-    if (at >= 0) speech.onJump(at);
-  };
+  const tapText = React.useCallback(
+    (index: number, offset: number) => {
+      if (!speech || index !== page) return;
+      const at = speech.segments.findIndex((segment) => offset >= segment.start && offset < segment.end);
+      if (at >= 0) speech.onJump(at);
+    },
+    [speech, page],
+  );
 
   const marked = bookmarks.includes(page);
   const pages = React.useMemo(() => Array.from({ length: pageCount }, (_, index) => index), [pageCount]);
@@ -566,7 +618,7 @@ export function PdfReader({
               index={index}
               scale={scale}
               crop={prefs.crop}
-              marks={marks.get(index) ?? []}
+              marks={marks.get(index) ?? NO_MARKS}
               fallbackAspect={aspect}
               onTextTap={tapText}
               onReady={pageReady}
