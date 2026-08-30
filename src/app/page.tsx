@@ -6,7 +6,6 @@ import {
   BookOpenText,
   Bookmark,
   BookmarkCheck,
-  Check,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -16,13 +15,13 @@ import {
   Music2,
   Pause,
   Play,
-  Plus,
   Search,
   Settings,
   SkipBack,
   SkipForward,
   Timer,
   TimerReset,
+  Trash2,
   Video,
   Volume2,
   X,
@@ -316,6 +315,8 @@ export default function HomePage() {
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
   /** Volba hlasu u textového dokumentu. Ve vykreslené čtečce sedí ve své liště. */
   const [voiceOpen, setVoiceOpen] = React.useState(false);
+  /** Kniha čekající na potvrzení, že se má smazat. Mazání je bez návratu. */
+  const [docToDelete, setDocToDelete] = React.useState<StoredDocument | null>(null);
   /**
    * Dokumentu chybí soubor, takže z něj zbyl jen vytažený text.
    *
@@ -1986,10 +1987,9 @@ export default function HomePage() {
               jen překážka, ke které se navíc pořád rolovalo zpátky.
             */}
             {activeDoc ? null : (
-            <div className="mb-6">
+            <div className="mb-5">
               <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Dokumenty</h1>
               <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">Nahraj PDF nebo text a čti bez rozptylování. Dokument zůstane v knihovně i po zavření appky.</p>
-              <label className="mt-5 flex h-11 w-fit cursor-pointer items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90"><FileUp className="size-4" /> Otevřít dokument<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
             </div>
             )}
 
@@ -2015,24 +2015,41 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {deviceDocs.length > 0 && !activeDoc ? (
+            {!activeDoc ? (
               <div className="mb-6">
+                {/*
+                  Výběr souboru patří sem, ke složkám: na jednom místě je
+                  všechno, odkud se dá kniha vzít - složky v telefonu i ruční
+                  výběr. Dřív bylo tlačítko nahoře a druhé dole v uvítacím
+                  bloku, takže se hledalo, které z nich vlastně dělá co.
+                */}
                 <div className="mb-3 flex items-center gap-2">
                   <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {docFolder ? docFolder : "Složky"}
+                    {docFolder ? docFolder : deviceDocs.length > 0 ? "Složky" : "Knihovna"}
                   </h2>
-                  {docFolder ? (
-                    <button
-                      type="button"
-                      onClick={() => setDocFolder(null)}
-                      className="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      <ChevronLeft className="size-3.5" /> Zpět na složky
-                    </button>
-                  ) : null}
+                  <div className="ml-auto flex items-center gap-2">
+                    {docFolder ? (
+                      <button
+                        type="button"
+                        onClick={() => setDocFolder(null)}
+                        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <ChevronLeft className="size-3.5" /> Zpět na složky
+                      </button>
+                    ) : null}
+                    <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 text-xs font-medium transition-colors hover:bg-white/10">
+                      <FileUp className="size-3.5" /> Vybrat soubor
+                      <input
+                        type="file"
+                        accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown"
+                        onChange={handleDocumentUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
                 </div>
 
-                {docFolder === null ? (
+                {deviceDocs.length === 0 ? null : docFolder === null ? (
                   <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
                     {documentFolders.map((folder) => (
                       <button
@@ -2104,13 +2121,17 @@ export default function HomePage() {
                           {at + 1} / {doc.pages.length}
                         </span>
                       </button>
+                      {/*
+                        Vidět pořád, ne až pod myší: na telefonu se najet myší
+                        nedá, takže mazání dřív nešlo vůbec.
+                      */}
                       <button
                         type="button"
-                        onClick={() => void forgetDocument(doc.id)}
-                        className="absolute right-1 top-1 rounded-lg bg-black/70 p-1 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                        aria-label={`Odebrat ${doc.name} z knihovny`}
+                        onClick={() => setDocToDelete(doc)}
+                        className="absolute right-1 top-1 rounded-lg bg-black/70 p-1.5 text-white/80 transition-colors hover:bg-black/85 hover:text-white"
+                        aria-label={`Smazat ${doc.name} z knihovny`}
                       >
-                        <X className="size-3.5" />
+                        <Trash2 className="size-3.5" />
                       </button>
                     </div>
                   );
@@ -2118,14 +2139,17 @@ export default function HomePage() {
               </div>
             ) : null}
 
+            {/*
+              Prázdná police řekne jednou větou, co dál. Velký uvítací blok
+              tu byl i ve chvíli, kdy knihovna nebyla prázdná, a jen odsouval
+              knihy pod okraj obrazovky.
+            */}
             {!activeDoc ? (
-              <div className="reader-empty rounded-[1.75rem] border border-dashed border-brand/20 p-8 text-center sm:p-16">
-                <div className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-brand/10 text-brand"><BookOpenText className="size-7" /></div>
-                <h2 className="mt-5 text-xl font-semibold">Tvoje klidná čítárna</h2>
-                <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Nahraj první dokument. Zůstane jen v tomto zařízení, bez účtu a bez cloudu.</p>
-                <label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
-                <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-brand" /> lokálně</span><span><Check className="mr-1 inline size-3 text-brand" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-brand" /> PDF / TXT</span></div>
-              </div>
+              documents.length === 0 && deviceDocs.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-muted-foreground">
+                  Zatím tu nic není. Vyber soubor nahoře, nebo appce povol přístup k souborům v telefonu.
+                </p>
+              ) : null
             ) : pdfDoc ? (
               /*
                 Vykreslená kniha přes celou obrazovku. Stránka se ukazuje tak,
@@ -2479,6 +2503,36 @@ export default function HomePage() {
         onCreatePlaylist={(name) => createPlaylistWith(name, menuTracks)}
         onDelete={() => void deleteTracks(menuTracks)}
       />
+
+      <Dialog
+        open={docToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setDocToDelete(null);
+        }}
+        title="Smazat z knihovny?"
+        description={docToDelete?.name}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setDocToDelete(null)}>
+              Nechat
+            </Button>
+            <Button
+              onClick={() => {
+                const doomed = docToDelete;
+                setDocToDelete(null);
+                if (doomed) void forgetDocument(doomed.id);
+              }}
+            >
+              Smazat
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Zmizí z knihovny i se záložkami a s uloženou kopií. Soubor v telefonu zůstane, kde je -
+          smaže se jen to, co si o něm drží appka.
+        </p>
+      </Dialog>
 
       <Dialog
         open={voiceOpen}
