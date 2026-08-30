@@ -1,7 +1,8 @@
 /**
- * Zkopíruje worker pdf.js do `public/`, aby se dostal do statického exportu.
+ * Zkopíruje běhové soubory pdf.js do `public/`, aby se dostaly do statického
+ * exportu - a s ním do APK i do balíku živé aktualizace.
  *
- * Čtečka bez něj v telefonu nefungovala. Původní zápis
+ * **Worker.** Čtečka bez něj v telefonu nefungovala. Původní zápis
  * `new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url)` vypadá
  * správně, ale bare specifier se v `new URL` nerozbaluje jako import - adresa
  * se poskládá relativně k JS kusu (`/_next/static/chunks/pdfjs-dist/…`),
@@ -10,26 +11,48 @@
  * Capacitor na 404 rovnou `index.html`, pdf.js dostane HTML místo skriptu
  * a načítání dokumentu tiše umře.
  *
- * Soubor se proto vozí v `public/` a odkazuje se na něj absolutně z kořene,
- * což je adresa, kterou appka má v obou prostředích.
+ * **Písma.** PDF nemusí písmo obsahovat - u čtrnácti základních (Helvetica,
+ * Times, Courier…) se spoléhá na to, že je má prohlížeč. Ten je nemá, takže
+ * si je pdf.js bere ze svých náhrad. Bez nich vykreslení stránky **uvázne**:
+ * knihovna čeká na písmo, které nikdy nedorazí, a dokument se jen věčně
+ * „zpracovává".
+ *
+ * Tabulky znaků (`cmaps`) se nevozí schválně - jsou potřeba jen u čínštiny,
+ * japonštiny a korejštiny a přidaly by do každé aktualizace půldruhého
+ * megabajtu.
  *
  * Pouští se samo před buildem (`prebuild` v package.json).
  */
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-const SOURCE = path.join("node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs");
-const TARGET = path.join("public", "pdf.worker.min.mjs");
+const PACKAGE = path.join("node_modules", "pdfjs-dist");
+const WORKER = path.join(PACKAGE, "build", "pdf.worker.min.mjs");
+const FONTS = path.join(PACKAGE, "standard_fonts");
+const TARGET_WORKER = path.join("public", "pdf.worker.min.mjs");
+const TARGET_FONTS = path.join("public", "pdf-fonts");
 
 try {
-  await stat(SOURCE);
+  await stat(WORKER);
 } catch {
-  console.error(`Chybí ${SOURCE} - spusť npm install.`);
+  console.error(`Chybí ${WORKER} - spusť npm install.`);
   process.exit(1);
 }
 
-await mkdir(path.dirname(TARGET), { recursive: true });
-await copyFile(SOURCE, TARGET);
+await mkdir(path.dirname(TARGET_WORKER), { recursive: true });
+await copyFile(WORKER, TARGET_WORKER);
 
-const { size } = await stat(TARGET);
-console.log(`Worker pdf.js zkopírován do ${TARGET} (${(size / 1024).toFixed(0)} kB)`);
+const { size } = await stat(TARGET_WORKER);
+console.log(`Worker pdf.js zkopírován do ${TARGET_WORKER} (${(size / 1024).toFixed(0)} kB)`);
+
+await mkdir(TARGET_FONTS, { recursive: true });
+let fonts = 0;
+let fontBytes = 0;
+for (const entry of await readdir(FONTS, { withFileTypes: true })) {
+  if (!entry.isFile()) continue;
+  const from = path.join(FONTS, entry.name);
+  await copyFile(from, path.join(TARGET_FONTS, entry.name));
+  fontBytes += (await stat(from)).size;
+  fonts += 1;
+}
+console.log(`Náhradní písma zkopírována do ${TARGET_FONTS} (${fonts} souborů, ${(fontBytes / 1024).toFixed(0)} kB)`);

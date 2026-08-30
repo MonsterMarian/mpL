@@ -664,3 +664,366 @@
 @media (prefers-reduced-motion: reduce) {
   .equalizer-playing i { animation: none; transform: scaleY(0.7); }
 }
+
+/*
+ * ČTEČKA PDF
+ *
+ * Stránka se vykresluje tak, jak vypadá v souboru, a nad ní leží průhledná
+ * textová vrstva. Barvy stránky proto nedělá appka, ale filtr nad plátnem -
+ * jinou cestou se z bílé naskenované stránky noční režim udělat nedá.
+ *
+ * Zbytek appky drží černá/bílá/žlutá. Čtečka je jediné místo, kde se míchá
+ * papírová barva - kdo čte dlouho, čte na papíru, ne na svítící černé.
+ */
+.pdf-reader {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--pdf-room);
+  color: var(--pdf-ink);
+
+  /* Den: bílý papír na šedém stole. */
+  --pdf-room: #55585c;
+  --pdf-paper: #ffffff;
+  --pdf-ink: #ffffff;
+  --pdf-chrome: rgb(0 0 0 / 82%);
+  --pdf-filter: none;
+  /* Zvýraznění čtené věty. Musí být vidět přes celou stránku, ne tušit. */
+  --pdf-speech: rgb(245 163 58 / 62%);
+  --pdf-find: rgb(255 235 59 / 55%);
+  --pdf-find-on: rgb(255 145 0 / 78%);
+}
+
+.pdf-reader[data-theme="sepia"] {
+  --pdf-room: #6b5c46;
+  --pdf-paper: #f6ecd8;
+  --pdf-filter: sepia(0.45) saturate(1.12) brightness(0.98);
+  --pdf-speech: rgb(214 122 20 / 58%);
+}
+
+.pdf-reader[data-theme="night"] {
+  --pdf-room: #0a0a0a;
+  --pdf-paper: #101010;
+  /* Naskenovaná stránka je bílý obrázek - obrátit se dá jedině filtrem. */
+  --pdf-filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(1.06);
+  --pdf-speech: rgb(245 163 58 / 45%);
+  --pdf-find: rgb(255 235 59 / 34%);
+}
+
+.pdf-reader[data-theme="console"] {
+  --pdf-room: #000000;
+  --pdf-paper: #000000;
+  --pdf-filter: invert(1) sepia(1) hue-rotate(72deg) saturate(3.2) brightness(0.82);
+  --pdf-speech: rgb(120 255 140 / 30%);
+  --pdf-find: rgb(120 255 140 / 22%);
+}
+
+.pdf-bar,
+.pdf-panel,
+.pdf-foot {
+  background: var(--pdf-chrome);
+  backdrop-filter: blur(12px);
+  color: var(--white);
+}
+
+.pdf-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  padding-top: calc(0.4rem + var(--mw-safe-top));
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+/* Lišty zmizí, ať je na stránku vidět celá obrazovka. */
+.pdf-reader[data-chrome="off"] .pdf-bar,
+.pdf-reader[data-chrome="off"] .pdf-panel {
+  display: none;
+}
+
+.pdf-panel {
+  max-height: 45vh;
+  overflow-y: auto;
+  padding: 0.5rem 0.65rem 0.75rem;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.pdf-tool {
+  display: flex;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  color: rgb(255 255 255 / 72%);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.pdf-tool:hover {
+  background: rgb(255 255 255 / 10%);
+  color: var(--white);
+}
+
+.pdf-tool-on {
+  color: var(--brand);
+  background: rgb(245 163 58 / 14%);
+}
+
+.pdf-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.35rem;
+}
+
+.pdf-list-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  color: rgb(255 255 255 / 82%);
+}
+
+.pdf-list-item:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.pdf-list-item-on {
+  background: rgb(245 163 58 / 16%);
+  color: var(--white);
+}
+
+.pdf-swatch {
+  flex: 1;
+  border-radius: 0.6rem;
+  border: 1px solid rgb(255 255 255 / 16%);
+  padding: 0.5rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.pdf-swatch[data-swatch="day"] { background: #ffffff; color: #111111; }
+.pdf-swatch[data-swatch="sepia"] { background: #f6ecd8; color: #4b3a1c; }
+.pdf-swatch[data-swatch="night"] { background: #111111; color: #e8e8e8; }
+.pdf-swatch[data-swatch="console"] { background: #000000; color: #67ff86; }
+
+.pdf-swatch-on {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.pdf-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.7rem;
+  color: rgb(255 255 255 / 80%);
+  white-space: nowrap;
+}
+
+.pdf-chip-on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--black);
+}
+
+.pdf-scroll {
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 0 1.5rem;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+/* Po stránkách: každá strana zaskočí na místo, jako když se otočí list. */
+.pdf-scroll[data-flow="page"] { scroll-snap-type: y mandatory; }
+.pdf-scroll[data-flow="page"] .pdf-page { scroll-snap-align: center; scroll-snap-stop: always; }
+
+.pdf-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.pdf-page {
+  position: relative;
+  overflow: hidden;
+  background: var(--pdf-paper);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 45%);
+}
+
+.pdf-page-shift {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.pdf-canvas {
+  display: block;
+  filter: var(--pdf-filter);
+}
+
+.pdf-page-number {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: rgb(0 0 0 / 35%);
+}
+
+.pdf-reader[data-theme="night"] .pdf-page-number,
+.pdf-reader[data-theme="console"] .pdf-page-number {
+  color: rgb(255 255 255 / 30%);
+}
+
+/*
+ * Textová vrstva pdf.js.
+ *
+ * Přenesené z `pdf_viewer.css` - celý ten soubor by si do appky přitáhl
+ * i editory poznámek a vlastní barvy, které tady nemají co dělat. Zůstalo jen
+ * to, bez čeho by kusy textu neseděly na svých písmenech.
+ */
+.pdf-text {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  text-align: initial;
+  overflow: clip;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: transparent;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-text :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.pdf-text > :not(.markedContent),
+.pdf-text .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text .markedContent { display: contents; }
+
+.pdf-text ::selection { background: rgb(245 163 58 / 40%); }
+
+/*
+ * Značky leží pod textovou vrstvou, ne nad ní: přes text by barva překryla
+ * písmena a čtená věta by se ztratila zrovna ve chvíli, kdy má být vidět
+ * nejlíp.
+ */
+.pdf-marks {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pdf-mark {
+  position: absolute;
+  border-radius: 3px;
+  /* Kus nad a pod řádkem, ať zvýraznění nesedí na účaří, ale kolem písmen. */
+  margin: -2px 0 0 -1px;
+  padding: 0 1px;
+  box-sizing: content-box;
+}
+
+.pdf-mark[data-mark="speech"] {
+  background: var(--pdf-speech);
+  box-shadow: 0 0 0 1px rgb(245 163 58 / 85%);
+  animation: pdf-mark-in 180ms ease-out;
+}
+
+.pdf-mark[data-mark="find"] {
+  background: var(--pdf-find);
+}
+
+.pdf-mark[data-mark="find-active"] {
+  background: var(--pdf-find-on);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
+}
+
+@keyframes pdf-mark-in {
+  from { opacity: 0.25; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-mark[data-mark="speech"] { animation: none; }
+}
+
+.pdf-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.65rem;
+  padding-bottom: calc(0.4rem + var(--mw-safe-bottom));
+  border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.pdf-range {
+  appearance: none;
+  height: 1.5rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pdf-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 22%);
+}
+
+.pdf-range::-webkit-slider-thumb {
+  appearance: none;
+  margin-top: -6px;
+  height: 15px;
+  width: 15px;
+  border-radius: 999px;
+  background: var(--brand);
+}
+
+.pdf-play {
+  display: flex;
+  height: 2.4rem;
+  width: 2.4rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--black);
+}

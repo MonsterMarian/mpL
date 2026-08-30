@@ -88,13 +88,17 @@ import {
   isImageOnly,
   pageText,
   speechSegments,
+  type DocumentOrigin,
   type DocumentPage,
   type StoredDocument,
 } from "@/lib/documents";
 import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
+import { readDocumentFile, readFileByUri, removeDocumentFile, saveDocumentFile } from "@/lib/document-file";
+import { openPdf, TEXT_LAYOUT_VERSION, textFromContent } from "@/lib/pdf";
+import { PdfReader } from "@/components/reader/pdf-reader";
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
-import type { PDFPageProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
 import {
   currentNativePlayback,
@@ -153,6 +157,24 @@ async function renderPageThumbnail(page: PDFPageProxy): Promise<string | null> {
     // Náhled je ozdoba - bez něj se dokument otevře stejně.
     return null;
   }
+}
+
+/**
+ * Text všech stránek dokumentu.
+ *
+ * Skládá se stejným pravidlem jako textová vrstva nad vykreslenou stránkou
+ * (viz `lib/pdf.ts`). Jen díky tomu jde větu, kterou zrovna čte hlas, obtáhnout
+ * přesně tam, kde na stránce je - jinak by zvýraznění ukazovalo vedle.
+ */
+async function extractPages(pdf: PDFDocumentProxy): Promise<DocumentPage[]> {
+  const pages: DocumentPage[] = [];
+  for (let index = 1; index <= pdf.numPages; index += 1) {
+    const page = await pdf.getPage(index);
+    const content = await page.getTextContent();
+    pages.push({ text: pageText(textFromContent(content).text), label: `Strana ${index}` });
+    page.cleanup();
+  }
+  return pages;
 }
 
 function mapNativeTrack(track: NativeAudioTrack): Track {
@@ -257,6 +279,8 @@ export default function HomePage() {
   const [documentZoom, setDocumentZoom] = React.useState(100);
   const [documentBookmarks, setDocumentBookmarks] = React.useState<number[]>([]);
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
+  /** Otevřené PDF, ze kterého se kreslí stránky. `null` = jen holý text. */
+  const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   /** Přehled stránek - otevírá se číslem stránky pod textem. */
   const [pagesOpen, setPagesOpen] = React.useState(false);
   /** Dokumenty nalezené v telefonu a složka, ve které se zrovna listuje. */
@@ -273,6 +297,10 @@ export default function HomePage() {
   const [readRequest, setReadRequest] = React.useState<{ from: number } | null>(null);
   const [speechRate, setSpeechRate] = React.useState<number>(1);
   const speaker = React.useRef<Speaker | null>(null);
+  /** Otevřené PDF i mimo překreslení - zavírá se ručně, ne úklidem paměti. */
+  const pdfRef = React.useRef<PDFDocumentProxy | null>(null);
+  /** Kolikáté otevření dokumentu běží; starší se cestou zahodí. */
+  const openedAt = React.useRef(0);
 
   const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? EMPTY_TRACK;
   const hasTrack = currentTrack.id !== EMPTY_TRACK.id;
@@ -354,6 +382,8 @@ export default function HomePage() {
     [readablePage, activeDocument],
   );
   const chunks = React.useMemo(() => segments.map((segment) => segment.text), [segments]);
+  /** Text stránek pro hledání v celém dokumentu. */
+  const documentTexts = React.useMemo(() => documentPages.map((item) => item.text), [documentPages]);
 
   const loadDeviceMusic = React.useCallback(async (requestPermission = false) => {
     if (!canReadDeviceMedia()) {
@@ -798,6 +828,11 @@ export default function HomePage() {
       setBrowse(null);
       return true;
     }
+    // Otevřená kniha je přes celou obrazovku, takže zpět zavírá napřed ji.
+    if (documentId_) {
+      closeDocument();
+      return true;
+    }
     if (activeView !== "library") {
       setActiveView("library");
       return true;
@@ -1220,16 +1255,86 @@ export default function HomePage() {
     toast({ tone: "win", title: `${addedTracks.length} ${addedTracks.length === 1 ? "skladba přidána" : "skladby přidány"}`, description: "Najdeš je mezi skladbami." });
   };
 
-  const openDocument = (doc: StoredDocument) => {
+  /**
+   * Přepne čtečku na dokument.
+   *
+   * `opened` je připravené PDF, když ho volající zrovna otevřel - načtený
+   * soubor nemá smysl číst podruhé. Předchozí dokument se zavírá tady, ne až
+   * v úklidu paměti: jeho worker drží desítky megabajtů obrázků.
+   */
+  const showDocument = (doc: StoredDocument, opened: PDFDocumentProxy | null) => {
     stopReading();
+    const previous = pdfRef.current;
+    pdfRef.current = opened;
+    if (previous && previous !== opened) void previous.loadingTask.destroy().catch(() => {});
+    setPdfDoc(opened);
     setDocumentId(doc.id);
     setDocumentPage(clampPage(doc.page, doc.pages.length));
     setDocumentBookmarks(doc.bookmarks);
     setDocumentError(
-      doc.imageOnly
+      doc.imageOnly && !opened
         ? `${doc.name} je obrázkový dokument - jsou v něm jen naskenované stránky bez textu. Přečíst nahlas ani prohledat ho nejde.`
         : null,
     );
+  };
+
+  const openDocument = (doc: StoredDocument) => {
+    showDocument(doc, null);
+    void loadDocumentFile(doc);
+  };
+
+  /**
+   * Natáhne soubor, ze kterého se kreslí stránky.
+   *
+   * Když ho appka nemá - starý záznam z doby, kdy si čtečka nechávala jen
+   * text, nebo kniha, kterou uživatel v telefonu smazal - zůstane holý text.
+   * Číst se dá pořád, jen se nedá ukázat stránka tak, jak vypadá.
+   */
+  const loadDocumentFile = async (doc: StoredDocument) => {
+    const origin = doc.origin ?? { kind: "none" };
+    if (origin.kind === "none") return;
+
+    // Rychlé přeskakování mezi knihami: platí vždycky jen poslední otevření.
+    const token = openedAt.current + 1;
+    openedAt.current = token;
+    setIsLoadingDocument(true);
+    try {
+      const bytes = origin.kind === "device" ? await readFileByUri(origin.uri) : await readDocumentFile(doc.id);
+      if (token !== openedAt.current) return;
+      if (!bytes) {
+        setDocumentError("Soubor dokumentu se nepodařilo najít. Zůstal jen vytažený text.");
+        return;
+      }
+
+      const opened = await openPdf(bytes);
+      if (token !== openedAt.current) {
+        void opened.loadingTask.destroy().catch(() => {});
+        return;
+      }
+      pdfRef.current = opened;
+      setPdfDoc(opened);
+      setDocumentError(null);
+
+      // Dokument uložený starším pravidlem má text posunutý proti textové
+      // vrstvě a zvýraznění čtené věty by ukazovalo vedle. Přečte se znovu.
+      if ((doc.textVersion ?? 1) < TEXT_LAYOUT_VERSION) {
+        const pages = await extractPages(opened);
+        if (token !== openedAt.current || !pages.length) return;
+        const next: StoredDocument = {
+          ...doc,
+          pages,
+          textVersion: TEXT_LAYOUT_VERSION,
+          imageOnly: isImageOnly(pages),
+        };
+        await saveDocument(next);
+        setDocuments((previous) => previous.map((item) => (item.id === doc.id ? next : item)));
+      }
+    } catch (error) {
+      console.error("Stránky dokumentu se nepodařilo připravit", error);
+      if (token === openedAt.current) setDocumentError("Stránky se nepodařilo vykreslit. Zůstal jen vytažený text.");
+    } finally {
+      if (token === openedAt.current) setIsLoadingDocument(false);
+    }
   };
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1255,7 +1360,9 @@ export default function HomePage() {
     try {
       const response = await fetch(playableMediaSource(doc.uri));
       const blob = await response.blob();
-      await importDocument(new File([blob], doc.name, { type: doc.mimeType }));
+      // Adresa jde dál: kniha leží v telefonu a druhá kopie v datech appky by
+      // jen sežrala místo.
+      await importDocument(new File([blob], doc.name, { type: doc.mimeType }), { uri: doc.uri });
     } catch (error) {
       console.error("Dokument se nepodařilo otevřít", error);
       setDocumentError("Soubor se nepodařilo přečíst. Zkus ho otevřít ručně.");
@@ -1263,39 +1370,48 @@ export default function HomePage() {
     }
   };
 
-  const importDocument = async (file: File) => {
+  /**
+   * Načte soubor do knihovny.
+   *
+   * `device` je adresa knihy ležící v telefonu. Taková se nekopíruje - čte se
+   * z místa, kde je, a v datech appky po ní zůstane jen záznam. Ručně vybraný
+   * soubor jinou adresu nemá, takže se uloží k sobě.
+   */
+  const importDocument = async (file: File, device?: { uri: string }) => {
     setIsLoadingDocument(true);
     setDocumentError(null);
     try {
+      const id = documentId(file.name, file.size);
       let pages: DocumentPage[] = [];
       let thumbnail: string | null = null;
-      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-        const pdfjsLib = await import("pdfjs-dist");
-        // Worker se vozí v public/ a odkazuje se absolutně z kořene - jediná
-        // adresa, která sedí v prohlížeči i v appce. Viz scripts/copy-pdf-worker.mjs.
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
-        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-        for (let index = 1; index <= pdf.numPages; index += 1) {
-          const page = await pdf.getPage(index);
-          const content = await page.getTextContent();
-          const text = content.items
-            .map((item) => ("str" in item ? item.str : ""))
-            .filter(Boolean)
-            .join(" ")
-            .replace(/\s+/g, " ")
-            .trim();
-          pages.push({ text: pageText(text), label: `Strana ${index}` });
+      let origin: DocumentOrigin = { kind: "none" };
+      let aspect: number | null = null;
+      let opened: PDFDocumentProxy | null = null;
 
-          // Obálka knihovny: první stránka, jednou a nastálo.
-          if (index === 1) thumbnail = await renderPageThumbnail(page);
-        }
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        opened = await openPdf(bytes);
+        pages = await extractPages(opened);
+
+        const first = await opened.getPage(1);
+        const view = first.getViewport({ scale: 1 });
+        aspect = view.height > 0 ? view.width / view.height : null;
+        // Obálka knihovny: první stránka, jednou a nastálo.
+        thumbnail = await renderPageThumbnail(first);
+        first.cleanup();
+
+        origin = device
+          ? { kind: "device", uri: device.uri }
+          : (await saveDocumentFile(id, bytes))
+            ? { kind: "stored" }
+            : { kind: "none" };
       } else {
         pages = buildTextPages(await file.text());
       }
       if (!pages.length) throw new Error("Soubor je prázdný.");
 
       const doc: StoredDocument = {
-        id: documentId(file.name, file.size),
+        id,
         name: file.name,
         pages,
         // Naskenovaná kniha se pozná hned tady, ne až u tlačítka „Číst nahlas".
@@ -1304,18 +1420,24 @@ export default function HomePage() {
         page: 0,
         bookmarks: [],
         thumbnail,
+        origin,
+        textVersion: TEXT_LAYOUT_VERSION,
+        aspect,
       };
 
       await saveDocument(doc);
       setDocuments((previous) => [doc, ...previous.filter((d) => d.id !== doc.id)]);
-      openDocument(doc);
+      openedAt.current += 1;
+      showDocument(doc, opened);
 
       toast(
         doc.imageOnly
           ? {
               tone: "warn",
               title: "Dokument je obrázkový",
-              description: "Stránky jsou naskenované, text v nich není. Čtení nahlas nepůjde.",
+              description: opened
+                ? "Stránky jsou naskenované. Listovat jde, čtení nahlas a hledání ne."
+                : "Stránky jsou naskenované, text v nich není. Čtení nahlas nepůjde.",
             }
           : {
               tone: "win",
@@ -1334,12 +1456,17 @@ export default function HomePage() {
   const forgetDocument = async (id: string) => {
     stopReading();
     await removeDocument(id);
+    await removeDocumentFile(id);
     const rest = documents.filter((doc) => doc.id !== id);
     setDocuments(rest);
     if (documentId_ !== id) return;
     setDocumentError(null);
-    if (rest[0]) openDocument(rest[0]);
-    else setDocumentId(null);
+    if (rest[0]) {
+      openDocument(rest[0]);
+      return;
+    }
+    dropPdf();
+    setDocumentId(null);
   };
 
   // --- čtení nahlas ----------------------------------------------------------
@@ -1374,6 +1501,16 @@ export default function HomePage() {
     setDocumentId(null);
     setDocumentQuery("");
     setDocumentError(null);
+    dropPdf();
+  };
+
+  /** Zavře otevřené PDF. Rozečtené načítání se tím zároveň zneplatní. */
+  const dropPdf = () => {
+    openedAt.current += 1;
+    const previous = pdfRef.current;
+    pdfRef.current = null;
+    if (previous) void previous.loadingTask.destroy().catch(() => {});
+    setPdfDoc(null);
   };
 
   /**
@@ -1451,6 +1588,16 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readRequest, chunks, speechRate, documentPage, documentPages.length]);
 
+  // Odchod ze stránky nesmí nechat viset worker s obrázky celé knihy.
+  React.useEffect(
+    () => () => {
+      const opened = pdfRef.current;
+      pdfRef.current = null;
+      if (opened) void opened.loadingTask.destroy().catch(() => {});
+    },
+    [],
+  );
+
   // Postup ve čtení patří na disk: appka se zavírá i uprostřed stránky.
   React.useEffect(() => {
     if (!documentId_) return;
@@ -1468,8 +1615,8 @@ export default function HomePage() {
     activeChunk.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [speechChunk, isReadingDocument]);
 
-  const toggleBookmark = () => {
-    setDocumentBookmarks((previous) => previous.includes(documentPage) ? previous.filter((page) => page !== documentPage) : [...previous, documentPage]);
+  const toggleBookmark = (page: number = documentPage) => {
+    setDocumentBookmarks((previous) => previous.includes(page) ? previous.filter((item) => item !== page) : [...previous, page]);
   };
 
   /**
@@ -1821,6 +1968,35 @@ export default function HomePage() {
                 <label className="mx-auto mt-6 flex h-10 w-fit cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-medium hover:bg-white/10"><Plus className="size-4" /> Vybrat soubor<input type="file" accept=".pdf,.txt,.md,.text,application/pdf,text/plain,text/markdown" onChange={handleDocumentUpload} className="hidden" /></label>
                 <div className="mx-auto mt-8 flex max-w-md items-center justify-center gap-5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span><Check className="mr-1 inline size-3 text-brand" /> lokálně</span><span><Check className="mr-1 inline size-3 text-brand" /> bez účtu</span><span><Check className="mr-1 inline size-3 text-brand" /> PDF / TXT</span></div>
               </div>
+            ) : pdfDoc ? (
+              /*
+                Vykreslená kniha přes celou obrazovku. Stránka se ukazuje tak,
+                jak vypadá - s obrázky i sazbou - a textová vrstva nad ní dělá
+                výběr, hledání a zvýraznění čtené věty.
+              */
+              <PdfReader
+                pdf={pdfDoc}
+                name={documentName ?? activeDoc.name}
+                pageCount={documentPages.length}
+                pageTexts={documentTexts}
+                page={documentPage}
+                onPage={goToPage}
+                bookmarks={documentBookmarks}
+                onToggleBookmark={toggleBookmark}
+                aspect={activeDoc.aspect ?? 0.72}
+                onClose={closeDocument}
+                speech={
+                  readablePage
+                    ? {
+                        segments,
+                        active: speechChunk,
+                        reading: isReadingDocument,
+                        onJump: jumpToChunk,
+                        onToggle: toggleDocumentReading,
+                      }
+                    : undefined
+                }
+              />
             ) : (
               <div className="min-w-0">
                 <div className="min-w-0">
@@ -1859,7 +2035,7 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-brand")} onClick={toggleBookmark} aria-label="Záložka">
+                      <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-brand")} onClick={() => toggleBookmark()} aria-label="Záložka">
                         {documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
                       </button>
                       {readablePage || isReadingDocument ? (
@@ -1973,7 +2149,7 @@ export default function HomePage() {
         />
         ) : null}
 
-        {activeView === "reader" && documentName ? (
+        {activeView === "reader" && documentName && !pdfDoc ? (
           <button
             type="button"
             onClick={toggleDocumentReading}

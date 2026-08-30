@@ -4,9 +4,10 @@
  * Do teď žil otevřený dokument jen v paměti stránky: zavřít appku znamenalo
  * hledat soubor znovu. Hudba se takhle nechová a čtečka se má chovat stejně.
  *
- * Neukládá se původní PDF, jen text vytažený při načtení. Je to zlomek
- * velikosti a čtečka stejně nic jiného nepotřebuje - obrázkové stránky
- * neumí zobrazit tak jako tak.
+ * Tady je jen seznam - text stránek, postup ve čtení a odkaz na soubor.
+ * Samotné PDF leží zvlášť (`document-file.ts`): tenhle seznam se přepisuje
+ * při každém obrácení stránky a kniha o padesáti megabajtech v něm nemá co
+ * dělat.
  *
  * Dvě úložiště podle prostředí: v telefonu soubor přes Capacitor Filesystem,
  * v prohlížeči IndexedDB. `localStorage` odpadá - kniha o pěti stech stranách
@@ -14,7 +15,7 @@
  */
 import { Capacitor } from "@capacitor/core";
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
-import { clampPage, type StoredDocument } from "./documents";
+import { clampPage, type DocumentOrigin, type StoredDocument } from "./documents";
 
 const FILE = "documents.json";
 const DB_NAME = "player-documents";
@@ -103,7 +104,20 @@ function sane(raw: unknown): StoredDocument | null {
     bookmarks: Array.isArray(doc.bookmarks)
       ? doc.bookmarks.filter((b): b is number => typeof b === "number")
       : [],
+    thumbnail: typeof doc.thumbnail === "string" ? doc.thumbnail : null,
+    origin: origin(doc.origin),
+    textVersion: typeof doc.textVersion === "number" ? doc.textVersion : 1,
+    aspect: typeof doc.aspect === "number" && doc.aspect > 0 ? doc.aspect : null,
   };
+}
+
+/** Odkaz na soubor. Záznam z doby před vykreslováním stránek žádný nemá. */
+function origin(raw: unknown): DocumentOrigin {
+  if (typeof raw !== "object" || raw === null) return { kind: "none" };
+  const value = raw as DocumentOrigin;
+  if (value.kind === "stored") return { kind: "stored" };
+  if (value.kind === "device" && typeof value.uri === "string") return { kind: "device", uri: value.uri };
+  return { kind: "none" };
 }
 
 export async function listDocuments(): Promise<StoredDocument[]> {

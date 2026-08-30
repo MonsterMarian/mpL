@@ -12,7 +12,20 @@ export interface DocumentPage {
   label: string;
 }
 
-/** Uložený dokument. Nedrží původní soubor, jen vytažený text - ten stačí. */
+/**
+ * Odkud vzít soubor, když se má vykreslit stránka.
+ *
+ * `device` je kniha ležící v telefonu - ta se nekopíruje, čte se z místa, kde
+ * je. `stored` je kopie v datech appky (soubor vybraný ručně, ten jinou adresu
+ * nemá). `none` je starý záznam z doby, kdy si čtečka nechávala jen text -
+ * takový dokument jde pořád číst, jen se u něj nedá ukázat stránka.
+ */
+export type DocumentOrigin =
+  | { kind: "stored" }
+  | { kind: "device"; uri: string }
+  | { kind: "none" };
+
+/** Uložený dokument: vytažený text a odkaz na soubor, ze kterého se kreslí. */
 export interface StoredDocument {
   id: string;
   name: string;
@@ -31,6 +44,18 @@ export interface StoredDocument {
    * to samé.
    */
   thumbnail?: string | null;
+  /** Kde leží soubor, ze kterého se kreslí stránky. */
+  origin?: DocumentOrigin;
+  /**
+   * Pravidlo, kterým vznikl text stránek (`TEXT_LAYOUT_VERSION` v `pdf.ts`).
+   *
+   * Zvýraznění čtené věty stojí na tom, že text stránky a textová vrstva nad
+   * plátnem jsou jeden řetězec. Dokument uložený podle staršího pravidla se
+   * proto při otevření přečte znovu, místo aby ukazoval vedle.
+   */
+  textVersion?: number;
+  /** Poměr stran první stránky (šířka/výška) - drží místo té nevykreslené. */
+  aspect?: number | null;
 }
 
 /** Kolik znaků textového souboru padne na jednu "stránku". */
