@@ -111,9 +111,10 @@ soubor `.apk.idsig`.
 
 ### Když se něco pokazí
 
-**Nastavení → Aktualizace → Vrátit se k verzi z APK** zahodí stažené balíky.
-Rozbalovací **Adresa manifestu** dovolí ukázat appku jinam, než kam míří
-výchozí adresa.
+Rozbalovací **Nastavení → Aktualizace → Adresa manifestu** dovolí ukázat appku
+jinam, než kam míří výchozí adresa. Balík, který appku položí, řeší hlídač
+startu v `app/layout.tsx`: když se do pár vteřin nikdo neozve, vrátí se sám
+k verzi z APK. Ruční tlačítko na to bývalo taky, ale zmizelo.
 
 ### Data při aktualizaci
 

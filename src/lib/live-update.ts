@@ -139,28 +139,6 @@ export function pendingBundleVersion(): string | null {
  */
 
 /**
- * Balík z APK, ke kterému se dá vždycky vrátit.
- *
- * Záznamy se přepisují jako první: `setServerBasePath` se nedočká odpovědi
- * (viz `applyPendingUpdate`), takže na něj nečekáme a rovnou překreslíme.
- */
-export async function revertToBundled(): Promise<void> {
-  if (!isNative()) return;
-  write(CURRENT_KEY, null);
-  write(PENDING_KEY, null);
-  write(BOOTING_KEY, null);
-  void WebView.setServerBasePath({ path: "" });
-  void WebView.persistServerBasePath();
-  setTimeout(() => {
-    try {
-      window.location.reload();
-    } catch {
-      // nic lepšího už neuděláme
-    }
-  }, 400);
-}
-
-/**
  * Appka naběhla, takže nasazený balík umí nastartovat.
  *
  * Značku hlídá krátký skript v `<head>` (viz `app/layout.tsx`): když ji do pár

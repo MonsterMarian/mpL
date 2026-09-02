@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { recordError } from "@/lib/diagnostics";
-import { revertToBundled } from "@/lib/live-update";
 import { BRAND_MARK } from "@/lib/brand";
 
 /**
@@ -10,8 +9,7 @@ import { BRAND_MARK } from "@/lib/brand";
  *
  * Bez ní stačí jedna chyba při vykreslení a z appky zbude černá plocha - na
  * telefonu k nerozeznání od pádu. Tady se místo toho ukáže, co se stalo,
- * a nabídnou se tři cesty ven, včetně návratu k verzi z APK: když appku
- * položí stažený balík, tohle je jediné tlačítko, které ji spraví.
+ * a nabídnou se dvě cesty ven.
  */
 interface State {
   error: Error | null;
@@ -61,13 +59,6 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
             className="flex h-11 items-center justify-center rounded-full border px-6 text-sm"
           >
             Restartovat aplikaci
-          </button>
-          <button
-            type="button"
-            onClick={() => void revertToBundled()}
-            className="px-6 py-2 text-xs text-muted-foreground underline-offset-2 hover:underline"
-          >
-            Vrátit se k verzi z APK
           </button>
         </div>
       </div>

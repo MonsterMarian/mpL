@@ -712,23 +712,6 @@ function UpdateSection() {
       </div>
       
       {statusMsg && <div className="text-xs text-brand mt-1">{statusMsg}</div>}
-
-      {current || pending ? (
-        <button
-          type="button"
-          onClick={async () => {
-            if (confirm("Opravdu vrátit aplikaci na původní APK?")) {
-               await liveUpdate.revertToBundled();
-               setCurrent(null);
-               setPending(null);
-               setStatusMsg("Bude nasazena verze z APK po restartu.");
-            }
-          }}
-          className="self-start px-1 py-1 text-xs text-destructive hover:text-destructive/80"
-        >
-          Vrátit se k verzi z APK
-        </button>
-      ) : null}
     </Section>
   );
 }
