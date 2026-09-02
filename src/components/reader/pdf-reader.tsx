@@ -49,12 +49,20 @@ import { cn } from "@/lib/utils";
  */
 
 export interface ReaderSpeech {
-  /** Věty stránky, na které se zrovna je. */
+  /**
+   * Stránka, na které se čte.
+   *
+   * Nemusí to být ta na obrazovce - v knize, kterou zrovna posloucháš, se dá
+   * listovat, aniž by hlas skákal za tebou.
+   */
+  page: number;
+  /** Věty té stránky. */
   segments: SpeechSegment[];
   /** Která z nich se čte (nebo od které se bude pokračovat). */
   active: number;
   reading: boolean;
-  onJump: (index: number) => void;
+  /** „Číst odsud": stránka a pozice znaku v jejím textu. */
+  onReadFrom: (page: number, offset: number) => void;
   onToggle: () => void;
 }
 
@@ -98,6 +106,21 @@ const SIZE_BATCH = 24;
 
 /** Měření rozměrů pouští před sebe každé kreslení - viz `pdfSlot`. */
 const SWEEP_RANK = 9;
+
+/**
+ * Jak daleko od obrazovky ještě čtečka jede za čtenou větou.
+ *
+ * V obrazovkách. Poslouchat a přitom se dívat na stránku o kus dál je
+ * normální - a v tu chvíli nemá nic samo odjíždět zpátky k hlasu. Když je
+ * ale věta hned za okrajem (třeba se právě obrátil list), přisune se.
+ */
+const FOLLOW_REACH = 1.5;
+
+/** Půlka nabídky „Číst odsud" - o tolik se drží od kraje obrazovky. */
+const SPOT_HALF = 68;
+
+/** Klepnutí výš než tohle si nabídku nechá pověsit pod prst, ne nad něj. */
+const SPOT_FLIP = 130;
 
 const THEME_LABELS: { id: ReaderTheme; label: string }[] = [
   { id: "day", label: "Den" },
@@ -364,6 +387,7 @@ export function PdfReader({
   React.useEffect(() => () => window.clearTimeout(settle.current), []);
 
   const onScroll = () => {
+    if (spot) setSpot(null);
     const at = readCurrentPage();
     // Okno kreslení jde za obrazovkou i během vlastního posunu čtečky - jinak
     // by po skoku na jinou stránku nebylo co ukázat.
@@ -464,33 +488,44 @@ export function PdfReader({
       add(found.page, { start: found.start, end: found.end, kind: index === hit ? "find-active" : "find" }),
     );
 
-    // Zvýrazní se věta, která se čte nebo od které se bude pokračovat.
+    // Zvýrazní se věta, která se čte nebo od které se bude pokračovat, a to
+    // na stránce, kde se čte - ne na té, kterou má čtenář zrovna před očima.
     // Na čerstvě otevřené knize se nečte a nikde se neskončilo, takže by
     // obtažená první věta byla jen oranžová klika přes půl titulní strany.
     const spoken = speech && (speech.reading || speech.active > 0) ? speech.segments[speech.active] : null;
-    if (spoken) add(page, { start: spoken.start, end: spoken.end, kind: "speech" });
+    if (spoken) add(speech!.page, { start: spoken.start, end: spoken.end, kind: "speech" });
 
     return map;
     // Rodič skládá `speech` při každém překreslení znovu, takže se sleduje
     // jeho obsah, ne totožnost objektu - jinak se značky počítají pořád dokola.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hits, hit, speech?.segments, speech?.active, speech?.reading, page]);
+  }, [hits, hit, speech?.segments, speech?.active, speech?.reading, speech?.page]);
 
   /**
-   * Čtená věta zůstává na obrazovce.
+   * Čtená věta zůstává na obrazovce - dokud se čtenář nedívá jinam.
    *
    * Obdélníky vzniknou až po překreslení stránky, proto to čekání - jinak by
    * se posouvalo na místo, které ještě neexistuje.
+   *
+   * `page` tu schválně není: dokud v seznamu bylo, stačilo odrolovat o kus
+   * níž a čtečka se hned odsunula zpátky k hlasu. Jede se za **větou**, ne za
+   * tím, kam se čtenář dívá - a jen když je věta na dohled.
    */
   React.useEffect(() => {
     if (!speech?.reading) return;
     const timer = window.setTimeout(() => {
-      const mark = scroller.current?.querySelector<HTMLElement>('.pdf-mark[data-mark="speech"]');
-      if (!mark) return;
+      const node = scroller.current;
+      const mark = node?.querySelector<HTMLElement>('.pdf-mark[data-mark="speech"]');
+      if (!node || !mark) return;
+
+      const view = node.getBoundingClientRect();
+      const box = mark.getBoundingClientRect();
+      const reach = view.height * FOLLOW_REACH;
+      if (box.bottom < view.top - reach || box.top > view.bottom + reach) return;
+
       // Posun za čtenou větou se nesmí vrátit zpátky jako "čtenář listuje".
-      // Bez tohohle si čtečka z vlastního posunu odvodila jinou stránku,
-      // ohlásila ji ven, rodič poslal čtení na začátek nové stránky - a řeč
-      // s obrazem se honily dokola po celé knize.
+      // Bez tohohle si čtečka z vlastního posunu odvodila jinou stránku
+      // a ohlásila ji ven jako novou pozici ve čtení.
       scrolling.current = true;
       mark.scrollIntoView({ block: "center", behavior: "smooth" });
       window.setTimeout(() => {
@@ -498,16 +533,24 @@ export function PdfReader({
       }, 600);
     }, 90);
     return () => window.clearTimeout(timer);
-  }, [speech?.active, speech?.reading, page]);
+  }, [speech?.active, speech?.reading, speech?.page]);
 
-  /** Klepnutí do textu: odsud číst dál. */
+  /**
+   * Klepnutí do textu nabídne „Číst odsud", nepřesune čtení samo.
+   *
+   * Do teď hlas skočil rovnou tam, kam se kleplo. Do textu se přitom omylem
+   * trefí kdekdo - stačí se při rolování dotknout stránky - a přijít tím
+   * o místo, kde člověk poslouchal, je horší než klepnout dvakrát. Nabídka
+   * navíc drží pravidlo, že se čtení stěhuje jen čtením nebo úmyslem.
+   */
+  const [spot, setSpot] = React.useState<{ page: number; offset: number; x: number; y: number } | null>(null);
+
   const tapText = React.useCallback(
-    (index: number, offset: number) => {
-      if (!speech || index !== page) return;
-      const at = speech.segments.findIndex((segment) => offset >= segment.start && offset < segment.end);
-      if (at >= 0) speech.onJump(at);
+    (index: number, offset: number, x: number, y: number) => {
+      if (!speech) return;
+      setSpot({ page: index, offset, x, y });
     },
-    [speech, page],
+    [speech],
   );
 
   const marked = bookmarks.includes(page);
@@ -740,6 +783,7 @@ export function PdfReader({
         className="pdf-scroll"
         data-flow={prefs.flow}
         onScroll={onScroll}
+        onClick={() => setSpot(null)}
         onTouchStart={touchStart}
         onTouchMove={touchMove}
         onTouchEnd={touchEnd}
@@ -767,6 +811,28 @@ export function PdfReader({
           ))}
         </div>
       </div>
+
+      {/*
+        Nabídka „Číst odsud" visí u místa, kam se kleplo. Teprve klepnutí na
+        ni přesune čtení - viz `tapText`.
+      */}
+      {spot && speech ? (
+        <button
+          type="button"
+          className="pdf-spot"
+          data-below={spot.y < SPOT_FLIP ? "yes" : undefined}
+          style={{
+            left: `${Math.min(Math.max(spot.x, SPOT_HALF), window.innerWidth - SPOT_HALF)}px`,
+            top: `${spot.y}px`,
+          }}
+          onClick={() => {
+            speech.onReadFrom(spot.page, spot.offset);
+            setSpot(null);
+          }}
+        >
+          <Play className="size-3 fill-current" /> Číst odsud
+        </button>
+      ) : null}
 
       <div className="pdf-foot">
         <button

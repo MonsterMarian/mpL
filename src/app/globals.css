@@ -690,17 +690,22 @@
   --pdf-ink: #ffffff;
   --pdf-chrome: rgb(0 0 0 / 82%);
   --pdf-filter: none;
-  /* Zvýraznění čtené věty. Musí být vidět přes celou stránku, ne tušit. */
-  --pdf-speech: rgb(245 163 58 / 62%);
-  --pdf-find: rgb(255 235 59 / 55%);
-  --pdf-find-on: rgb(255 145 0 / 78%);
+  /*
+   * Zvýraznění čtené věty. Ukazuje, kde hlas je - nemá překřičet text.
+   * Sytější barva vypadala jako zvýrazňovač přetažený přes půl stránky
+   * a v knize, kterou člověk zároveň čte očima, spíš překáží.
+   */
+  --pdf-speech: rgb(245 163 58 / 26%);
+  /* Nález v hledání naopak vidět má - proto se hledá. */
+  --pdf-find: rgb(255 235 59 / 42%);
+  --pdf-find-on: rgb(255 145 0 / 62%);
 }
 
 .pdf-reader[data-theme="sepia"] {
   --pdf-room: #6b5c46;
   --pdf-paper: #f6ecd8;
   --pdf-filter: sepia(0.45) saturate(1.12) brightness(0.98);
-  --pdf-speech: rgb(214 122 20 / 58%);
+  --pdf-speech: rgb(214 122 20 / 24%);
 }
 
 .pdf-reader[data-theme="night"] {
@@ -708,16 +713,16 @@
   --pdf-paper: #101010;
   /* Naskenovaná stránka je bílý obrázek - obrátit se dá jedině filtrem. */
   --pdf-filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(1.06);
-  --pdf-speech: rgb(245 163 58 / 45%);
-  --pdf-find: rgb(255 235 59 / 34%);
+  --pdf-speech: rgb(245 163 58 / 22%);
+  --pdf-find: rgb(255 235 59 / 30%);
 }
 
 .pdf-reader[data-theme="console"] {
   --pdf-room: #000000;
   --pdf-paper: #000000;
   --pdf-filter: invert(1) sepia(1) hue-rotate(72deg) saturate(3.2) brightness(0.82);
-  --pdf-speech: rgb(120 255 140 / 30%);
-  --pdf-find: rgb(120 255 140 / 22%);
+  --pdf-speech: rgb(120 255 140 / 16%);
+  --pdf-find: rgb(120 255 140 / 20%);
 }
 
 .pdf-bar,
@@ -991,18 +996,20 @@
   pointer-events: none;
 }
 
+/*
+ * Značka drží řádek, nepřerůstá ho.
+ *
+ * Dřív se k obdélníku přidávaly dva body nad a pod a bod po stranách. Na
+ * telefonu, kde má řádek deset bodů, to dělalo skoro polovinu navíc - věta
+ * pak vypadala jako pruh přes stránku, ne jako podbarvený text.
+ */
 .pdf-mark {
   position: absolute;
-  border-radius: 3px;
-  /* Kus nad a pod řádkem, ať zvýraznění nesedí na účaří, ale kolem písmen. */
-  margin: -2px 0 0 -1px;
-  padding: 0 1px;
-  box-sizing: content-box;
+  border-radius: 2px;
 }
 
 .pdf-mark[data-mark="speech"] {
   background: var(--pdf-speech);
-  box-shadow: 0 0 0 1px rgb(245 163 58 / 85%);
   animation: pdf-mark-in 180ms ease-out;
 }
 
@@ -1012,7 +1019,7 @@
 
 .pdf-mark[data-mark="find-active"] {
   background: var(--pdf-find-on);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 25%);
 }
 
 @keyframes pdf-mark-in {
@@ -1022,6 +1029,45 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pdf-mark[data-mark="speech"] { animation: none; }
+}
+
+/*
+ * Nabídka „Číst odsud".
+ *
+ * Visí u místa, kam čtenář klepl. Klepnutí do textu samo čtení nepřesouvá -
+ * omylem se do stránky trefí kdekdo a přijít tím o místo, kde člověk
+ * poslouchal, je horší než klepnout dvakrát.
+ */
+.pdf-spot {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transform: translate(-50%, calc(-100% - 0.85rem));
+  border-radius: 999px;
+  background: var(--brand);
+  color: var(--black);
+  padding: 0.4rem 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+  animation: pdf-spot-in 140ms ease-out;
+}
+
+/* U horního okraje se nabídka pověsí pod prst, ať nezaleze pod lištu. */
+.pdf-spot[data-below="yes"] {
+  transform: translate(-50%, 0.85rem);
+}
+
+@keyframes pdf-spot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-spot { animation: none; }
 }
 
 .pdf-foot {

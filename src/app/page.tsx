@@ -349,6 +349,16 @@ export default function HomePage() {
   const [documentError, setDocumentError] = React.useState<string | null>(null);
   /** Kus věty, u kterého řeč stojí - odtud se po pauze pokračuje. */
   const [speechChunk, setSpeechChunk] = React.useState(0);
+  /**
+   * Stránka, na které se čte. `null` = ještě se nikde nezačalo.
+   *
+   * Schválně zvlášť od stránky, na kterou se čtenář dívá. Do teď to bylo
+   * jedno číslo, takže odrolování o kus níž přeneslo i čtení - hlas skočil na
+   * začátek stránky, kterou měl čtenář zrovna před očima. Listovat v knize,
+   * kterou zrovna posloucháš, tím bylo k ničemu. Místo čtení se posune jedině
+   * čtením samotným nebo tím, že si ho čtenář sám přesune (`readFromSpot`).
+   */
+  const [speechPage, setSpeechPage] = React.useState<number | null>(null);
   /** Rozečtená věta na stránce - drží se v zorném poli, ať čtenář stačí. */
   const activeChunk = React.useRef<HTMLSpanElement | null>(null);
   /** Žádost o čtení: `null` = ticho. Nový objekt spustí čtení znovu. */
@@ -428,16 +438,25 @@ export default function HomePage() {
   const documentPages: DocumentPage[] = activeDoc?.pages ?? [];
   const documentName = activeDoc?.name ?? null;
   const activeDocument = documentPages[documentPage];
-  const readablePage = activeDoc !== null && !activeDoc.imageOnly && Boolean(activeDocument?.text);
+  /** Dokument jde číst nahlas (naskenovaná kniha ne). */
+  const documentReadable = activeDoc !== null && !activeDoc.imageOnly;
+  const readablePage = documentReadable && Boolean(activeDocument?.text);
+  /** Stránka, ze které bere text hlas. Dokud se nezačalo, ta na obrazovce. */
+  const readingPage = speechPage ?? documentPage;
+  const readingDocument = documentPages[readingPage];
+  const readingReadable = documentReadable && Boolean(readingDocument?.text);
   /*
     Kusy k předčítání i s tím, kde na stránce leží. Pozice jsou to podstatné:
     bez nich by šlo říct jen „čte se pátý kus", ale ne který to je v textu -
     a zvýraznit rozečtenou větu ani klepnutím posunout, odkud se má číst, by
     nešlo vůbec.
+
+    Bere se stránka, na které se **čte**, ne ta na obrazovce. Jinak by se při
+    rolování hlasu měnil text pod rukama.
   */
   const segments = React.useMemo(
-    () => (readablePage ? speechSegments(activeDocument.text) : []),
-    [readablePage, activeDocument],
+    () => (readingReadable ? speechSegments(readingDocument.text) : []),
+    [readingReadable, readingDocument],
   );
   const chunks = React.useMemo(() => segments.map((segment) => segment.text), [segments]);
   /** Text stránek pro hledání v celém dokumentu. */
@@ -1329,6 +1348,9 @@ export default function HomePage() {
    */
   const showDocument = (doc: StoredDocument, opened: PDFDocumentProxy | null) => {
     stopReading();
+    // Jiná kniha, jiné místo čtení - přenášet ho mezi dokumenty nedává smysl.
+    setSpeechPage(null);
+    setSpeechChunk(0);
     setMissingFile(false);
     const previous = pdfRef.current;
     pdfRef.current = opened;
@@ -1634,8 +1656,12 @@ export default function HomePage() {
 
   /**
    * Zapnout čtení znamená říct, od kterého kusu - samotné mluvení obstará
-   * efekt níž. Přes stav, ne přímým voláním: text stránky se mění (obrácený
-   * list, jiný dokument) a čtení musí vždycky jet z toho, co je na obrazovce.
+   * efekt níž. Přes stav, ne přímým voláním: text se mění (obrácený list,
+   * jiný dokument) a čtení musí vždycky jet z toho, co je zrovna na řadě.
+   *
+   * Poprvé se začíná na stránce, kterou má čtenář před sebou. Podruhé už ne:
+   * pauza a rozečtené místo patří k sobě a odrolovat o dvě strany níž není
+   * pokyn „a teď čti odjinud".
    */
   const toggleDocumentReading = () => {
     if (readRequest) {
@@ -1644,7 +1670,16 @@ export default function HomePage() {
       stopReading();
       return;
     }
-    if (!readablePage) return;
+    if (speechPage === null) {
+      // Poprvé se čte od stránky, na kterou se čtenář dívá. Od téhle chvíle
+      // si místo čtení žije vlastním životem.
+      if (!readablePage) return;
+      setSpeechPage(documentPage);
+      setSpeechChunk(0);
+      setReadRequest({ from: 0 });
+      return;
+    }
+    if (!readingReadable) return;
     setReadRequest({ from: speechChunk });
   };
 
@@ -1657,6 +1692,7 @@ export default function HomePage() {
   const closeDocument = () => {
     stopReading();
     setSpeechChunk(0);
+    setSpeechPage(null);
     setDocumentId(null);
     setDocumentQuery("");
     setDocumentError(null);
@@ -1682,9 +1718,29 @@ export default function HomePage() {
   const jumpToChunk = (index: number) => {
     if (!chunks.length) return;
     const at = Math.min(Math.max(index, 0), chunks.length - 1);
+    setSpeechPage(readingPage);
     setSpeechChunk(at);
     // Když se zrovna čte, navázat hned. Jinak si to jen zapamatovat na Přehrát.
     if (readRequest) setReadRequest({ from: at });
+  };
+
+  /**
+   * „Číst odsud": čtenář si sám ukázal, kde se má pokračovat.
+   *
+   * Jediná cesta, jak místo čtení posunout ručně - a stojí za ní potvrzení
+   * v čtečce, ne holé klepnutí. Omylem se do textu trefí kdekdo a přijít
+   * klepnutím vedle o místo, kde člověk poslouchal, je horší než klepnout
+   * dvakrát.
+   */
+  const readFromSpot = (page: number, offset: number) => {
+    const target = documentPages[page];
+    if (!target) return;
+    const found = speechSegments(pageText(target.text));
+    if (!found.length) return;
+    const at = found.findIndex((segment) => offset >= segment.start && offset < segment.end);
+    setSpeechPage(page);
+    setSpeechChunk(Math.max(0, at));
+    setReadRequest({ from: Math.max(0, at) });
   };
 
   const changeSpeechRate = (rate: number) => {
@@ -1693,13 +1749,31 @@ export default function HomePage() {
     if (readRequest) setReadRequest({ from: speechChunk });
   };
 
-  /** Obrátí stránku. Když se zrovna čte, čte se dál na nové stránce od začátku. */
+  /**
+   * Obrátí stránku v holém textu. Tam je stránka celé zobrazení, takže se
+   * s ní stěhuje i čtení - jiné místo, kam by hlas mohl ukazovat, není.
+   */
   const goToPage = (page: number) => {
     const next = clampPage(page, documentPages.length);
     if (next === documentPage) return;
     setDocumentPage(next);
+    setSpeechPage(next);
     setSpeechChunk(0);
     if (readRequest) setReadRequest({ from: 0 });
+  };
+
+  /**
+   * Čtenář se jen dívá jinam.
+   *
+   * Rolování v čtečce, obsah, záložky, posuvník stránek - žádné z toho není
+   * pokyn „čti odjinud". Do teď to tak bylo a hlas skákal za čtenářem: kdo se
+   * chtěl při poslechu podívat o dvě strany dál, ztratil tím místo, kde
+   * poslouchal.
+   */
+  const viewPage = (page: number) => {
+    const next = clampPage(page, documentPages.length);
+    if (next === documentPage) return;
+    setDocumentPage(next);
   };
 
   /**
@@ -1725,8 +1799,11 @@ export default function HomePage() {
       onDone: () => {
         setSpeechChunk(0);
         // Konec stránky = obrátit list, stejně jako skladba přejde na další.
-        if (documentPage < documentPages.length - 1) {
-          setDocumentPage(documentPage + 1);
+        if (readingPage < documentPages.length - 1) {
+          setSpeechPage(readingPage + 1);
+          // V holém textu je stránka celé zobrazení, takže se musí přetočit
+          // i ono. V čtečce se obraz veze za zvýrazněnou větou sám.
+          if (!pdfRef.current) setDocumentPage(readingPage + 1);
           setReadRequest({ from: 0 });
         } else {
           setReadRequest(null);
@@ -1744,8 +1821,13 @@ export default function HomePage() {
       engine.stop();
       if (speaker.current === engine) speaker.current = null;
     };
+    /*
+      `documentPage` tu schválně není. Dokud v seznamu byl, znamenalo každé
+      odrolování o stránku níž zastavení hlasu a jeho spuštění znovu - řeč se
+      tím vracela na začátek a čtenář nemohl v poslouchané knize listovat.
+    */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readRequest, chunks, speechRate, documentPage, documentPages.length]);
+  }, [readRequest, chunks, speechRate, readingPage, documentPages.length]);
 
   // Odchod ze stránky nesmí nechat viset worker s obrázky celé knihy.
   React.useEffect(
@@ -2172,18 +2254,19 @@ export default function HomePage() {
                 pageCount={documentPages.length}
                 pageTexts={documentTexts}
                 page={documentPage}
-                onPage={goToPage}
+                onPage={viewPage}
                 bookmarks={documentBookmarks}
                 onToggleBookmark={toggleBookmark}
                 aspect={activeDoc.aspect ?? 0.72}
                 onClose={closeDocument}
                 speech={
-                  readablePage
+                  documentReadable
                     ? {
+                        page: readingPage,
                         segments,
                         active: speechChunk,
                         reading: isReadingDocument,
-                        onJump: jumpToChunk,
+                        onReadFrom: readFromSpot,
                         onToggle: toggleDocumentReading,
                       }
                     : undefined

@@ -64,8 +64,13 @@ export interface PdfPageViewProps {
   marks: PageMark[];
   /** Velikost stránky v bodech. Drží místo v seznamu, i než se vykreslí. */
   natural: PageSize;
-  /** Klepnutí do textu: pozice znaku v textu stránky. */
-  onTextTap?: (page: number, offset: number) => void;
+  /**
+   * Klepnutí do textu: pozice znaku v textu stránky a místo na obrazovce.
+   *
+   * Souřadnice jsou tam proto, že čtečka u nich nabídne „Číst odsud" - a ta
+   * nabídka má viset u prstu, ne v rohu.
+   */
+  onTextTap?: (page: number, offset: number, x: number, y: number) => void;
   /** Stránka se vykreslila: text pro hledání, ořez a rozměry pro rozvržení. */
   onReady?: (page: number, info: PageInfo) => void;
 }
@@ -272,7 +277,11 @@ export const PdfPageView = React.memo(function PdfPageView({
     const at = divs.current.indexOf(event.target as HTMLElement);
     if (at < 0) return;
     const span = text.current.spans[at];
-    if (span) onTextTap(index, span.start);
+    if (!span) return;
+    // Trefa do textu se dál nešíří: klepnutí mimo něj čtečce říká „zavři
+    // nabídku", a to by tuhle právě otevřenou zavřelo hned.
+    event.stopPropagation();
+    onTextTap(index, span.start, event.clientX, event.clientY);
   };
 
   const cropped = crop ? box : NO_CROP;
