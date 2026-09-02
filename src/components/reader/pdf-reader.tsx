@@ -108,13 +108,15 @@ const SIZE_BATCH = 24;
 const SWEEP_RANK = 9;
 
 /**
- * Jak daleko od obrazovky ještě čtečka jede za čtenou větou.
+ * Pohodlné pásmo pro čtenou větu, v podílech výšky okna.
  *
- * V obrazovkách. Poslouchat a přitom se dívat na stránku o kus dál je
- * normální - a v tu chvíli nemá nic samo odjíždět zpátky k hlasu. Když je
- * ale věta hned za okrajem (třeba se právě obrátil list), přisune se.
+ * Dokud je věta uvnitř, čtečka se nehne. Posouvat na každou větu doprostřed
+ * znamená, že se text hýbe pořád - a při poslechu s očima na stránce to
+ * rozčiluje víc, než pomůže. Když věta z pásma vypadne, přisune se na `REST`.
  */
-const FOLLOW_REACH = 1.5;
+const BAND_TOP = 0.18;
+const BAND_BOTTOM = 0.78;
+const BAND_REST = 0.32;
 
 /** Půlka nabídky „Číst odsud" - o tolik se drží od kraje obrazovky. */
 const SPOT_HALF = 68;
@@ -165,6 +167,8 @@ export function PdfReader({
 
   const scrolling = React.useRef(false);
   const wanted = React.useRef(page);
+  /** Čtenář si při poslechu odroloval jinam - čtečka se přestane vézt za hlasem. */
+  const [astray, setAstray] = React.useState(false);
 
   React.useEffect(() => setMounted(true), []);
   React.useEffect(() => saveReaderPrefs(prefs), [prefs]);
@@ -323,6 +327,29 @@ export function PdfReader({
     }, behavior === "smooth" ? 600 : 120);
   }, []);
 
+  /**
+   * Čtenář vzal řízení do ruky.
+   *
+   * Pozná se to na vstupu, ne na posunu: prst na stránce a kolečko myši jsou
+   * jednoznačné, kdežto posun dělá i čtečka sama, když se veze za hlasem.
+   * Odvozovat to z posunu znamenalo, že se čtečka po chvíli poslechu zapsala
+   * mezi odrolované sama od sebe a tlačítko zpátky naskočilo bez příčiny.
+   */
+  const takeOver = React.useCallback(() => {
+    if (speech?.reading) setAstray(true);
+  }, [speech?.reading]);
+
+  /** Skok, o který si čtenář řekl sám - obsah, záložka, nález, posuvník. */
+  const jumpTo = React.useCallback(
+    (index: number, behavior: ScrollBehavior = "auto") => {
+      takeOver();
+      wanted.current = index;
+      onPage(index);
+      scrollToPage(index, behavior);
+    },
+    [takeOver, onPage, scrollToPage],
+  );
+
   // Stránka zvenčí (obsah, hledání, dočtená stránka při předčítání).
   React.useEffect(() => {
     if (page === wanted.current) return;
@@ -417,6 +444,8 @@ export function PdfReader({
   };
 
   const touchMove = (event: React.TouchEvent) => {
+    // Prst na stránce je řízení čtenáře, ať už tahá jedním nebo štípe dvěma.
+    takeOver();
     const start = gesture.current;
     if (!start || event.touches.length !== 2) return;
     const span = fingerSpan(event.touches);
@@ -446,24 +475,18 @@ export function PdfReader({
       const found = searchPages(pageTexts, query);
       setHits(found);
       setHit(0);
-      if (found.length) {
-        wanted.current = found[0].page;
-        onPage(found[0].page);
-        // Skočit tam musí i obraz, ne jen číslo stránky dole.
-        window.setTimeout(() => scrollToPage(found[0].page, "smooth"), 60);
-      }
+      // Skočit tam musí i obraz, ne jen číslo stránky dole.
+      if (found.length) jumpTo(found[0].page, "smooth");
     }, 220);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, pageTexts, scrollToPage]);
+  }, [query, pageTexts, jumpTo]);
 
   const goToHit = (index: number) => {
     if (!hits.length) return;
     const at = (index + hits.length) % hits.length;
     setHit(at);
-    wanted.current = hits[at].page;
-    onPage(hits[at].page);
-    scrollToPage(hits[at].page, "smooth");
+    jumpTo(hits[at].page, "smooth");
   };
 
   // --- obsah knihy -----------------------------------------------------------
@@ -502,17 +525,31 @@ export function PdfReader({
   }, [hits, hit, speech?.segments, speech?.active, speech?.reading, speech?.page]);
 
   /**
-   * Čtená věta zůstává na obrazovce - dokud se čtenář nedívá jinam.
+   * Čtená věta zůstává na obrazovce - dokud si čtenář neodroluje sám.
+   *
+   * Poslouchat se dá se zhasnutou hlavou, a pak má text sám ubíhat. Jenže kdo
+   * si během poslechu odroluje o kus níž, ten se dívá na něco jiného - a tomu
+   * nesmí obrazovka na začátku každé další věty ujet zpátky k hlasu. Po
+   * prvním vlastním posunu se proto čtečka přestane vézt a jen nabídne
+   * tlačítko zpátky (`astray`).
    *
    * Obdélníky vzniknou až po překreslení stránky, proto to čekání - jinak by
    * se posouvalo na místo, které ještě neexistuje.
-   *
-   * `page` tu schválně není: dokud v seznamu bylo, stačilo odrolovat o kus
-   * níž a čtečka se hned odsunula zpátky k hlasu. Jede se za **větou**, ne za
-   * tím, kam se čtenář dívá - a jen když je věta na dohled.
    */
+
+  // Spuštěné čtení začíná znovu u hlasu.
   React.useEffect(() => {
-    if (!speech?.reading) return;
+    if (speech?.reading) setAstray(false);
+  }, [speech?.reading]);
+
+  const toSpeech = React.useCallback(() => {
+    if (!speech) return;
+    setAstray(false);
+    scrollToPage(speech.page, "smooth");
+  }, [speech, scrollToPage]);
+
+  React.useEffect(() => {
+    if (!speech?.reading || astray) return;
     const timer = window.setTimeout(() => {
       const node = scroller.current;
       const mark = node?.querySelector<HTMLElement>('.pdf-mark[data-mark="speech"]');
@@ -520,20 +557,19 @@ export function PdfReader({
 
       const view = node.getBoundingClientRect();
       const box = mark.getBoundingClientRect();
-      const reach = view.height * FOLLOW_REACH;
-      if (box.bottom < view.top - reach || box.top > view.bottom + reach) return;
+      const top = box.top - view.top;
+      const bottom = box.bottom - view.top;
+      if (top >= view.height * BAND_TOP && bottom <= view.height * BAND_BOTTOM) return;
 
       // Posun za čtenou větou se nesmí vrátit zpátky jako "čtenář listuje".
-      // Bez tohohle si čtečka z vlastního posunu odvodila jinou stránku
-      // a ohlásila ji ven jako novou pozici ve čtení.
       scrolling.current = true;
-      mark.scrollIntoView({ block: "center", behavior: "smooth" });
+      node.scrollTo({ top: node.scrollTop + top - view.height * BAND_REST, behavior: "smooth" });
       window.setTimeout(() => {
         scrolling.current = false;
-      }, 600);
+      }, 700);
     }, 90);
     return () => window.clearTimeout(timer);
-  }, [speech?.active, speech?.reading, speech?.page]);
+  }, [speech?.active, speech?.reading, speech?.page, astray]);
 
   /**
    * Klepnutí do textu nabídne „Číst odsud", nepřesune čtení samo.
@@ -678,9 +714,7 @@ export function PdfReader({
                     disabled={entry.page === null}
                     onClick={() => {
                       if (entry.page === null) return;
-                      wanted.current = entry.page;
-                      onPage(entry.page);
-                      scrollToPage(entry.page);
+                      jumpTo(entry.page);
                       setPanel("none");
                     }}
                     className="pdf-list-item disabled:opacity-40"
@@ -706,9 +740,7 @@ export function PdfReader({
                     <button
                       type="button"
                       onClick={() => {
-                        wanted.current = index;
-                        onPage(index);
-                        scrollToPage(index);
+                        jumpTo(index);
                         setPanel("none");
                       }}
                       className="pdf-list-item"
@@ -783,6 +815,7 @@ export function PdfReader({
         className="pdf-scroll"
         data-flow={prefs.flow}
         onScroll={onScroll}
+        onWheel={takeOver}
         onClick={() => setSpot(null)}
         onTouchStart={touchStart}
         onTouchMove={touchMove}
@@ -834,6 +867,18 @@ export function PdfReader({
         </button>
       ) : null}
 
+      {/*
+        Cesta zpátky k hlasu. Malé a stranou: kdo si odroloval, ten se dívá na
+        text, ne na tlačítka - ale hledat rozečtené místo posuvníkem je otrava.
+        Číslo je stránka, na které se čte.
+      */}
+      {speech?.reading && astray ? (
+        <button type="button" onClick={toSpeech} className="pdf-back" aria-label="Zpět k místu čtení">
+          <Volume2 className="size-3.5" />
+          <span className="tabular-nums">{speech.page + 1}</span>
+        </button>
+      ) : null}
+
       <div className="pdf-foot">
         <button
           type="button"
@@ -848,12 +893,7 @@ export function PdfReader({
           min={0}
           max={Math.max(0, pageCount - 1)}
           value={page}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            wanted.current = next;
-            onPage(next);
-            scrollToPage(next);
-          }}
+          onChange={(event) => jumpTo(Number(event.target.value))}
           aria-label="Stránka"
           className="pdf-range min-w-0 flex-1"
         />
