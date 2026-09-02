@@ -21,8 +21,8 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { PdfPageView, type PageInfo, type PageMark } from "./pdf-page-view";
-import { readOutline, searchPages, type OutlineEntry, type SearchHit } from "@/lib/pdf";
+import { PdfPageView, type PageInfo, type PageMark, type PageSize } from "./pdf-page-view";
+import { pdfSlot, readOutline, searchPages, type OutlineEntry, type SearchHit } from "@/lib/pdf";
 import {
   clampZoom,
   loadReaderPrefs,
@@ -82,6 +82,23 @@ const NO_MARKS: PageMark[] = [];
 /** Kolik místa zbude po stranách stránky. */
 const GUTTER = 8;
 
+/**
+ * Okno vykreslených stránek kolem té, na kterou se čte.
+ *
+ * Dopředu víc než dozadu - čte se odshora dolů, takže další stránka je
+ * potřeba dřív než ta předchozí. Mimo okno stránka plátno pustí z ruky:
+ * jinak by kniha o pěti stech stranách chtěla pět set pláten naráz a telefon
+ * by ji odstřelil dřív, než by se čtenář dostal do půlky.
+ */
+const AHEAD = 2;
+const BEHIND = 1;
+
+/** Po kolika stránkách se ohlásí rozměry změřené na pozadí. */
+const SIZE_BATCH = 24;
+
+/** Měření rozměrů pouští před sebe každé kreslení - viz `pdfSlot`. */
+const SWEEP_RANK = 9;
+
 const THEME_LABELS: { id: ReaderTheme; label: string }[] = [
   { id: "day", label: "Den" },
   { id: "sepia", label: "Sépie" },
@@ -110,7 +127,10 @@ export function PdfReader({
   const [panel, setPanel] = React.useState<Panel>("none");
   const [chrome, setChrome] = React.useState(true);
   const [viewWidth, setViewWidth] = React.useState(0);
-  const [base, setBase] = React.useState<{ width: number; height: number } | null>(null);
+  /** Rozměry stránek v bodech; `null` znamená „ještě nezměřeno". */
+  const [sizes, setSizes] = React.useState<(PageSize | null)[]>([]);
+  /** Stránka, kolem které se kreslí. Jde za obrazovkou, ne za hlášením ven. */
+  const [center, setCenter] = React.useState(page);
   /** Jakou část šířky stránky zabírá sazba - podle ní se stránka roztáhne. */
   const [cropWidth, setCropWidth] = React.useState(1);
   const [outline, setOutline] = React.useState<OutlineEntry[] | null>(null);
@@ -142,6 +162,64 @@ export function PdfReader({
   }, [mounted]);
 
   /**
+   * Rozměry stránek se změří dřív, než se cokoli nakreslí.
+   *
+   * **Tohle je to skákání.** Dokud se velikost stránky brala z hotového
+   * plátna, měl seznam do posledního vykreslení špatné výšky: každá stránka
+   * se v okamžiku dokreslení o kus srazila nebo natáhla, sloupec se posunul
+   * a text ujel čtenáři pod prstem. Rozměr přitom PDF zná od začátku a dá
+   * se přečíst bez kreslení - jen se na to musí zeptat.
+   *
+   * Měří se na pozadí a po dávkách: u tlusté knihy je to pár set otázek do
+   * workeru a čekat na poslední z nich by znamenalo koukat na prázdno.
+   */
+  React.useEffect(() => {
+    let alive = true;
+    setSizes(new Array(pageCount).fill(null));
+
+    void (async () => {
+      const found: (PageSize | null)[] = new Array(pageCount).fill(null);
+      for (let at = 0; at < pageCount; at += 1) {
+        if (!alive) return;
+        // Slot se bere a zase pouští u každé stránky zvlášť. Kreslení, které
+        // si mezitím řeklo o slovo, se tak dostane na řadu hned za tou právě
+        // měřenou - u tlusté knihy je to rozdíl mezi „stránka je tu hned"
+        // a „chvíli koukáš na prázdno".
+        const done = await pdfSlot(SWEEP_RANK);
+        try {
+          const view = (await pdf.getPage(at + 1)).getViewport({ scale: 1 });
+          found[at] = { width: view.width, height: view.height };
+        } catch {
+          // Rozbitá stránka podrží místo podle sousedů, ať se seznam nesesype.
+        } finally {
+          done();
+        }
+        // První stránka hned - podle ní se počítá přiblížení celé knihy.
+        if (at === 0 || (at + 1) % SIZE_BATCH === 0) {
+          if (!alive) return;
+          setSizes([...found]);
+        }
+      }
+      if (alive) setSizes(found);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [pdf, pageCount]);
+
+  /** Velikost stránky. Nezměřená si vypůjčí tu první - ta sedí skoro vždycky. */
+  const fallbackSize = React.useMemo<PageSize>(
+    () => ({ width: 600, height: 600 / (aspect || 0.72) }),
+    [aspect],
+  );
+
+  const sizeOf = React.useCallback(
+    (index: number): PageSize => sizes[index] ?? sizes[0] ?? fallbackSize,
+    [sizes, fallbackSize],
+  );
+
+  /**
    * Přiblížení.
    *
    * `zoom` 1 znamená „stránka přes celou šířku". Kdyby se počítalo z pevného
@@ -149,13 +227,13 @@ export function PdfReader({
    * přetékala - a to je zrovna to, co má čtečka řešit za uživatele.
    */
   const scale = React.useMemo(() => {
-    if (!base || !viewWidth) return 1;
+    if (!viewWidth) return 1;
     const usable = Math.max(160, viewWidth - GUTTER * 2);
     // Ořez se do měřítka promítne jen tehdy, když se opravdu ořezává. Jinak
     // by se stránka zvětšovala podle okrajů, které jsou pořád vidět.
     const share = prefs.crop ? cropWidth : 1;
-    return (usable / (base.width * share)) * prefs.zoom;
-  }, [base, viewWidth, cropWidth, prefs.crop, prefs.zoom]);
+    return (usable / (sizeOf(0).width * share)) * prefs.zoom;
+  }, [viewWidth, cropWidth, prefs.crop, prefs.zoom, sizeOf]);
 
   /**
    * Okraje se změří jednou za knihu.
@@ -173,31 +251,17 @@ export function PdfReader({
     cropMeasured.current = false;
     restored.current = false;
     setCropWidth(1);
-    setBase(null);
   }, [pdf]);
 
-  /**
-   * Jak velká bude stránka, až se vykreslí.
-   *
-   * **Tohle je to skákání.** Stránka se kreslí, teprve když se k ní čtenář
-   * blíží, a do té doby drží místo jen náhradní obdélník. Ten byl široký přes
-   * celý sloupec, kdežto hotová stránka je o okraje užší - a tedy i nižší.
-   * Každá stránka se v okamžiku vykreslení srazila o pár desítek bodů. Kreslí
-   * se přitom i stránky nad viditelnou částí, takže se text pod prstem
-   * pokaždé posunul nahoru. Při rolování dlouhou knihou to ubíhalo pořád.
-   *
-   * Náhradní obdélník má proto přesně tu velikost, kterou bude mít hotová
-   * stránka. Pak se při vykreslení nezmění vůbec nic.
-   */
-  const pageBox = React.useMemo(() => {
-    if (!viewWidth) return null;
-    const width = Math.max(160, viewWidth - GUTTER * 2) * prefs.zoom;
-    const ratio = base ? base.width / base.height : aspect || 0.72;
-    return { width, height: width / (ratio || 0.72) };
-  }, [viewWidth, prefs.zoom, base, aspect]);
-
   const pageReady = React.useCallback((index: number, info: PageInfo) => {
-    setBase((previous) => previous ?? { width: info.width, height: info.height });
+    // Rozměr z vykreslené stránky je jistota navíc: dorovná odhad tam, kde se
+    // měření na pozadí ještě nedostalo.
+    setSizes((previous) => {
+      if (previous[index]) return previous;
+      const next = [...previous];
+      next[index] = { width: info.width, height: info.height };
+      return next;
+    });
     if (cropMeasured.current) return;
     if (index !== 0 && index !== wanted.current) return;
     cropMeasured.current = true;
@@ -226,6 +290,9 @@ export function PdfReader({
     const node = scroller.current;
     const target = node?.querySelector<HTMLElement>(`[data-pdf-page="${index}"]`);
     if (!node || !target) return;
+    // Okno kreslení se posune hned, ne až rolování dojede: skok na dvoustou
+    // stránku má začít kreslit dvoustou stránku, ne tu, od které se odjíždí.
+    setCenter(index);
     scrolling.current = true;
     node.scrollTo({ top: node.scrollTop + target.getBoundingClientRect().top - node.getBoundingClientRect().top, behavior });
     window.setTimeout(() => {
@@ -241,21 +308,49 @@ export function PdfReader({
   }, [page, scrollToPage]);
 
   /**
-   * První vykreslení: skočit tam, kde se skončilo minule.
+   * Otevřít knihu tam, kde se skončilo.
    *
-   * Jen jednou a jen dokud čtenář sám nikam nešel. Velikost stránky se zná až
-   * po vykreslení první z nich, což můžou být vteřiny - a kdo si mezitím
-   * odroloval jinam, ten by se ocitl zpátky, kde nechtěl.
+   * Rozměry stránek dojdou po dávkách, takže se sloupec ještě chvíli po
+   * otevření usazuje. Dokud čtenář sám nikam nešel, drží se proto stránka, ne
+   * počet bodů odshora - jinak by se kniha po každé dávce o kus posunula.
+   * První vlastní dotek to vypne: kdo si odroloval jinam, tam má zůstat.
    */
   const restored = React.useRef(false);
+  const touched = React.useRef(false);
 
   React.useEffect(() => {
-    if (!base || restored.current) return;
+    restored.current = false;
+    touched.current = false;
+  }, [pdf]);
+
+  React.useEffect(() => {
+    if (!sizes[0] || !viewWidth) return;
     restored.current = true;
-    if ((scroller.current?.scrollTop ?? 0) > 4) return;
+    if (touched.current) return;
     scrollToPage(wanted.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base]);
+  }, [sizes, viewWidth]);
+
+  /**
+   * Přiblížení a otočení telefonu drží čtenáře na téže stránce.
+   *
+   * Posun se počítá v bodech odshora, ale zvětšená kniha je vyšší - stejné
+   * číslo pak ukazuje jinam. Kdo si na třicáté stránce přiblížil písmo,
+   * skončil o pět stran vedle a musel se hledat. Stránka je to, co drží.
+   */
+  const lastScale = React.useRef(0);
+
+  React.useEffect(() => {
+    if (!sizes[0] || !viewWidth) return;
+    if (!lastScale.current) {
+      lastScale.current = scale;
+      return;
+    }
+    if (Math.abs(scale - lastScale.current) < 0.0005) return;
+    lastScale.current = scale;
+    scrollToPage(wanted.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scale, sizes, viewWidth]);
 
   /**
    * Hlášení stránky ven počká, až se rolování zastaví.
@@ -269,8 +364,19 @@ export function PdfReader({
   React.useEffect(() => () => window.clearTimeout(settle.current), []);
 
   const onScroll = () => {
-    if (scrolling.current) return;
     const at = readCurrentPage();
+    // Okno kreslení jde za obrazovkou i během vlastního posunu čtečky - jinak
+    // by po skoku na jinou stránku nebylo co ukázat.
+    setCenter(at);
+    if (scrolling.current) return;
+    touched.current = true;
+    /*
+      Než se kniha otevře na uložené stránce, stojí sloupec na začátku - a při
+      usazování rozvržení z něj chodí posuny. Ohlásit je ven znamenalo přepsat
+      uloženou stránku nulou dřív, než se na ni stačilo skočit: kniha se pak
+      pokaždé otevřela na první straně a čtenář se musel hledat znovu.
+    */
+    if (!restored.current) return;
     if (at === wanted.current) return;
     wanted.current = at;
     window.clearTimeout(settle.current);
@@ -358,14 +464,17 @@ export function PdfReader({
       add(found.page, { start: found.start, end: found.end, kind: index === hit ? "find-active" : "find" }),
     );
 
-    const spoken = speech?.segments[speech.active];
+    // Zvýrazní se věta, která se čte nebo od které se bude pokračovat.
+    // Na čerstvě otevřené knize se nečte a nikde se neskončilo, takže by
+    // obtažená první věta byla jen oranžová klika přes půl titulní strany.
+    const spoken = speech && (speech.reading || speech.active > 0) ? speech.segments[speech.active] : null;
     if (spoken) add(page, { start: spoken.start, end: spoken.end, kind: "speech" });
 
     return map;
     // Rodič skládá `speech` při každém překreslení znovu, takže se sleduje
     // jeho obsah, ne totožnost objektu - jinak se značky počítají pořád dokola.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hits, hit, speech?.segments, speech?.active, page]);
+  }, [hits, hit, speech?.segments, speech?.active, speech?.reading, page]);
 
   /**
    * Čtená věta zůstává na obrazovce.
@@ -648,9 +757,10 @@ export function PdfReader({
               index={index}
               scale={scale}
               crop={prefs.crop}
+              active={index >= center - BEHIND && index <= center + AHEAD}
+              rank={index === center ? 0 : 1}
               marks={marks.get(index) ?? NO_MARKS}
-              expected={pageBox}
-              fallbackAspect={aspect}
+              natural={sizeOf(index)}
               onTextTap={tapText}
               onReady={pageReady}
             />

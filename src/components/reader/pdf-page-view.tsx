@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { detectCrop, NO_CROP, pdfjs, textFromContent, type CropBox, type PageText } from "@/lib/pdf";
+import { detectCrop, NO_CROP, pdfjs, pdfSlot, textFromContent, type CropBox, type PageText } from "@/lib/pdf";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
 /**
  * Jedna stránka PDF.
@@ -14,8 +14,20 @@ import { detectCrop, NO_CROP, pdfjs, textFromContent, type CropBox, type PageTex
  *  - **značky** jsou barevné obdélníky pod textem: čtená věta a nálezy
  *    z hledání.
  *
- * Kreslí se, jen když je stránka na dohled. Kniha o pěti stech stranách by
- * jinak chtěla pět set pláten naráz a telefon by se s tím neuprosil.
+ * Dvě pravidla, na kterých tady všechno stojí:
+ *
+ * **Místo v seznamu se nepočítá z vykreslené stránky, ale z jejích rozměrů.**
+ * Ty se znají dřív, než se něco nakreslí (viz `pdf-reader.tsx`), takže stránka
+ * má svou velikost od začátku a v okamžiku vykreslení se v seznamu nepohne nic.
+ * Dokud se velikost brala z hotového plátna, měnil se sloupec pod rukama
+ * a text ujížděl.
+ *
+ * **Jedno kreslení, jeden majitel.** Přiblížení se během čtení mění (otočení
+ * telefonu, štípnutí dvěma prsty) a každá změna začíná nové kreslení. Dřív si
+ * do plátna, textové vrstvy i rozměrů sahaly oba pokusy zároveň, takže na
+ * stránce skončil obraz z jednoho přiblížení a text z druhého - text pak
+ * přetékal přes okraj a značky ukazovaly vedle. Teď se kreslí stranou
+ * a na obrazovku se sáhne až naráz, když je hotové všechno.
  */
 
 /** Barevná značka na stránce, v pozicích do textu stránky. */
@@ -23,6 +35,12 @@ export interface PageMark {
   start: number;
   end: number;
   kind: "speech" | "find" | "find-active";
+}
+
+/** Rozměry stránky v jejích vlastních bodech, tedy bez přiblížení. */
+export interface PageSize {
+  width: number;
+  height: number;
 }
 
 export interface PdfPageViewProps {
@@ -33,16 +51,19 @@ export interface PdfPageViewProps {
   scale: number;
   /** Ořezat prázdné okraje? */
   crop: boolean;
-  marks: PageMark[];
   /**
-   * Jak velká stránka bude, až se vykreslí.
+   * Kreslit tuhle stránku?
    *
-   * Drží místo v seznamu. Musí sedět na hotovou stránku, jinak se v okamžiku
-   * vykreslení celý sloupec posune a čtenáři ujede text pod prstem.
+   * Mimo okno kolem čtenáře stránka plátno pustí z ruky. Kniha o pěti stech
+   * stranách by jinak chtěla pět set pláten naráz - a telefon tolik paměti
+   * nemá (viz okno v `pdf-reader.tsx`).
    */
-  expected: { width: number; height: number } | null;
-  /** Poměr stran, dokud se nezná ani ten - poslední záchrana. */
-  fallbackAspect: number;
+  active: boolean;
+  /** Kdo se kreslí dřív; 0 je stránka pod očima čtenáře (viz `pdfSlot`). */
+  rank: number;
+  marks: PageMark[];
+  /** Velikost stránky v bodech. Drží místo v seznamu, i než se vykreslí. */
+  natural: PageSize;
   /** Klepnutí do textu: pozice znaku v textu stránky. */
   onTextTap?: (page: number, offset: number) => void;
   /** Stránka se vykreslila: text pro hledání, ořez a rozměry pro rozvržení. */
@@ -60,8 +81,33 @@ export interface PageInfo {
 /** Nad tolik už plátno nemá smysl zvětšovat - paměť ano, ostrost ne. */
 const MAX_PIXEL_RATIO = 2;
 
-/** Kolik obrazovek dopředu a dozadu se kreslí. */
-const NEAR_SCREENS = "150% 0px";
+/**
+ * Kreslení, které se do téhle doby neozve, se bere jako zaseknuté.
+ *
+ * Stát se to umí: worker pdf.js zůstane viset po zavření předchozí knihy
+ * a slíbené vykreslení už nikdy nepřijde. Bez téhle lhůty by stránka zůstala
+ * bílá napořád a nikde by nestálo proč - přesně tak vypadala čtečka, která
+ * "nefunguje".
+ */
+const RENDER_TIMEOUT_MS = 25000;
+
+/** Po chybě to čtečka zkusí ještě jednou sama; teprve pak si řekne o klepnutí. */
+const AUTO_RETRIES = 1;
+
+/** Slib, který se do lhůty neozve, se zruší - ať čeká stránka, ne fronta. */
+function withTimeout<T>(promise: Promise<T>, cancel: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      try {
+        cancel();
+      } catch {
+        // Kreslení už mezitím doběhlo samo.
+      }
+      reject(new Error("Stránka se kreslí příliš dlouho."));
+    }, RENDER_TIMEOUT_MS);
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timer));
+  });
+}
 
 /**
  * Stránka se překresluje jen tehdy, když se opravdu změnila.
@@ -75,156 +121,194 @@ export const PdfPageView = React.memo(function PdfPageView({
   index,
   scale,
   crop,
+  active,
+  rank,
   marks,
-  expected,
-  fallbackAspect,
+  natural,
   onTextTap,
   onReady,
 }: PdfPageViewProps) {
-  const holder = React.useRef<HTMLDivElement | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
-  const textRef = React.useRef<HTMLDivElement | null>(null);
+  const slotRef = React.useRef<HTMLDivElement | null>(null);
   /** Kusy textové vrstvy - z nich se počítají obdélníky značek. */
   const divs = React.useRef<HTMLElement[]>([]);
   const text = React.useRef<PageText | null>(null);
 
-  const [near, setNear] = React.useState(false);
-  const [size, setSize] = React.useState<{ width: number; height: number } | null>(null);
+  /** Ořez okrajů. Změří se při vykreslení a platí i po uvolnění plátna. */
   const [box, setBox] = React.useState<CropBox>(NO_CROP);
+  const [shown, setShown] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  /** Roste s každým dokresleným plátnem - značky se podle něj přepočítají. */
   const [painted, setPainted] = React.useState(0);
-
-  // Stránka se kreslí, až když se k ní čtenář blíží.
-  React.useEffect(() => {
-    const node = holder.current;
-    if (!node) return;
-    const watcher = new IntersectionObserver(
-      (entries) => entries.forEach((entry) => entry.isIntersecting && setNear(true)),
-      { rootMargin: NEAR_SCREENS },
-    );
-    watcher.observe(node);
-    return () => watcher.disconnect();
-  }, []);
+  /** Roste s klepnutím na „zkusit znovu"; jiný smysl to číslo nemá. */
+  const [retry, setRetry] = React.useState(0);
 
   React.useEffect(() => {
-    if (!near) return;
-    let cancelled = false;
-    let task: { cancel: () => void } | null = null;
-    let layer: { cancel: () => void } | null = null;
-    let page: PDFPageProxy | null = null;
+    const canvas = canvasRef.current;
+    const slot = slotRef.current;
+    if (!canvas || !slot) return;
+
+    if (!active) {
+      // Nulové plátno je jediný způsob, jak prohlížeči říct, že obrázek už
+      // není potřeba. Rozměry stránky se drží zvlášť, takže se v seznamu ani
+      // po uvolnění nic nepohne.
+      canvas.width = 0;
+      canvas.height = 0;
+      canvas.style.width = "";
+      canvas.style.height = "";
+      slot.replaceChildren();
+      divs.current = [];
+      text.current = null;
+      setShown(false);
+      setFailed(false);
+      return;
+    }
+
+    let alive = true;
+    let stop: (() => void) | null = null;
 
     const draw = async () => {
       const lib = await pdfjs();
-      page = await pdf.getPage(index + 1);
-      if (cancelled) return;
+      if (!alive) return;
 
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale });
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext("2d", { willReadFrequently: true });
-      if (!canvas || !context) return;
+      const done = await pdfSlot(rank);
+      try {
+        if (!alive) return;
+        const page = await pdf.getPage(index + 1);
+        if (!alive) return;
 
-      // Plátno je v pixelech zařízení, ale roztažené na body stránky - jinak
-      // je text na telefonu s hustým displejem rozmazaný.
-      const ratio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
-      canvas.width = Math.max(1, Math.round(viewport.width * ratio));
-      canvas.height = Math.max(1, Math.round(viewport.height * ratio));
-      canvas.style.width = `${Math.round(viewport.width)}px`;
-      canvas.style.height = `${Math.round(viewport.height)}px`;
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale });
 
-      const render = page.render({ canvasContext: context, viewport, canvas });
-      task = render;
-      await render.promise;
-      if (cancelled) return;
+        // Plátno je v pixelech zařízení, ale roztažené na body stránky - jinak
+        // je text na telefonu s hustým displejem rozmazaný.
+        const ratio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+        const draft = document.createElement("canvas");
+        draft.width = Math.max(1, Math.round(viewport.width * ratio));
+        draft.height = Math.max(1, Math.round(viewport.height * ratio));
+        const paper = draft.getContext("2d", { willReadFrequently: true });
+        if (!paper) throw new Error("Plátno se nepodařilo otevřít.");
+        paper.setTransform(ratio, 0, 0, ratio, 0, 0);
 
-      setSize({ width: Math.round(viewport.width), height: Math.round(viewport.height) });
-      const found = detectCrop(canvas);
-      setBox(found);
+        const render = page.render({ canvasContext: paper, viewport, canvas: draft });
+        stop = () => render.cancel();
+        await withTimeout(render.promise, () => render.cancel());
+        if (!alive) return;
 
-      // Textová vrstva se skládá ze stejného obsahu, ze kterého se počítá text
-      // stránky. Dvakrát načtený obsah by mohl mít jiné pořadí kusů a značky
-      // by pak ukazovaly vedle.
-      const content = await page.getTextContent();
-      if (cancelled) return;
-      const container = textRef.current;
-      if (!container) return;
-      container.replaceChildren();
-      container.style.setProperty("--scale-factor", String(scale));
-      const instance = new lib.TextLayer({ textContentSource: content, container, viewport });
-      layer = instance;
-      await instance.render();
-      if (cancelled) return;
+        const found = detectCrop(draft);
 
-      divs.current = instance.textDivs;
-      const built = textFromContent(content);
-      text.current = built;
-      setPainted((value) => value + 1);
-      onReady?.(index, { text: built, crop: found, width: base.width, height: base.height });
+        // Textová vrstva se skládá ze stejného obsahu, ze kterého se počítá
+        // text stránky. Dvakrát načtený obsah by mohl mít jiné pořadí kusů
+        // a značky by pak ukazovaly vedle.
+        const content = await page.getTextContent();
+        if (!alive) return;
+
+        const shelf = document.createElement("div");
+        shelf.className = "pdf-text textLayer";
+        shelf.style.setProperty("--scale-factor", String(scale));
+        const layer = new lib.TextLayer({ textContentSource: content, container: shelf, viewport });
+        stop = () => layer.cancel();
+        await layer.render();
+        if (!alive) return;
+
+        // Až sem se na obrazovku nesáhlo. Teď naráz: obraz, text i ořez
+        // patří k jednomu a témuž přiblížení.
+        canvas.width = draft.width;
+        canvas.height = draft.height;
+        canvas.style.width = `${Math.round(viewport.width)}px`;
+        canvas.style.height = `${Math.round(viewport.height)}px`;
+        canvas.getContext("2d")?.drawImage(draft, 0, 0);
+        draft.width = 0;
+        draft.height = 0;
+
+        slot.replaceChildren(shelf);
+        divs.current = layer.textDivs;
+        const built = textFromContent(content);
+        text.current = built;
+
+        setBox(found);
+        setShown(true);
+        setFailed(false);
+        setPainted((value) => value + 1);
+        onReady?.(index, { text: built, crop: found, width: base.width, height: base.height });
+      } finally {
+        done();
+      }
     };
 
-    void draw().catch(() => {
-      // Rozbitá stránka nesmí shodit celou knihu - zůstane prázdné místo.
-    });
+    void (async () => {
+      for (let at = 0; at <= AUTO_RETRIES; at += 1) {
+        if (!alive) return;
+        try {
+          await draw();
+          return;
+        } catch (error) {
+          if (!alive) return;
+          // Rozbitá stránka nesmí shodit celou knihu. Potichu ji ale nechat
+          // bílou je horší než chyba: uživatel pak hlásí, že „čtečka
+          // nefunguje", a nikde není vidět, co se pokazilo.
+          console.error(`Stránku ${index + 1} se nepodařilo vykreslit`, error);
+        }
+      }
+      if (alive) setFailed(true);
+    })();
 
     return () => {
-      cancelled = true;
+      alive = false;
       try {
-        task?.cancel();
-        layer?.cancel();
+        stop?.();
       } catch {
         // Kreslení už doběhlo samo.
       }
-      page?.cleanup();
     };
     // `onReady` se nesleduje schválně: mění se s každým překreslením rodiče
     // a stránka by se kreslila pořád dokola.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdf, index, scale, near]);
+  }, [pdf, index, scale, active, retry]);
 
   /** Klepnutí do textu → pozice znaku, ze které se dá číst dál. */
   const tap = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!onTextTap || !text.current) return;
-    const target = event.target as HTMLElement;
-    const at = divs.current.indexOf(target);
+    const at = divs.current.indexOf(event.target as HTMLElement);
     if (at < 0) return;
     const span = text.current.spans[at];
     if (span) onTextTap(index, span.start);
   };
 
-  const width = size?.width ?? 0;
-  const height = size?.height ?? 0;
   const cropped = crop ? box : NO_CROP;
-  const visibleWidth = width * (cropped.right - cropped.left);
-  const visibleHeight = height * (cropped.bottom - cropped.top);
+  const width = Math.max(1, Math.round(natural.width * scale));
+  const height = Math.max(1, Math.round(natural.height * scale));
 
   return (
     <div
-      ref={holder}
       data-pdf-page={index}
       className="pdf-page"
-      style={
-        size
-          ? { width: `${Math.round(visibleWidth)}px`, height: `${Math.round(visibleHeight)}px` }
-          : expected
-            ? { width: `${Math.round(expected.width)}px`, height: `${Math.round(expected.height)}px` }
-            : { aspectRatio: String(fallbackAspect || 0.72), width: "100%" }
-      }
+      style={{
+        width: `${Math.round(width * (cropped.right - cropped.left))}px`,
+        height: `${Math.round(height * (cropped.bottom - cropped.top))}px`,
+      }}
     >
       <div
         className="pdf-page-shift"
         style={{
-          width: width ? `${width}px` : "100%",
-          height: height ? `${height}px` : "100%",
+          width: `${width}px`,
+          height: `${height}px`,
           transform: `translate(${-cropped.left * width}px, ${-cropped.top * height}px)`,
         }}
       >
         <canvas ref={canvasRef} className="pdf-canvas" />
-        <div ref={textRef} className="pdf-text textLayer" onClick={tap} />
+        <div ref={slotRef} className="pdf-text-slot" onClick={tap} />
         <div className="pdf-marks" aria-hidden="true">
-          <Marks marks={marks} divs={divs.current} text={text.current} holder={textRef.current} version={painted} />
+          <Marks marks={marks} divs={divs.current} text={text.current} holder={slotRef.current} version={painted} />
         </div>
       </div>
-      {size ? null : <span className="pdf-page-number">{index + 1}</span>}
+      {shown ? null : failed ? (
+        <button type="button" onClick={() => setRetry((value) => value + 1)} className="pdf-page-retry">
+          Stránku {index + 1} se nepodařilo vykreslit. Klepnutím zkusit znovu.
+        </button>
+      ) : (
+        <span className="pdf-page-number">{index + 1}</span>
+      )}
     </div>
   );
 });

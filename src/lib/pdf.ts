@@ -67,6 +67,52 @@ export async function openPdf(
   return task.promise;
 }
 
+/**
+ * Do workeru pdf.js se chodí po jednom.
+ *
+ * Worker je na celý dokument jeden. Pustit do něj deset stránek naráz
+ * neznamená deset stránek dřív - znamená to deset rozdělaných, z nichž ani
+ * jedna není hotová, a čtenář kouká na prázdné obdélníky.
+ *
+ * Fronta je společná schválně. Vedle kreslení se na pozadí ještě proměřují
+ * rozměry všech stránek, a kdyby si obojí lezlo do zelí, měřítko dlouhé knihy
+ * by odsunulo první stránku o pěkných pár vteřin. Takhle měření mezi
+ * stránkami pustí každého, kdo si zrovna řekl o vykreslení.
+ */
+let busy = false;
+const waiting: { rank: number; start: () => void }[] = [];
+
+/**
+ * `rank` říká, kdo je na řadě dřív - menší číslo jde první.
+ *
+ * Stránka, na kterou se čtenář dívá, má přednost před tou vedlejší a obě před
+ * měřením na pozadí. Bez toho se po skoku doprostřed knihy kreslila nejdřív
+ * stránka nad tou hledanou a čtenář koukal na prázdno o vteřinu dýl, než bylo
+ * nutné.
+ */
+export function pdfSlot(rank = 0): Promise<() => void> {
+  return new Promise((resolve) => {
+    const start = () => {
+      busy = true;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        busy = false;
+        waiting.shift()?.start();
+      });
+    };
+    if (!busy) {
+      start();
+      return;
+    }
+    const at = waiting.findIndex((item) => item.rank > rank);
+    const entry = { rank, start };
+    if (at < 0) waiting.push(entry);
+    else waiting.splice(at, 0, entry);
+  });
+}
+
 /** Kus textové vrstvy: kde leží v textu stránky. */
 export interface TextSpan {
   start: number;

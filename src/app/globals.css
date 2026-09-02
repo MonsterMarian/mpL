@@ -888,6 +888,45 @@
 }
 
 /*
+ * Stránka, která se nevykreslila.
+ *
+ * Bílé místo bez vysvětlení vypadá jako rozbitá appka - a je jedno, jestli za
+ * to může poškozený soubor nebo zaseknutý worker. Tady aspoň stojí, co se
+ * stalo, a dá se to zkusit znovu.
+ */
+.pdf-page-retry {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1.5rem;
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: rgb(0 0 0 / 55%);
+}
+
+.pdf-reader[data-theme="night"] .pdf-page-retry,
+.pdf-reader[data-theme="console"] .pdf-page-retry {
+  color: rgb(255 255 255 / 55%);
+}
+
+/*
+ * Místo pro textovou vrstvu.
+ *
+ * Vrstva se skládá stranou a sem se pověsí naráz, až je hotová i s obrazem
+ * stránky - viz `pdf-page-view.tsx`. Slot proto drží jen roh, od kterého se
+ * všechno měří.
+ */
+.pdf-text-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+}
+
+/*
  * Textová vrstva pdf.js.
  *
  * Přenesené z `pdf_viewer.css` - celý ten soubor by si do appky přitáhl
