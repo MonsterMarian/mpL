@@ -123,6 +123,13 @@ export function SettingsDialog({
       title="Nastavení"
       description="Úprava P/_ayer podle tvého poslechu."
       fullScreen
+      /*
+        Místo pod obsahem, ať se dá vytáhnout nahoru.
+        Poslední přepínač sedí u dolní hrany přesně tam, kde má čtenář palec,
+        kterým roluje - přečíst ho znamenalo dívat se pod vlastní ruku. S touhle
+        rezervou se konec kterékoli záložky dá odrolovat do pohodlné výšky.
+      */
+      className="pb-[calc(33dvh+var(--mw-safe-bottom))]"
     >
       <div className="flex flex-col gap-5">
         <div className="flex gap-1 border-b">
