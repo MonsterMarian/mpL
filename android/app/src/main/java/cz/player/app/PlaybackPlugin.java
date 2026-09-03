@@ -38,6 +38,13 @@ public class PlaybackPlugin extends Plugin {
 
                 @Override
                 public void onCompleted() {
+                    if (getBridge() != null && getBridge().getWebView() != null) {
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                            try {
+                                getBridge().getWebView().resumeTimers();
+                            } catch (Exception ignore) {}
+                        });
+                    }
                     notifyListeners("completed", new JSObject());
                 }
 
@@ -50,6 +57,13 @@ public class PlaybackPlugin extends Plugin {
 
                 @Override
                 public void onCommand(String action, long positionMs, String source) {
+                    if (getBridge() != null && getBridge().getWebView() != null) {
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                            try {
+                                getBridge().getWebView().resumeTimers();
+                            } catch (Exception ignore) {}
+                        });
+                    }
                     JSObject event = new JSObject();
                     event.put("action", action);
                     event.put("source", source);
