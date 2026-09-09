@@ -115,6 +115,7 @@ import {
   playNative,
   resumeNative,
   seekNative,
+  setNativeQueue,
 } from "@/lib/playback-service";
 import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
@@ -711,6 +712,17 @@ export default function HomePage() {
         setCurrentTime(positionMs / 1000);
         if (durationMs > 0) setDuration(durationMs / 1000);
       },
+      onTrackChanged: (trackId) => {
+        logPlayback(`služba: přepnuto na ${trackId}`);
+        setCurrentTrackId(trackId);
+        setIsPlaying(true);
+        setCurrentTime(0);
+        nativeLoaded.current = trackId;
+        setPlayStats((previous) => ({
+          ...previous,
+          [trackId]: { count: (previous[trackId]?.count ?? 0) + 1, at: Date.now() },
+        }));
+      },
       onCompleted: () => {
         logPlayback("služba: skladba dohrála");
         controls.current.ended();
@@ -752,11 +764,12 @@ export default function HomePage() {
   }, [sleepAt, toast]);
 
   /**
-   * Ovládání ze zámku a z notifikace. Bez tohohle je z appky na telefonu jen
-   * webová stránka - hudba sice hraje, ale sluchátka ani zamčený displej ji
-   * neumí přeskočit a v notifikaci není vidět, co vlastně běží.
+   * Ovládání ze zámku a z notifikace pro webové přehrávání (v prohlížeči).
+   * V nativní aplikaci na telefonu tohle obsluhuje PlaybackService, aby
+   * nedocházelo ke kolizi dvou MediaSession v systému Android.
    */
   React.useEffect(() => {
+    if (nativeReady) return;
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const session = navigator.mediaSession;
 
@@ -774,9 +787,10 @@ export default function HomePage() {
       artwork: [{ src: currentTrack.artwork ?? BRAND_MARK, sizes: "192x192", type: "image/png" }],
     });
     session.playbackState = isPlaying ? "playing" : "paused";
-  }, [currentTrack, isPlaying]);
+  }, [nativeReady, currentTrack, isPlaying]);
 
   React.useEffect(() => {
+    if (nativeReady) return;
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const actions: [MediaSessionAction, MediaSessionActionHandler][] = [
       ["play", () => void audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {})],
@@ -810,7 +824,7 @@ export default function HomePage() {
         }
       }
     };
-  }, []);
+  }, [nativeReady]);
 
   React.useEffect(() => {
     return () => {
@@ -979,6 +993,7 @@ export default function HomePage() {
       setCurrentTime(positionMs / 1000);
       setDuration(track.durationSeconds);
       void playNative({
+        id: track.id,
         uri: track.uri as string,
         title: track.title,
         artist: track.artist,
@@ -1070,6 +1085,36 @@ export default function HomePage() {
     [queue, visibleTracks, currentTrackId, isShuffled],
   );
 
+  /**
+   * Synchronizace fronty do nativní služby.
+   *
+   * Díky tomu ví služba i při zhasnutém displeji nebo na pozadí, co má hrát
+   * dál, a tlačítka další/předchozí na zámku a v liště fungují okamžitě v Javě.
+   */
+  React.useEffect(() => {
+    if (!nativeReady) return;
+    const byId = new Map(tracks.map((t) => [t.id, t]));
+    const queueTracks = activeQueue.ids
+      .map((id) => byId.get(id))
+      .filter((t): t is Track => Boolean(t && t.uri));
+
+    if (!queueTracks.length) return;
+
+    void setNativeQueue({
+      items: queueTracks.map((t) => ({
+        id: t.id,
+        uri: t.uri as string,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        artwork: t.artworkSource ?? null,
+        durationMs: Math.round(t.durationSeconds * 1000),
+      })),
+      currentId: currentTrackId ?? "",
+      repeatMode,
+    });
+  }, [nativeReady, activeQueue, tracks, currentTrackId, repeatMode]);
+
   const playNext = () => {
     const next = nextTrackId(activeQueue, currentTrackId, true);
     if (!next) return;
@@ -1079,9 +1124,8 @@ export default function HomePage() {
 
   const playPrevious = () => {
     // Po pár vteřinách znamená „zpět" skok na začátek skladby, ne o skladbu dřív.
-    if (audioRef.current && currentTime > 4) {
-      audioRef.current.currentTime = 0;
-      setCurrentTime(0);
+    if (currentTime > 4) {
+      seekTo(0);
       return;
     }
     const previous = previousTrackId(activeQueue, currentTrackId);
@@ -2056,6 +2100,8 @@ export default function HomePage() {
             onPressTrack={pressTrack}
             onToggleTrack={togglePlayback}
             onMenu={(track) => setMenuTracks([track])}
+            onQueueTrack={(track) => queueAction([track], "end")}
+            onQueueSelected={() => selected && queueAction(tracks.filter((track) => selected.has(track.id)), "end")}
             selected={selected}
             onStartSelection={(trackId) => setSelected(new Set([trackId]))}
             onSelectAll={(trackIds) => setSelected(new Set(trackIds))}

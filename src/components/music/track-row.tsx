@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Check, Heart, MoreVertical, Pause, Play } from "lucide-react";
+import { Check, Heart, ListPlus, MoreVertical, Pause, Play } from "lucide-react";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import { cn } from "@/lib/utils";
 import type { Track } from "@/lib/library";
 import { BRAND_MARK } from "@/lib/brand";
@@ -82,6 +83,8 @@ export interface TrackRowProps {
   /** Klik na obal rozehrané skladby - pauza a zpátky. */
   onToggle: () => void;
   onMenu: () => void;
+  /** Zařazení skladby do fronty (potažením doprava). */
+  onQueue?: () => void;
   /** Tlačítko navíc před nabídkou - třeba „odebrat z playlistu". */
   extra?: React.ReactNode;
   /** Režim výběru: klepnutí místo přehrávání zaškrtává. */
@@ -100,11 +103,51 @@ export function TrackRow({
   onPress,
   onToggle,
   onMenu,
+  onQueue,
   extra,
   selecting = false,
   selected = false,
   onLongPress,
 }: TrackRowProps) {
+  const [swipeOffset, setSwipeOffset] = React.useState(0);
+  const [isSwiping, setIsSwiping] = React.useState(false);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = (event: React.TouchEvent) => {
+    if (selecting || !onQueue) return;
+    const touch = event.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    setIsSwiping(false);
+  };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!touchStartRef.current || selecting || !onQueue) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - touchStartRef.current.x;
+    const dy = touch.clientY - touchStartRef.current.y;
+
+    // Potažení doprava, horizontální pohyb musí převažovat
+    if (dx > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      setIsSwiping(true);
+      const damp = dx > 80 ? 80 + (dx - 80) * 0.3 : dx;
+      setSwipeOffset(Math.max(0, damp));
+    } else if (!isSwiping) {
+      setSwipeOffset(0);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (swipeOffset >= 65 && onQueue) {
+      try {
+        void Haptics.impact({ style: ImpactStyle.Light });
+      } catch {}
+      onQueue();
+    }
+    touchStartRef.current = null;
+    setIsSwiping(false);
+    setSwipeOffset(0);
+  };
+
   // Podržení prstu hlásí prohlížeč jako `contextmenu` - vlastní měření času by
   // se pralo se scrolováním a s dvojklikem.
   const holdToSelect = (event: React.MouseEvent) => {
@@ -115,76 +158,101 @@ export function TrackRow({
 
   return (
     <div
-      onContextMenu={holdToSelect}
-      className={cn(
-        "group flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]",
-        active && !selecting && "bg-white/[0.04]",
-        selected && "bg-brand/10",
-      )}
+      className="relative overflow-hidden rounded-xl"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     >
-      <button
-        type="button"
-        onClick={selecting ? onPress : active ? onToggle : onPress}
-        className="relative shrink-0"
-        aria-label={
-          selecting
-            ? `${selected ? "Odebrat z výběru" : "Vybrat"} ${track.title}`
-            : active && playing
-              ? `Pozastavit ${track.title}`
-              : `Přehrát ${track.title}`
-        }
-        aria-pressed={selecting ? selected : undefined}
-      >
-        <Cover artwork={track.artwork} className="size-12 rounded-xl" />
-        <span
+      {swipeOffset > 0 ? (
+        <div
           className={cn(
-            "absolute inset-0 flex items-center justify-center rounded-xl transition-opacity",
-            selecting
-              ? selected
-                ? "bg-brand/85 text-black opacity-100"
-                : "bg-black/45 text-white/70 opacity-100"
-              : active
-                ? "bg-black/50 text-white opacity-100"
-                : "bg-black/50 text-white opacity-0 group-hover:opacity-100",
+            "absolute inset-y-0 left-0 flex items-center gap-2 rounded-xl px-4 transition-colors",
+            swipeOffset >= 65 ? "bg-brand text-black font-semibold" : "bg-brand/20 text-brand",
           )}
+          style={{ width: `${Math.max(swipeOffset, 48)}px` }}
         >
-          {selecting ? (
-            <Check className={cn("size-5", !selected && "opacity-40")} />
-          ) : active && playing ? (
-            <Pause className="size-4 fill-current" />
-          ) : (
-            <Play className="size-4 fill-current" />
-          )}
-        </span>
-      </button>
+          <ListPlus className="size-5 shrink-0" />
+          {swipeOffset >= 65 ? <span className="text-xs font-semibold whitespace-nowrap">Do fronty</span> : null}
+        </div>
+      ) : null}
 
-      <button type="button" onClick={onPress} className="min-w-0 flex-1 text-left">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className={cn("truncate text-sm font-medium", active && "text-brand")}>{track.title}</span>
-          {active ? <Equalizer playing={playing} /> : null}
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {liked ? <Heart className="size-3 shrink-0 fill-current text-brand" /> : null}
-          <span className="truncate">
-            {track.artist}
-            {plays > 0 ? <span className="tabular-nums"> · {plays}×</span> : null}
-          </span>
-        </span>
-      </button>
-
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{track.duration}</span>
-      {/* Ve výběru mizí všechno, co dělá něco jiného než zaškrtnutí. */}
-      {selecting ? null : extra}
-      {selecting ? null : (
+      <div
+        onContextMenu={holdToSelect}
+        style={{
+          transform: swipeOffset > 0 ? `translateX(${swipeOffset}px)` : undefined,
+          transition: isSwiping ? "none" : "transform 0.2s ease-out",
+        }}
+        className={cn(
+          "group flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-white/[0.04]",
+          active && !selecting && "bg-white/[0.04]",
+          selected && "bg-brand/10",
+        )}
+      >
         <button
           type="button"
-          onClick={onMenu}
-          aria-label={`Možnosti skladby ${track.title}`}
-          className="-mr-1 shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
+          onClick={selecting ? onPress : active ? onToggle : onPress}
+          className="relative shrink-0"
+          aria-label={
+            selecting
+              ? `${selected ? "Odebrat z výběru" : "Vybrat"} ${track.title}`
+              : active && playing
+                ? `Pozastavit ${track.title}`
+                : `Přehrát ${track.title}`
+          }
+          aria-pressed={selecting ? selected : undefined}
         >
-          <MoreVertical className="size-4" />
+          <Cover artwork={track.artwork} className="size-12 rounded-xl" />
+          <span
+            className={cn(
+              "absolute inset-0 flex items-center justify-center rounded-xl transition-opacity",
+              selecting
+                ? selected
+                  ? "bg-brand/85 text-black opacity-100"
+                  : "bg-black/45 text-white/70 opacity-100"
+                : active
+                  ? "bg-black/50 text-white opacity-100"
+                  : "bg-black/50 text-white opacity-0 group-hover:opacity-100",
+            )}
+          >
+            {selecting ? (
+              <Check className={cn("size-5", !selected && "opacity-40")} />
+            ) : active && playing ? (
+              <Pause className="size-4 fill-current" />
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+          </span>
         </button>
-      )}
+
+        <button type="button" onClick={onPress} className="min-w-0 flex-1 text-left">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={cn("truncate text-sm font-medium", active && "text-brand")}>{track.title}</span>
+            {active ? <Equalizer playing={playing} /> : null}
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {liked ? <Heart className="size-3 shrink-0 fill-current text-brand" /> : null}
+            <span className="truncate">
+              {track.artist}
+              {plays > 0 ? <span className="tabular-nums"> · {plays}×</span> : null}
+            </span>
+          </span>
+        </button>
+
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{track.duration}</span>
+        {/* Ve výběru mizí všechno, co dělá něco jiného než zaškrtnutí. */}
+        {selecting ? null : extra}
+        {selecting ? null : (
+          <button
+            type="button"
+            onClick={onMenu}
+            aria-label={`Možnosti skladby ${track.title}`}
+            className="-mr-1 shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <MoreVertical className="size-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   Heart,
   Loader2,
   ListMusic,
+  ListPlus,
   Mic2,
   Music2,
   Pencil,
@@ -93,6 +94,10 @@ export interface LibraryViewProps {
   onPressTrack: (trackId: string, queueIds: string[]) => void;
   onToggleTrack: () => void;
   onMenu: (track: Track) => void;
+  /** Zařazení skladby do fronty (potažení). */
+  onQueueTrack?: (track: Track) => void;
+  /** Zařazení všech vybraných skladeb do fronty. */
+  onQueueSelected?: () => void;
   /** Vybrané skladby; `null` = režim výběru neběží. */
   selected: ReadonlySet<string> | null;
   onStartSelection: (trackId: string) => void;
@@ -132,6 +137,8 @@ export function LibraryView(props: LibraryViewProps) {
     onPressTrack,
     onToggleTrack,
     onMenu,
+    onQueueTrack,
+    onQueueSelected,
     onPlayCollection,
     onCreatePlaylist,
     selected,
@@ -156,6 +163,7 @@ export function LibraryView(props: LibraryViewProps) {
       onPress={() => onPressTrack(track.id, queueIds)}
       onToggle={onToggleTrack}
       onMenu={() => onMenu(track)}
+      onQueue={onQueueTrack ? () => onQueueTrack(track) : undefined}
       extra={extra}
       selecting={selected !== null}
       selected={selected?.has(track.id) ?? false}
@@ -171,6 +179,7 @@ export function LibraryView(props: LibraryViewProps) {
         onSelectAll={() => onSelectAll(visibleIds)}
         onEnd={onEndSelection}
         onMenu={onSelectionMenu}
+        onQueue={onQueueSelected}
       />
     ) : null;
 
@@ -308,12 +317,14 @@ function SelectionBar({
   onSelectAll,
   onEnd,
   onMenu,
+  onQueue,
 }: {
   count: number;
   allSelected: boolean;
   onSelectAll: () => void;
   onEnd: () => void;
   onMenu: () => void;
+  onQueue?: () => void;
 }) {
   return (
     <div className="animate-in-up sticky top-16 z-30 -mx-4 mb-4 flex items-center gap-2 border-b border-white/[0.08] bg-background/95 px-4 py-2.5 backdrop-blur">
@@ -338,12 +349,22 @@ function SelectionBar({
       >
         <CheckCheck className="size-3.5" /> Vše
       </button>
+      {onQueue ? (
+        <button
+          type="button"
+          onClick={onQueue}
+          disabled={!count}
+          className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+        >
+          <ListPlus className="size-3.5" /> Do fronty
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={onMenu}
         disabled={!count}
         aria-label="Co s vybranými"
-        className="flex size-9 items-center justify-center rounded-full bg-brand text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+        className="flex size-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
       >
         <MoreHorizontal className="size-4" />
       </button>

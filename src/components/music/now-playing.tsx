@@ -8,6 +8,7 @@ import {
   MoreVertical,
   Pause,
   Play,
+  Plus,
   Repeat,
   Repeat1,
   RotateCcw,
@@ -92,15 +93,20 @@ export function NowPlaying({
   onRemoveFromQueue,
 }: NowPlayingProps) {
   const [queueOpen, setQueueOpen] = React.useState(false);
+  const [scrubTime, setScrubTime] = React.useState<number | null>(null);
 
   // Zavřená obrazovka nemá držet otevřenou frontu - po návratu se čeká obal.
   React.useEffect(() => {
-    if (!open) setQueueOpen(false);
+    if (!open) {
+      setQueueOpen(false);
+      setScrubTime(null);
+    }
   }, [open]);
 
   if (!open) return null;
 
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const displayTime = scrubTime !== null ? scrubTime : currentTime;
+  const progress = duration > 0 ? Math.min(100, Math.max(0, (displayTime / duration) * 100)) : 0;
 
   return (
     <div className="animate-in-up fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background text-foreground">
@@ -131,7 +137,16 @@ export function NowPlaying({
           <div className="animate-in-up mt-6 flex-1">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Na řadě</h2>
-              <span className="text-xs text-muted-foreground">{upcoming.length}</span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex items-center gap-1 text-xs font-semibold text-brand transition-opacity hover:opacity-80"
+                >
+                  <Plus className="size-3.5" /> Přidat skladby
+                </button>
+                <span className="text-xs text-muted-foreground tabular-nums">{upcoming.length}</span>
+              </div>
             </div>
             {upcoming.length ? (
               <div className="-mx-2">
@@ -157,9 +172,16 @@ export function NowPlaying({
                 ))}
               </div>
             ) : (
-              <p className="rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-muted-foreground">
-                Fronta je prázdná. Až tahle skladba dohraje, přehrávač ztichne.
-              </p>
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-muted-foreground">
+                <p>Fronta je prázdná. Až tahle skladba dohraje, přehrávač ztichne.</p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="mt-4 flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90"
+                >
+                  <Plus className="size-3.5" /> Vybrat skladby z knihovny
+                </button>
+              </div>
             )}
           </div>
         ) : (
@@ -192,14 +214,32 @@ export function NowPlaying({
             min="0"
             max={duration || 0}
             step="0.1"
-            value={Math.min(currentTime, duration || 0)}
-            onChange={(event) => onSeek(Number(event.target.value))}
+            value={Math.min(displayTime, duration || 0)}
+            onPointerDown={(event) => setScrubTime(Number(event.currentTarget.value))}
+            onChange={(event) => setScrubTime(Number(event.target.value))}
+            onPointerUp={(event) => {
+              const target = Number(event.currentTarget.value);
+              onSeek(target);
+              setScrubTime(null);
+            }}
+            onTouchEnd={(event) => {
+              const target = Number(event.currentTarget.value);
+              onSeek(target);
+              setScrubTime(null);
+            }}
+            onPointerCancel={() => setScrubTime(null)}
+            onKeyUp={(event) => {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {
+                onSeek(Number(event.currentTarget.value));
+                setScrubTime(null);
+              }
+            }}
             className="player-range"
             aria-label="Pozice ve skladbě"
             style={{ "--range-progress": `${progress}%` } as React.CSSProperties}
           />
           <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted-foreground">
-            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(displayTime)}</span>
             <span>{formatTime(duration)}</span>
           </div>
         </div>

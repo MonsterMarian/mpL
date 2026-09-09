@@ -49,7 +49,9 @@ export function PlayerDock({
   onShuffle,
   onRepeat,
 }: PlayerDockProps) {
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const [scrubTime, setScrubTime] = React.useState<number | null>(null);
+  const displayTime = scrubTime !== null ? scrubTime : currentTime;
+  const progress = duration > 0 ? Math.min(100, Math.max(0, (displayTime / duration) * 100)) : 0;
 
   return (
     <div className="player-dock relative border-t border-white/[0.09]">
@@ -77,14 +79,32 @@ export function PlayerDock({
         </button>
 
         <div className="hidden flex-1 items-center gap-2 sm:flex">
-          <span className="w-9 text-right text-[10px] tabular-nums text-muted-foreground">{formatTime(currentTime)}</span>
+          <span className="w-9 text-right text-[10px] tabular-nums text-muted-foreground">{formatTime(displayTime)}</span>
           <input
             type="range"
             min="0"
             max={duration || 0}
             step="0.1"
-            value={Math.min(currentTime, duration || 0)}
-            onChange={(event) => onSeek(Number(event.target.value))}
+            value={Math.min(displayTime, duration || 0)}
+            onPointerDown={(event) => setScrubTime(Number(event.currentTarget.value))}
+            onChange={(event) => setScrubTime(Number(event.target.value))}
+            onPointerUp={(event) => {
+              const target = Number(event.currentTarget.value);
+              onSeek(target);
+              setScrubTime(null);
+            }}
+            onTouchEnd={(event) => {
+              const target = Number(event.currentTarget.value);
+              onSeek(target);
+              setScrubTime(null);
+            }}
+            onPointerCancel={() => setScrubTime(null)}
+            onKeyUp={(event) => {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {
+                onSeek(Number(event.currentTarget.value));
+                setScrubTime(null);
+              }
+            }}
             className="player-range"
             aria-label="Pozice ve skladbě"
             style={{ "--range-progress": `${progress}%` } as React.CSSProperties}

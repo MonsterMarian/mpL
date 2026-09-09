@@ -53,6 +53,27 @@ public class PlaybackService extends Service {
     static final String EXTRA_POSITION = "positionMs";
     static final String EXTRA_PLAY_WHEN_READY = "playWhenReady";
     static final String EXTRA_COMMAND = "command";
+    static final String EXTRA_TRACK_ID = "trackId";
+
+    public static class QueueItem {
+        public String id = "";
+        public String uri = "";
+        public String title = "";
+        public String artist = "";
+        public String album = "";
+        public String artwork = "";
+        public long durationMs = 0;
+
+        public QueueItem(String id, String uri, String title, String artist, String album, String artwork, long durationMs) {
+            this.id = id != null ? id : "";
+            this.uri = uri != null ? uri : "";
+            this.title = title != null ? title : "";
+            this.artist = artist != null ? artist : "";
+            this.album = album != null ? album : "";
+            this.artwork = artwork;
+            this.durationMs = durationMs;
+        }
+    }
 
     private static final String CHANNEL_ID = "playback";
     private static final int NOTIFICATION_ID = 1;
@@ -70,6 +91,8 @@ public class PlaybackService extends Service {
         void onError(String message);
 
         void onCommand(String action, long positionMs, String source);
+
+        void onTrackChanged(String trackId);
     }
 
     static void setListener(Listener next) {
@@ -79,9 +102,15 @@ public class PlaybackService extends Service {
     /** Běžící instance - kvůli dotazu „co zrovna hraješ". */
     private static PlaybackService instance;
 
+    /** Nativní fronta pro přehrávání na pozadí / lock screenu. */
+    private static final java.util.List<QueueItem> queue = new java.util.ArrayList<>();
+    private static int currentIndex = -1;
+    private static String repeatMode = "off";
+
     private MediaSession session;
     private MediaPlayer player;
     private final Handler ticker = new Handler(Looper.getMainLooper());
+    private String currentTrackId = "";
 
     /** Co je zrovna načtené - podle toho se appka po otevření srovná se službou. */
     private String currentUri = "";
@@ -129,12 +158,12 @@ public class PlaybackService extends Service {
 
                 @Override
                 public void onSkipToNext() {
-                    notifyCommand("next", -1);
+                    skipNext(true);
                 }
 
                 @Override
                 public void onSkipToPrevious() {
-                    notifyCommand("previous", -1);
+                    skipPrevious();
                 }
 
                 @Override
@@ -147,7 +176,8 @@ public class PlaybackService extends Service {
                 public void onSeekTo(long pos) {
                     seek(pos);
                 }
-            }
+            },
+            new Handler(Looper.getMainLooper())
         );
         // Aktivní se sezení stává až se skladbou (viz open). Aktivní sezení bez
         // skladby je pro systém přehrávač, který hraje - a ten se v liště ukáže,
@@ -159,13 +189,6 @@ public class PlaybackService extends Service {
         String action = intent != null ? intent.getAction() : null;
 
         // Bez načtené skladby nemá služba co ovládat.
-        //
-        // Sem se dřív dalo dostat i tak, že si appka jen sáhla na pauzu - třeba
-        // při rozjezdu videa nebo po otevření. Služba tím teprve vznikla, nic
-        // načteného neměla, a přesto se přihlásila do popředí: v liště pak visel
-        // přehrávač s náhradním názvem, textem "Přehrává se", nulovým časem a bez
-        // obalu. Nic nehrálo, jen to tak vypadalo. Když není co ovládat, služba
-        // rovnou končí.
         if (!ACTION_LOAD.equals(action) && !hasTrack()) {
             stopSelf();
             return START_NOT_STICKY;
@@ -175,17 +198,21 @@ public class PlaybackService extends Service {
             String command = intent.getStringExtra(EXTRA_COMMAND);
             if ("play".equals(command)) resume();
             else if ("pause".equals(command)) pause();
-            notifyCommand(command, -1);
+            else if ("next".equals(command)) skipNext(true);
+            else if ("previous".equals(command)) skipPrevious();
+            else notifyCommand(command, -1);
             foreground();
             return START_NOT_STICKY;
         }
 
         if (ACTION_LOAD.equals(action)) {
+            currentTrackId = orEmpty(intent.getStringExtra(EXTRA_TRACK_ID));
             title = orEmpty(intent.getStringExtra(EXTRA_TITLE));
             artist = orEmpty(intent.getStringExtra(EXTRA_ARTIST));
             album = orEmpty(intent.getStringExtra(EXTRA_ALBUM));
             loadArtwork(intent.getStringExtra(EXTRA_ARTWORK));
             currentUri = orEmpty(intent.getStringExtra(EXTRA_URI));
+            syncCurrentIndexWithId(currentTrackId);
             open(currentUri, intent.getLongExtra(EXTRA_POSITION, 0), intent.getBooleanExtra(EXTRA_PLAY_WHEN_READY, true));
         } else if (ACTION_PLAY.equals(action)) {
             resume();
@@ -259,6 +286,23 @@ public class PlaybackService extends Service {
             player.setOnCompletionListener(mp -> {
                 ticker.removeCallbacks(tick);
                 publish();
+                if ("one".equals(repeatMode)) {
+                    seek(0);
+                    resume();
+                    return;
+                }
+                if (!queue.isEmpty()) {
+                    boolean wrap = "all".equals(repeatMode);
+                    if (currentIndex + 1 < queue.size()) {
+                        currentIndex++;
+                        openTrack(queue.get(currentIndex));
+                        return;
+                    } else if (wrap) {
+                        currentIndex = 0;
+                        openTrack(queue.get(0));
+                        return;
+                    }
+                }
                 Listener target = listener;
                 if (target != null) target.onCompleted();
             });
@@ -397,6 +441,85 @@ public class PlaybackService extends Service {
     private void notifyCommand(String action, long positionMs) {
         Listener target = listener;
         if (target != null && action != null) target.onCommand(action, positionMs, "session");
+    }
+
+    private void notifyTrackChanged(String trackId) {
+        Listener target = listener;
+        if (target != null && trackId != null && !trackId.isEmpty()) target.onTrackChanged(trackId);
+    }
+
+    private static synchronized void syncCurrentIndexWithId(String id) {
+        if (id == null || id.isEmpty()) return;
+        for (int i = 0; i < queue.size(); i++) {
+            if (id.equals(queue.get(i).id)) {
+                currentIndex = i;
+                return;
+            }
+        }
+    }
+
+    static synchronized void updateQueue(java.util.List<QueueItem> items, String currentId, String repeat) {
+        queue.clear();
+        if (items != null) {
+            queue.addAll(items);
+        }
+        if (repeat != null && !repeat.isEmpty()) {
+            repeatMode = repeat;
+        }
+        syncCurrentIndexWithId(currentId);
+        if (instance != null && currentId != null && !currentId.isEmpty()) {
+            instance.currentTrackId = currentId;
+        }
+    }
+
+    private synchronized void skipNext(boolean isManual) {
+        if (!queue.isEmpty()) {
+            int nextIndex;
+            if (currentIndex >= 0 && currentIndex + 1 < queue.size()) {
+                nextIndex = currentIndex + 1;
+            } else if (isManual || "all".equals(repeatMode)) {
+                nextIndex = 0;
+            } else {
+                pause();
+                return;
+            }
+            currentIndex = nextIndex;
+            openTrack(queue.get(nextIndex));
+        } else {
+            notifyCommand("next", -1);
+        }
+    }
+
+    private synchronized void skipPrevious() {
+        if (positionMs() > 4000) {
+            seek(0);
+            return;
+        }
+        if (!queue.isEmpty()) {
+            int prevIndex;
+            if (currentIndex > 0) {
+                prevIndex = currentIndex - 1;
+            } else {
+                prevIndex = queue.size() - 1;
+            }
+            currentIndex = prevIndex;
+            openTrack(queue.get(prevIndex));
+        } else {
+            notifyCommand("previous", -1);
+        }
+    }
+
+    private void openTrack(QueueItem item) {
+        if (item == null) return;
+        currentTrackId = item.id;
+        currentUri = orEmpty(item.uri);
+        title = orEmpty(item.title);
+        artist = orEmpty(item.artist);
+        album = orEmpty(item.album);
+        loadArtwork(item.artwork);
+        open(currentUri, 0, true);
+        foreground();
+        notifyTrackChanged(item.id);
     }
 
     // --- notifikace -------------------------------------------------------
@@ -543,9 +666,10 @@ public class PlaybackService extends Service {
 
     // --- co volá plugin ---------------------------------------------------
 
-    static void load(Context context, String uri, String title, String artist, String album, String artwork, long positionMs, boolean playWhenReady) {
+    static void load(Context context, String id, String uri, String title, String artist, String album, String artwork, long positionMs, boolean playWhenReady) {
         Intent intent = new Intent(context, PlaybackService.class)
             .setAction(ACTION_LOAD)
+            .putExtra(EXTRA_TRACK_ID, id)
             .putExtra(EXTRA_URI, uri)
             .putExtra(EXTRA_TITLE, title)
             .putExtra(EXTRA_ARTIST, artist)
@@ -554,6 +678,10 @@ public class PlaybackService extends Service {
             .putExtra(EXTRA_POSITION, positionMs)
             .putExtra(EXTRA_PLAY_WHEN_READY, playWhenReady);
         start(context, intent);
+    }
+
+    static void load(Context context, String uri, String title, String artist, String album, String artwork, long positionMs, boolean playWhenReady) {
+        load(context, "", uri, title, artist, album, artwork, positionMs, playWhenReady);
     }
 
     static void command(Context context, String action, long positionMs) {
@@ -588,6 +716,7 @@ public class PlaybackService extends Service {
             running.isPlaying() ? "1" : "0",
             String.valueOf(running.positionMs()),
             String.valueOf(running.durationMs()),
+            running.currentTrackId != null ? running.currentTrackId : "",
         };
     }
 

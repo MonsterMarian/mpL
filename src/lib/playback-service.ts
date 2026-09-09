@@ -13,6 +13,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor
  * a přehrává značka `<audio>` ve stránce jako dřív.
  */
 export interface NativeTrackRequest {
+  id?: string;
   /** Původní `content://` adresa, ne ta přeložená pro WebView. */
   uri: string;
   title: string;
@@ -21,6 +22,22 @@ export interface NativeTrackRequest {
   artwork: string | null;
   positionMs: number;
   playWhenReady: boolean;
+}
+
+export interface NativeQueueItem {
+  id: string;
+  uri: string;
+  title: string;
+  artist: string;
+  album: string;
+  artwork: string | null;
+  durationMs: number;
+}
+
+export interface SetQueueRequest {
+  items: NativeQueueItem[];
+  currentId: string;
+  repeatMode: string;
 }
 
 export interface PlaybackStateEvent {
@@ -45,10 +62,12 @@ export interface NativeSnapshot {
   playing?: boolean;
   positionMs?: number;
   durationMs?: number;
+  trackId?: string;
 }
 
 interface PlaybackPlugin {
   load(options: NativeTrackRequest): Promise<void>;
+  setQueue(options: SetQueueRequest): Promise<void>;
   current(): Promise<NativeSnapshot>;
   play(): Promise<void>;
   pause(): Promise<void>;
@@ -64,6 +83,7 @@ interface PlaybackPlugin {
     event: "command",
     handler: (data: { action: string; positionMs?: number; source?: string }) => void,
   ): Promise<PluginListenerHandle>;
+  addListener(event: "trackChanged", handler: (data: { trackId: string }) => void): Promise<PluginListenerHandle>;
 }
 
 const Playback = registerPlugin<PlaybackPlugin>("Playback");
@@ -126,11 +146,21 @@ export async function stopNative(): Promise<void> {
   }
 }
 
+export async function setNativeQueue(options: SetQueueRequest): Promise<void> {
+  if (!nativePlaybackAvailable()) return;
+  try {
+    await Playback.setQueue(options);
+  } catch {
+    // viz výše
+  }
+}
+
 export interface NativePlaybackHandlers {
   onState: (state: PlaybackStateEvent) => void;
   onCompleted: () => void;
   onFailed: (message: string) => void;
   onCommand: (command: PlaybackCommand) => void;
+  onTrackChanged?: (trackId: string) => void;
 }
 
 /** Přihlásí se ke všemu, co služba hlásí. Vrací odhlášení. */
@@ -151,6 +181,15 @@ export function listenToNativePlayback(handlers: NativePlaybackHandlers): () => 
   keep(Playback.addListener("state", handlers.onState));
   keep(Playback.addListener("completed", handlers.onCompleted));
   keep(Playback.addListener("failed", (data) => handlers.onFailed(data?.message ?? "Přehrávač selhal.")));
+  if (handlers.onTrackChanged) {
+    keep(
+      Playback.addListener("trackChanged", (data) => {
+        if (data?.trackId && handlers.onTrackChanged) {
+          handlers.onTrackChanged(data.trackId);
+        }
+      }),
+    );
+  }
   keep(
     Playback.addListener("command", (data) => {
       const source: PlaybackSource = data.source === "notification" ? "notification" : "session";

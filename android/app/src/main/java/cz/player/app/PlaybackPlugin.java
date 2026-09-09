@@ -29,46 +29,64 @@ public class PlaybackPlugin extends Plugin {
             new PlaybackService.Listener() {
                 @Override
                 public void onState(boolean playing, long positionMs, long durationMs) {
-                    JSObject event = new JSObject();
-                    event.put("playing", playing);
-                    event.put("positionMs", positionMs);
-                    event.put("durationMs", durationMs);
-                    notifyListeners("state", event);
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        JSObject event = new JSObject();
+                        event.put("playing", playing);
+                        event.put("positionMs", positionMs);
+                        event.put("durationMs", durationMs);
+                        notifyListeners("state", event);
+                    });
                 }
 
                 @Override
                 public void onCompleted() {
-                    if (getBridge() != null && getBridge().getWebView() != null) {
-                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                            try {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        try {
+                            if (getBridge() != null && getBridge().getWebView() != null) {
                                 getBridge().getWebView().resumeTimers();
-                            } catch (Exception ignore) {}
-                        });
-                    }
-                    notifyListeners("completed", new JSObject());
+                            }
+                        } catch (Exception ignore) {}
+                        notifyListeners("completed", new JSObject());
+                    });
                 }
 
                 @Override
                 public void onError(String message) {
-                    JSObject event = new JSObject();
-                    event.put("message", message);
-                    notifyListeners("failed", event);
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        JSObject event = new JSObject();
+                        event.put("message", message);
+                        notifyListeners("failed", event);
+                    });
                 }
 
                 @Override
                 public void onCommand(String action, long positionMs, String source) {
-                    if (getBridge() != null && getBridge().getWebView() != null) {
-                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                            try {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        try {
+                            if (getBridge() != null && getBridge().getWebView() != null) {
                                 getBridge().getWebView().resumeTimers();
-                            } catch (Exception ignore) {}
-                        });
-                    }
-                    JSObject event = new JSObject();
-                    event.put("action", action);
-                    event.put("source", source);
-                    if (positionMs >= 0) event.put("positionMs", positionMs);
-                    notifyListeners("command", event);
+                            }
+                        } catch (Exception ignore) {}
+                        JSObject event = new JSObject();
+                        event.put("action", action);
+                        event.put("source", source);
+                        if (positionMs >= 0) event.put("positionMs", positionMs);
+                        notifyListeners("command", event);
+                    });
+                }
+
+                @Override
+                public void onTrackChanged(String trackId) {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        try {
+                            if (getBridge() != null && getBridge().getWebView() != null) {
+                                getBridge().getWebView().resumeTimers();
+                            }
+                        } catch (Exception ignore) {}
+                        JSObject event = new JSObject();
+                        event.put("trackId", trackId);
+                        notifyListeners("trackChanged", event);
+                    });
                 }
             }
         );
@@ -90,6 +108,7 @@ public class PlaybackPlugin extends Plugin {
         }
         PlaybackService.load(
             getContext(),
+            call.getString("id", ""),
             uri,
             call.getString("title", ""),
             call.getString("artist", ""),
@@ -98,6 +117,34 @@ public class PlaybackPlugin extends Plugin {
             millis(call, "positionMs"),
             !Boolean.FALSE.equals(call.getBoolean("playWhenReady", true))
         );
+        call.resolve();
+    }
+
+    /** Nastaví nativní frontu pro přepínání na pozadí / lock screenu. */
+    @PluginMethod
+    public void setQueue(PluginCall call) {
+        com.getcapacitor.JSArray itemsArray = call.getArray("items");
+        String currentId = call.getString("currentId", "");
+        String repeatMode = call.getString("repeatMode", "off");
+
+        java.util.List<PlaybackService.QueueItem> list = new java.util.ArrayList<>();
+        if (itemsArray != null) {
+            for (int i = 0; i < itemsArray.length(); i++) {
+                try {
+                    org.json.JSONObject obj = itemsArray.getJSONObject(i);
+                    list.add(new PlaybackService.QueueItem(
+                        obj.optString("id"),
+                        obj.optString("uri"),
+                        obj.optString("title"),
+                        obj.optString("artist"),
+                        obj.optString("album"),
+                        obj.optString("artwork"),
+                        obj.optLong("durationMs", 0)
+                    ));
+                } catch (Exception ignore) {}
+            }
+        }
+        PlaybackService.updateQueue(list, currentId, repeatMode);
         call.resolve();
     }
 
@@ -130,6 +177,9 @@ public class PlaybackPlugin extends Plugin {
             result.put("playing", "1".equals(state[1]));
             result.put("positionMs", Long.parseLong(state[2]));
             result.put("durationMs", Long.parseLong(state[3]));
+            if (state.length > 4 && !state[4].isEmpty()) {
+                result.put("trackId", state[4]);
+            }
         }
         call.resolve(result);
     }
