@@ -53,7 +53,12 @@ interface MediaLibraryPlugin {
    * Stáhne soubor z přímé adresy. Obstará to systémový DownloadManager, takže
    * stahování přežije i zavřenou appku a hotový soubor se objeví v knihovně.
    */
-  download(options: { url: string; fileName?: string }): Promise<{ id: string; fileName: string }>;
+  download(options: {
+    url: string;
+    fileName?: string;
+    title?: string;
+    artist?: string;
+  }): Promise<{ id: string; fileName: string }>;
   /**
    * Dokumenty v telefonu (PDF, EPUB, TXT). Chce to „přístup ke všem souborům" -
    * PDF nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.

@@ -23,6 +23,10 @@ import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.Size;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -34,7 +38,17 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -59,6 +73,25 @@ public class MediaLibraryPlugin extends Plugin {
 
     /** Obaly alb má MediaStore pod vlastní adresou, ne u samotné skladby. */
     private static final Uri ALBUM_ART_URI = Uri.parse("content://media/external/audio/albumart");
+
+    private static final String DOWNLOAD_CHANNEL_ID = "downloads";
+    private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor();
+    private final OkHttpClient httpClient = new OkHttpClient();
+
+    private void ensureDownloadChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                DOWNLOAD_CHANNEL_ID,
+                "Stahování",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Průběh stahování a převodu médií");
+            NotificationManager manager = getContext().getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
 
     private String permissionAlias() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ? "media" : "storage";
@@ -507,11 +540,23 @@ public class MediaLibraryPlugin extends Plugin {
             String last = source.getLastPathSegment();
             fileName = last != null && !last.trim().isEmpty() ? last : "stazeny-soubor";
         }
-        // Video patří mezi filmy, zbytek mezi hudbu - podle toho ho pak najde
-        // knihovna appky i galerie telefonu.
+
+        String title = call.getString("title", "");
+        String artist = call.getString("artist", "");
+        if (title == null || title.trim().isEmpty()) {
+            title = fileName.endsWith(".mp3") ? fileName.substring(0, fileName.length() - 4) : fileName;
+        }
+
+        boolean isMp3 = fileName.toLowerCase().endsWith(".mp3");
         boolean video = fileName.toLowerCase().endsWith(".mp4")
             || fileName.toLowerCase().endsWith(".mkv")
             || fileName.toLowerCase().endsWith(".webm");
+
+        if (isMp3) {
+            startMp3Download(call, source, fileName, title, artist);
+            return;
+        }
+
         String folder = video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_MUSIC;
 
         try {
@@ -536,6 +581,129 @@ public class MediaLibraryPlugin extends Plugin {
         } catch (Exception error) {
             call.reject("Stahování se nepodařilo spustit.", "DOWNLOAD_FAILED", error);
         }
+    }
+
+    private void startMp3Download(PluginCall call, Uri source, String fileName, String title, String artist) {
+        ensureDownloadChannel();
+        int notificationId = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
+        Context context = getContext();
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(fileName)
+            .setContentText("Stahuji…")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setProgress(100, 0, false);
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
+        try {
+            notificationManager.notify(notificationId, builder.build());
+        } catch (SecurityException ignored) {}
+
+        JSObject result = new JSObject();
+        result.put("id", String.valueOf(notificationId));
+        result.put("fileName", fileName);
+        call.resolve(result);
+
+        downloadExecutor.execute(() -> {
+            File rawFile = null;
+            File wavFile = null;
+            File mp3File = null;
+            try {
+                rawFile = File.createTempFile("dl_raw_", ".tmp", context.getCacheDir());
+                Request request = new Request.Builder()
+                    .url(source.toString())
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build();
+
+                try (Response response = httpClient.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        throw new IOException("Chyba stahování: HTTP " + response.code());
+                    }
+                    ResponseBody body = response.body();
+                    if (body == null) throw new IOException("Prázdná odpověď serveru.");
+                    long contentLength = body.contentLength();
+                    try (InputStream in = body.byteStream();
+                         FileOutputStream fos = new FileOutputStream(rawFile)) {
+                        byte[] buffer = new byte[16384];
+                        long totalRead = 0;
+                        int read;
+                        int lastPercent = -1;
+                        while ((read = in.read(buffer)) != -1) {
+                            fos.write(buffer, 0, read);
+                            totalRead += read;
+                            if (contentLength > 0) {
+                                int percent = (int) ((totalRead * 100) / contentLength);
+                                if (percent >= lastPercent + 10) {
+                                    lastPercent = percent;
+                                    builder.setContentText("Stahuji… " + percent + "%")
+                                        .setProgress(100, percent, false);
+                                    try {
+                                        notificationManager.notify(notificationId, builder.build());
+                                    } catch (SecurityException ignored) {}
+                                }
+                            }
+                        }
+                        fos.flush();
+                    }
+                }
+
+                if (AudioConverter.isMp3File(rawFile)) {
+                    AudioConverter.saveMp3ToMediaStore(context, rawFile, fileName, title, artist);
+                } else {
+                    builder.setContentText("Převádím do MP3…")
+                        .setProgress(0, 0, true);
+                    try {
+                        notificationManager.notify(notificationId, builder.build());
+                    } catch (SecurityException ignored) {}
+
+                    wavFile = File.createTempFile("dl_wav_", ".wav", context.getCacheDir());
+                    AudioConverter.decodeToWav(rawFile, wavFile);
+                    rawFile.delete();
+
+                    mp3File = File.createTempFile("dl_mp3_", ".mp3", context.getCacheDir());
+                    AudioConverter.wavToMp3(wavFile, mp3File, title, artist);
+                    wavFile.delete();
+
+                    AudioConverter.saveMp3ToMediaStore(context, mp3File, fileName, title, artist);
+                }
+
+                builder.setContentText("Staženo do složky Hudba")
+                    .setProgress(0, 0, false)
+                    .setOngoing(false)
+                    .setAutoCancel(true);
+                try {
+                    notificationManager.notify(notificationId, builder.build());
+                } catch (SecurityException ignored) {}
+
+                JSObject event = new JSObject();
+                event.put("fileName", fileName);
+                event.put("status", "completed");
+                notifyListeners("downloadComplete", event);
+
+            } catch (Exception error) {
+                android.util.Log.e("MediaLibrary", "Stahování do MP3 selhalo", error);
+                builder.setContentText("Stahování selhalo: " + error.getMessage())
+                    .setProgress(0, 0, false)
+                    .setOngoing(false)
+                    .setAutoCancel(true);
+                try {
+                    notificationManager.notify(notificationId, builder.build());
+                } catch (SecurityException ignored) {}
+
+                JSObject event = new JSObject();
+                event.put("fileName", fileName);
+                event.put("status", "failed");
+                event.put("error", error.getMessage());
+                notifyListeners("downloadError", event);
+            } finally {
+                if (rawFile != null && rawFile.exists()) rawFile.delete();
+                if (wavFile != null && wavFile.exists()) wavFile.delete();
+                if (mp3File != null && mp3File.exists()) mp3File.delete();
+            }
+        });
     }
 
     /**

@@ -84,6 +84,7 @@ dependencies {
     // Adresy streamů z YouTube bez oficiálního API - stejná knihovna, jakou
     // používá NewPipe.
     implementation "com.github.TeamNewPipe:NewPipeExtractor:v0.26.5"
+    implementation "de.sciss:jump3r:1.0.5"
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     // Přehrávání videa, když si s ním ExoPlayer neporadí: libVLC si dekóduje
     // všechno sám (AC3, DTS, exotické kontejnery), nezávisle na tom, co má

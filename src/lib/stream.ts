@@ -89,7 +89,7 @@ export async function clearNativeCrash(): Promise<void> {
 /**
  * Najde adresu souboru za odkazem.
  *
- * `kind: "audio"` vrátí zvukovou stopu (m4a), `"video"` obraz i zvuk v jednom
+ * `kind: "audio"` vrátí zvukovou stopu (mp3), `"video"` obraz i zvuk v jednom
  * souboru. Odkaz na Spotify se nerozebírá - přečte se z něj jen veřejný název
  * a podle něj se skladba najde na YouTube.
  */

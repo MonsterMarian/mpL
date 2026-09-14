@@ -117,7 +117,7 @@ export function safeFileName(title: string, extension: string): string {
     .trim()
     .slice(0, 110)
     .replace(/^[-\s]+|[-\s]+$/g, "");
-  const suffix = extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "m4a";
+  const suffix = extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
   return `${clean || "stazeny-soubor"}.${suffix}`;
 }
 

@@ -26,8 +26,7 @@ import { cn } from "@/lib/utils";
  * stahuje - v telefonu není nic, čím by se adresa streamu dala zjistit z
  * JavaScriptu.
  *
- * Hudba se ukládá jako `m4a`, ne `mp3`: YouTube posílá zvuk v AAC nebo Opusu
- * a převod by chtěl ffmpeg, který v appce není. Přehraje to všechno včetně
+ * Hudba se ukládá jako `mp3`, video jako `mp4`. Přehraje to všechno včetně
  * téhle appky.
  */
 type Kind = "audio" | "video";
@@ -66,6 +65,8 @@ export function DownloadView({
     try {
       let fileUrl = address;
       let fileName = guessFileName(address);
+      let streamTitle: string | undefined;
+      let streamArtist: string | undefined;
 
       if (needsResolving(address)) {
         if (!nativeStreamAvailable()) {
@@ -81,10 +82,17 @@ export function DownloadView({
         const found = await resolveStream(address, kind);
         fileUrl = found.url;
         fileName = safeFileName(`${found.author ? `${found.author} - ` : ""}${found.title}`, found.extension);
+        streamTitle = found.title;
+        streamArtist = found.author;
       }
 
       setBusy("starting");
-      const result = await MediaLibrary.download({ url: fileUrl, fileName });
+      const result = await MediaLibrary.download({
+        url: fileUrl,
+        fileName,
+        title: streamTitle,
+        artist: streamArtist,
+      });
       setHistory(addDownload({ url: address, fileName: result?.fileName ?? fileName, at: Date.now() }));
       setUrl("");
       onToast?.({
@@ -163,9 +171,9 @@ export function DownloadView({
       </form>
 
       <p className="rounded-xl border border-dashed border-white/10 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-        Hudba se ukládá jako <span className="font-mono">m4a</span> - YouTube posílá zvuk v AAC
-        nebo Opusu a převod na MP3 by chtěl nástroj, který v telefonu není. Přehraje se všude,
-        včetně téhle appky. U Spotify se čte jen název skladby a ta se pak najde na YouTube:
+        Hudba se ukládá ve formátu <span className="font-mono">mp3</span> do složky Hudba,
+        video jako <span className="font-mono">mp4</span> do Filmů. Přehraje se všude,
+        včetně téhle appky. U Spotify se přečte název skladby a ta se pak najde na YouTube:
         do chráněného obsahu appka nesahá.
       </p>
 
