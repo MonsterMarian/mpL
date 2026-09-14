@@ -3,7 +3,13 @@
 import * as React from "react";
 import { AlertTriangle, ArrowDownToLine, Loader2, Music2, Trash2, Video } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { MediaLibrary, canReadDeviceMedia } from "@/lib/media-library";
+import {
+  MediaLibrary,
+  canReadDeviceMedia,
+  type DownloadCompleteEvent,
+  type DownloadErrorEvent,
+  type DownloadProgressEvent,
+} from "@/lib/media-library";
 import { getNativeStreamInfo, nativeStreamAvailable, resolveStream } from "@/lib/stream";
 import {
   addDownload,
@@ -31,6 +37,14 @@ import { cn } from "@/lib/utils";
  */
 type Kind = "audio" | "video";
 
+interface ActiveDownload {
+  id: string;
+  fileName: string;
+  /** 0–100 při stahování, -1 = indeterminate konverze */
+  progress: number;
+  phase: "downloading" | "converting";
+}
+
 export function DownloadView({
   onToast,
   onDownloaded,
@@ -44,16 +58,58 @@ export function DownloadView({
   const [busy, setBusy] = React.useState<null | "resolving" | "starting">(null);
   const [history, setHistory] = React.useState<DownloadRecord[]>([]);
   const [nativeOutdated, setNativeOutdated] = React.useState(false);
+  const [activeDownloads, setActiveDownloads] = React.useState<ActiveDownload[]>([]);
+
+  // Ref na onDownloaded, aby listener ve useEffect nebral zastaralou closure
+  const onDownloadedRef = React.useRef(onDownloaded);
+  React.useEffect(() => { onDownloadedRef.current = onDownloaded; }, [onDownloaded]);
 
   React.useEffect(() => {
     setHistory(loadDownloads());
-    if (canReadDeviceMedia()) {
-      getNativeStreamInfo().then((info) => {
-        if (!info || info.extractorVersion !== "0.26.5") {
-          setNativeOutdated(true);
-        }
-      });
-    }
+    if (!canReadDeviceMedia()) return;
+
+    getNativeStreamInfo().then((info) => {
+      if (!info || info.extractorVersion !== "0.26.5") {
+        setNativeOutdated(true);
+      }
+    });
+
+    // Přihlásíme se k odběru download eventů
+    const listeners: Promise<{ remove: () => void }>[] = [];
+
+    listeners.push(
+      MediaLibrary.addListener("downloadProgress", (e: DownloadProgressEvent) => {
+        setActiveDownloads((prev) => {
+          const existing = prev.find((d) => d.id === e.id);
+          if (!existing) {
+            return [...prev, { id: e.id, fileName: e.fileName, progress: e.progress, phase: e.phase }];
+          }
+          return prev.map((d) =>
+            d.id === e.id ? { ...d, progress: e.progress, phase: e.phase } : d
+          );
+        });
+      }),
+    );
+
+    listeners.push(
+      MediaLibrary.addListener("downloadComplete", (e: DownloadCompleteEvent) => {
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== e.id));
+        onDownloadedRef.current?.();
+        onToast?.({ tone: "win", title: "Staženo", description: `${e.fileName} je v knihovně.` });
+      }),
+    );
+
+    listeners.push(
+      MediaLibrary.addListener("downloadError", (e: DownloadErrorEvent) => {
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== e.id));
+        onToast?.({ tone: "warn", title: "Stahování selhalo", description: e.error?.slice(0, 130) });
+      }),
+    );
+
+    return () => {
+      void Promise.all(listeners).then((handles) => handles.forEach((h) => h.remove()));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const start = async (event: React.FormEvent) => {
@@ -103,16 +159,19 @@ export function DownloadView({
         title: streamTitle,
         artist: streamArtist,
       });
+
+      // Ihned zaregistrujeme aktivní download do stavu
+      const downloadId = result?.id;
+      if (downloadId) {
+        setActiveDownloads((prev) => [
+          ...prev,
+          { id: downloadId, fileName: result.fileName ?? fileName, progress: 0, phase: "downloading" },
+        ]);
+      }
+
       setHistory(addDownload({ url: address, fileName: result?.fileName ?? fileName, at: Date.now() }));
       setUrl("");
-      onToast?.({
-        tone: "win",
-        title: "Stahuju",
-        description: "Průběh je v liště telefonu. Až bude hotovo, objeví se v knihovně.",
-      });
-      // Soubor přibude v MediaStore až po dostažení - knihovna se přečte znovu
-      // za chvíli i po návratu do appky.
-      window.setTimeout(() => onDownloaded?.(), 5000);
+      onToast?.({ tone: "info", title: "Stahuji", description: "Průběh vidíš níže." });
     } catch (error) {
       console.error("Stahování selhalo", error);
       const message = error instanceof Error ? error.message : String(error);
@@ -211,6 +270,45 @@ export function DownloadView({
         včetně téhle appky. U Spotify se přečte název skladby a ta se pak najde na YouTube:
         do chráněného obsahu appka nesahá.
       </p>
+
+      {/* Aktivní stahování */}
+      {activeDownloads.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Právě se stahuje</h2>
+          <ul className="flex flex-col gap-2">
+            {activeDownloads.map((dl) => (
+              <li
+                key={dl.id}
+                className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3"
+              >
+                <div className="flex items-center gap-2">
+                  <Loader2 className="size-4 shrink-0 animate-spin text-brand" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{dl.fileName}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {dl.phase === "converting" ? "Konverze…" : `${dl.progress} %`}
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+                  {dl.phase === "converting" ? (
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+                  ) : (
+                    <div
+                      className="h-full rounded-full bg-brand transition-all duration-300"
+                      style={{ width: `${dl.progress}%` }}
+                    />
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {dl.phase === "converting"
+                    ? "Převádím audio do MP3 — může to chvíli trvat…"
+                    : "Stahuji ze serveru…"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {history.length > 0 ? (
         <div className="flex flex-col gap-2">

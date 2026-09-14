@@ -611,6 +611,7 @@ public class MediaLibraryPlugin extends Plugin {
             File rawFile = null;
             File wavFile = null;
             File mp3File = null;
+            String downloadId = String.valueOf(notificationId);
             try {
                 rawFile = File.createTempFile("dl_raw_", ".tmp", context.getCacheDir());
                 Request request = new Request.Builder()
@@ -636,13 +637,20 @@ public class MediaLibraryPlugin extends Plugin {
                             totalRead += read;
                             if (contentLength > 0) {
                                 int percent = (int) ((totalRead * 100) / contentLength);
-                                if (percent >= lastPercent + 10) {
+                                if (percent >= lastPercent + 5) {
                                     lastPercent = percent;
                                     builder.setContentText("Stahuji… " + percent + "%")
                                         .setProgress(100, percent, false);
                                     try {
                                         notificationManager.notify(notificationId, builder.build());
                                     } catch (SecurityException ignored) {}
+                                    // Emituj progress event do JS
+                                    JSObject prog = new JSObject();
+                                    prog.put("id", downloadId);
+                                    prog.put("fileName", fileName);
+                                    prog.put("progress", percent);
+                                    prog.put("phase", "downloading");
+                                    notifyListeners("downloadProgress", prog);
                                 }
                             }
                         }
@@ -658,6 +666,13 @@ public class MediaLibraryPlugin extends Plugin {
                     try {
                         notificationManager.notify(notificationId, builder.build());
                     } catch (SecurityException ignored) {}
+                    // Informuj JS o fázi konverze
+                    JSObject conv = new JSObject();
+                    conv.put("id", downloadId);
+                    conv.put("fileName", fileName);
+                    conv.put("progress", -1);
+                    conv.put("phase", "converting");
+                    notifyListeners("downloadProgress", conv);
 
                     wavFile = File.createTempFile("dl_wav_", ".wav", context.getCacheDir());
                     AudioConverter.decodeToWav(rawFile, wavFile);
@@ -679,6 +694,7 @@ public class MediaLibraryPlugin extends Plugin {
                 } catch (SecurityException ignored) {}
 
                 JSObject event = new JSObject();
+                event.put("id", downloadId);
                 event.put("fileName", fileName);
                 event.put("status", "completed");
                 notifyListeners("downloadComplete", event);
@@ -694,6 +710,7 @@ public class MediaLibraryPlugin extends Plugin {
                 } catch (SecurityException ignored) {}
 
                 JSObject event = new JSObject();
+                event.put("id", downloadId);
                 event.put("fileName", fileName);
                 event.put("status", "failed");
                 event.put("error", error.getMessage());

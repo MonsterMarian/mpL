@@ -1,4 +1,29 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor, PluginListenerHandle, registerPlugin } from "@capacitor/core";
+
+/** Progress event vysílaný nativní vrstvou průběžně při stahování a konverzi. */
+export interface DownloadProgressEvent {
+  /** ID downloadu — odpovídá `id` vrácenému z `download()`. */
+  id: string;
+  fileName: string;
+  /** 0–100 při stahování, -1 při indeterminate konverzi do MP3. */
+  progress: number;
+  phase: "downloading" | "converting";
+}
+
+/** Event vysílaný po úspěšném dokončení stahování. */
+export interface DownloadCompleteEvent {
+  id: string;
+  fileName: string;
+  status: "completed";
+}
+
+/** Event vysílaný při chybě stahování. */
+export interface DownloadErrorEvent {
+  id: string;
+  fileName: string;
+  status: "failed";
+  error: string;
+}
 
 export interface NativeAudioTrack {
   id: string;
@@ -78,6 +103,12 @@ interface MediaLibraryPlugin {
   checkVideoPermission(): Promise<{ granted: boolean }>;
   requestVideoPermission(): Promise<{ granted: boolean }>;
   listVideo(): Promise<{ videos: NativeVideo[] }>;
+  /** Průběžný progres stahování (0–100 nebo -1 při konverzi). */
+  addListener(event: "downloadProgress", handler: (e: DownloadProgressEvent) => void): Promise<PluginListenerHandle>;
+  /** Stahování dokončeno — soubor je v telefonu. */
+  addListener(event: "downloadComplete", handler: (e: DownloadCompleteEvent) => void): Promise<PluginListenerHandle>;
+  /** Stahování selhalo. */
+  addListener(event: "downloadError", handler: (e: DownloadErrorEvent) => void): Promise<PluginListenerHandle>;
 }
 
 export const MediaLibrary = registerPlugin<MediaLibraryPlugin>("MediaLibrary");
