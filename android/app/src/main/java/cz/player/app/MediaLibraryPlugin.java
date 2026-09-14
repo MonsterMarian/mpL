@@ -644,13 +644,16 @@ public class MediaLibraryPlugin extends Plugin {
                                     try {
                                         notificationManager.notify(notificationId, builder.build());
                                     } catch (SecurityException ignored) {}
-                                    // Emituj progress event do JS
-                                    JSObject prog = new JSObject();
-                                    prog.put("id", downloadId);
-                                    prog.put("fileName", fileName);
-                                    prog.put("progress", percent);
-                                    prog.put("phase", "downloading");
-                                    notifyListeners("downloadProgress", prog);
+                                    // Emituj progress event do JS — musí být na main threadu
+                                    final int pct = percent;
+                                    getActivity().runOnUiThread(() -> {
+                                        JSObject prog = new JSObject();
+                                        prog.put("id", downloadId);
+                                        prog.put("fileName", fileName);
+                                        prog.put("progress", pct);
+                                        prog.put("phase", "downloading");
+                                        notifyListeners("downloadProgress", prog);
+                                    });
                                 }
                             }
                         }
@@ -666,13 +669,15 @@ public class MediaLibraryPlugin extends Plugin {
                     try {
                         notificationManager.notify(notificationId, builder.build());
                     } catch (SecurityException ignored) {}
-                    // Informuj JS o fázi konverze
-                    JSObject conv = new JSObject();
-                    conv.put("id", downloadId);
-                    conv.put("fileName", fileName);
-                    conv.put("progress", -1);
-                    conv.put("phase", "converting");
-                    notifyListeners("downloadProgress", conv);
+                    // Informuj JS o fázi konverze — musí být na main threadu
+                    getActivity().runOnUiThread(() -> {
+                        JSObject conv = new JSObject();
+                        conv.put("id", downloadId);
+                        conv.put("fileName", fileName);
+                        conv.put("progress", -1);
+                        conv.put("phase", "converting");
+                        notifyListeners("downloadProgress", conv);
+                    });
 
                     wavFile = File.createTempFile("dl_wav_", ".wav", context.getCacheDir());
                     AudioConverter.decodeToWav(rawFile, wavFile);
@@ -693,11 +698,13 @@ public class MediaLibraryPlugin extends Plugin {
                     notificationManager.notify(notificationId, builder.build());
                 } catch (SecurityException ignored) {}
 
-                JSObject event = new JSObject();
-                event.put("id", downloadId);
-                event.put("fileName", fileName);
-                event.put("status", "completed");
-                notifyListeners("downloadComplete", event);
+                getActivity().runOnUiThread(() -> {
+                    JSObject event = new JSObject();
+                    event.put("id", downloadId);
+                    event.put("fileName", fileName);
+                    event.put("status", "completed");
+                    notifyListeners("downloadComplete", event);
+                });
 
             } catch (Exception error) {
                 android.util.Log.e("MediaLibrary", "Stahování do MP3 selhalo", error);
@@ -709,12 +716,14 @@ public class MediaLibraryPlugin extends Plugin {
                     notificationManager.notify(notificationId, builder.build());
                 } catch (SecurityException ignored) {}
 
-                JSObject event = new JSObject();
-                event.put("id", downloadId);
-                event.put("fileName", fileName);
-                event.put("status", "failed");
-                event.put("error", error.getMessage());
-                notifyListeners("downloadError", event);
+                getActivity().runOnUiThread(() -> {
+                    JSObject event = new JSObject();
+                    event.put("id", downloadId);
+                    event.put("fileName", fileName);
+                    event.put("status", "failed");
+                    event.put("error", error.getMessage());
+                    notifyListeners("downloadError", event);
+                });
             } finally {
                 if (rawFile != null && rawFile.exists()) rawFile.delete();
                 if (wavFile != null && wavFile.exists()) wavFile.delete();
