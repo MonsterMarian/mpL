@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDownToLine, Loader2, Music2, Trash2, Video } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, Loader2, Music2, Trash2, Video } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MediaLibrary, canReadDeviceMedia } from "@/lib/media-library";
-import { nativeStreamAvailable, resolveStream } from "@/lib/stream";
+import { getNativeStreamInfo, nativeStreamAvailable, resolveStream } from "@/lib/stream";
 import {
   addDownload,
   cleanDownloadUrl,
@@ -43,8 +43,18 @@ export function DownloadView({
   const [kind, setKind] = React.useState<Kind>("audio");
   const [busy, setBusy] = React.useState<null | "resolving" | "starting">(null);
   const [history, setHistory] = React.useState<DownloadRecord[]>([]);
+  const [nativeOutdated, setNativeOutdated] = React.useState(false);
 
-  React.useEffect(() => setHistory(loadDownloads()), []);
+  React.useEffect(() => {
+    setHistory(loadDownloads());
+    if (canReadDeviceMedia()) {
+      getNativeStreamInfo().then((info) => {
+        if (!info || info.extractorVersion !== "0.26.5") {
+          setNativeOutdated(true);
+        }
+      });
+    }
+  }, []);
 
   const start = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -106,7 +116,18 @@ export function DownloadView({
     } catch (error) {
       console.error("Stahování selhalo", error);
       const message = error instanceof Error ? error.message : String(error);
-      onToast?.({ tone: "warn", title: "Nepovedlo se", description: message.slice(0, 120) });
+      const isUnavailable =
+        message.includes("Player.apk") ||
+        message.includes("unavailable") ||
+        message.includes("ContentNotAvailable");
+
+      onToast?.({
+        tone: "warn",
+        title: "Nepovedlo se",
+        description: isUnavailable
+          ? "Odkaz se nepodařilo rozebrat. Pokud máš v telefonu starší verzi aplikace, nainstaluj si aktuální Player.apk."
+          : message.slice(0, 130),
+      });
     } finally {
       setBusy(null);
     }
@@ -124,6 +145,20 @@ export function DownloadView({
           v telefonu, takže si to knihovna appky najde sama.
         </p>
       </div>
+
+      {nativeOutdated ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+          <AlertTriangle className="size-4 shrink-0 mt-0.5 text-amber-400" />
+          <div>
+            <p className="font-semibold text-amber-300">V telefonu běží stará verze aplikace</p>
+            <p className="mt-0.5 text-muted-foreground text-[11px] leading-relaxed">
+              Nativní modul pro YouTube v nainstalovaném APK je starý. Živá aktualizace
+              mění jen web — pro spolehlivé stahování z YouTube je nutné přeinstalovat
+              aplikaci novým balíčkem <span className="font-mono text-foreground">Player.apk</span>.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <form onSubmit={start} className="flex flex-col gap-3">
         <div className="flex gap-1 rounded-full bg-white/[0.04] p-1">

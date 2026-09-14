@@ -14,9 +14,16 @@ export interface ResolvedStream {
   extension: string;
 }
 
+export interface NativeStreamInfo {
+  extractorVersion: string;
+  version: string;
+  mp3Supported?: boolean;
+}
+
 interface StreamPlugin {
   playVideo(options: { uri: string; title?: string }): Promise<void>;
   resolve(options: { url: string; kind: "audio" | "video" }): Promise<ResolvedStream>;
+  getInfo(): Promise<NativeStreamInfo>;
   lastCrash(): Promise<{ crash: string | null }>;
   clearCrash(): Promise<void>;
 }
@@ -25,6 +32,15 @@ const Stream = registerPlugin<StreamPlugin>("Stream");
 
 export function nativeStreamAvailable(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("Stream");
+}
+
+export async function getNativeStreamInfo(): Promise<NativeStreamInfo | null> {
+  if (!nativeStreamAvailable()) return null;
+  try {
+    return await Stream.getInfo();
+  } catch {
+    return null;
+  }
 }
 
 /**

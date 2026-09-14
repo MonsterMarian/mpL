@@ -63,6 +63,16 @@ public class StreamPlugin extends Plugin {
         call.resolve();
     }
 
+    /** Informace o nativním modulu pro kontrolu z webu */
+    @PluginMethod
+    public void getInfo(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("extractorVersion", "0.26.5");
+        result.put("version", "2026.09.14");
+        result.put("mp3Supported", true);
+        call.resolve(result);
+    }
+
     /**
      * Spustí nativní přehrávač videa (ExoPlayer, v záloze VLC) - ten umí i to,
      * co WebView ne.
@@ -150,6 +160,26 @@ public class StreamPlugin extends Plugin {
                     url = found;
                 }
 
+                // Normalizace odkazu:
+                // Z YouTube adresy vytáhne čisté video ID a odstraní parametry playlistu (&list=, &index=, &start_radio=)
+                // i sledování (?si=, &feature=), které NewPipe odmítá zpracovat.
+                url = normalizeYouTubeUrl(url);
+
+                if (url.contains("playlist") && (url.contains("?list=") || url.contains("&list="))) {
+                    try {
+                        org.schabi.newpipe.extractor.playlist.PlaylistInfo playlist =
+                            org.schabi.newpipe.extractor.playlist.PlaylistInfo.getInfo(ServiceList.YouTube, url);
+                        if (playlist.getRelatedItems() != null) {
+                            for (Object item : playlist.getRelatedItems()) {
+                                if (item instanceof StreamInfoItem) {
+                                    url = ((StreamInfoItem) item).getUrl();
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
                 StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, url);
                 JSObject result = new JSObject();
                 result.put("title", info.getName());
@@ -176,9 +206,36 @@ public class StreamPlugin extends Plugin {
 
                 call.resolve(result);
             } catch (Exception error) {
-                call.reject("Odkaz se nepodařilo rozebrat: " + error.getMessage(), "STREAM_RESOLVE_FAILED", error);
+                String msg = error.getMessage();
+                if (error instanceof org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException) {
+                    msg = "Video není na YouTube dostupné (nebo je potřeba přeinstalovat aplikaci Player.apk).";
+                } else if (error instanceof org.schabi.newpipe.extractor.exceptions.ParsingException) {
+                    msg = "Odkaz se nepodařilo na YouTube rozpoznat. Zkontroluj adresu.";
+                } else if (error instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException) {
+                    msg = "YouTube vyžaduje ověření proti robotům. Zkus to za chvíli.";
+                } else if (msg == null || msg.trim().isEmpty()) {
+                    msg = error.getClass().getSimpleName();
+                }
+                call.reject("Odkaz se nepodařilo rozebrat: " + msg, "STREAM_RESOLVE_FAILED", error);
             }
         });
+    }
+
+    /**
+     * Očistí YouTube URL na kanonický tvar watch?v=VIDEO_ID.
+     * Odstraní parametry playlistů a tracking parametry, které způsobují chyby v NewPipe.
+     */
+    public static String normalizeYouTubeUrl(String url) {
+        if (url == null) return null;
+        String clean = url.trim();
+        java.util.regex.Pattern videoPattern = java.util.regex.Pattern.compile(
+            "(?:youtube\\.com\\/(?:watch\\?.*?v=|shorts\\/|embed\\/|v\\/|live\\/)|youtu\\.be\\/)([a-zA-Z0-9_-]{11})"
+        );
+        java.util.regex.Matcher videoMatcher = videoPattern.matcher(clean);
+        if (videoMatcher.find()) {
+            return "https://www.youtube.com/watch?v=" + videoMatcher.group(1);
+        }
+        return clean;
     }
 
     /**

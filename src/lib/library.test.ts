@@ -196,5 +196,8 @@ describe("stahování", () => {
 
     expect(cleanDownloadUrl("  youtu.be/abc  ")).toBe("https://youtu.be/abc");
     expect(cleanDownloadUrl("Koukni na video https://www.youtube.com/watch?v=abc skvělé")).toBe("https://www.youtube.com/watch?v=abc");
+    expect(cleanDownloadUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    expect(cleanDownloadUrl("https://youtu.be/dQw4w9WgXcQ?si=abcdef123456&list=PL12345")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    expect(cleanDownloadUrl("https://youtube.com/shorts/dQw4w9WgXcQ?feature=share")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   });
 });

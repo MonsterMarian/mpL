@@ -61,11 +61,22 @@ export function cleanDownloadUrl(input: string): string {
   if (!text) return "";
   const match = text.match(/https?:\/\/[^\s]+/i);
   if (match) {
-    return match[0];
+    text = match[0];
+  } else if (/^(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be|open\.spotify\.com)/i.test(text)) {
+    text = `https://${text}`;
   }
-  if (/^(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be|open\.spotify\.com)/i.test(text)) {
-    return `https://${text}`;
+
+  // Normalizace YouTube videa:
+  // Vytáhne 11znakový identifikátor videa z watch?v=, youtu.be/, shorts/, embed/, live/...
+  // a zbaví se parametrů playlistu (&list=, &index=, &start_radio=) i sledovacích (?si=, &feature=),
+  // které NewPipeExtractor odmítá zpracovat.
+  const ytVideoMatch = text.match(
+    /(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch\?.*?v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
+  );
+  if (ytVideoMatch) {
+    return `https://www.youtube.com/watch?v=${ytVideoMatch[1]}`;
   }
+
   return text;
 }
 
