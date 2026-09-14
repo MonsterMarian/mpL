@@ -7,6 +7,7 @@ import { MediaLibrary, canReadDeviceMedia } from "@/lib/media-library";
 import { nativeStreamAvailable, resolveStream } from "@/lib/stream";
 import {
   addDownload,
+  cleanDownloadUrl,
   clearDownloads,
   guessFileName,
   loadDownloads,
@@ -48,7 +49,7 @@ export function DownloadView({
 
   const start = async (event: React.FormEvent) => {
     event.preventDefault();
-    const address = url.trim();
+    const address = cleanDownloadUrl(url);
     if (!address || busy) return;
 
     const broken = unsupportedSource(address);

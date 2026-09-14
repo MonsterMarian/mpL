@@ -185,10 +185,16 @@ describe("stahování", () => {
   });
 
   it("odkaz na stránku se pozná od přímého souboru", async () => {
-    const { needsResolving } = await import("./downloads");
+    const { needsResolving, cleanDownloadUrl } = await import("./downloads");
     expect(needsResolving("https://www.youtube.com/watch?v=abc")).toBe(true);
     expect(needsResolving("https://youtu.be/abc")).toBe(true);
+    expect(needsResolving("youtu.be/abc")).toBe(true);
+    expect(needsResolving("youtube.com/watch?v=abc")).toBe(true);
+    expect(needsResolving("Podívej se na: https://youtu.be/abc")).toBe(true);
     expect(needsResolving("https://open.spotify.com/track/xyz")).toBe(true);
     expect(needsResolving("https://example.com/dil-12.mp3")).toBe(false);
+
+    expect(cleanDownloadUrl("  youtu.be/abc  ")).toBe("https://youtu.be/abc");
+    expect(cleanDownloadUrl("Koukni na video https://www.youtube.com/watch?v=abc skvělé")).toBe("https://www.youtube.com/watch?v=abc");
   });
 });

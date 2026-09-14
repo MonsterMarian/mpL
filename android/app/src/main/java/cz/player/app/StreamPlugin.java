@@ -181,14 +181,26 @@ public class StreamPlugin extends Plugin {
         });
     }
 
-    /** Nejlepší zvuk podle datového toku - vyšší číslo, lepší poslech. */
+    /**
+     * Nejlepší zvuk podle datového toku.
+     *
+     * Preferuje se formát m4a (AAC) - Android MediaStore ho spolehlivě zařadí
+     * mezi hudbu (IS_MUSIC), načte metadata a uloží do složky Hudba.
+     * Webm (Opus) se použije jen v případě, že m4a není k dispozici.
+     */
     private AudioStream bestAudio(List<AudioStream> streams) {
-        AudioStream best = null;
+        AudioStream bestM4a = null;
+        AudioStream bestOther = null;
         for (AudioStream stream : streams) {
             if (stream.getContent() == null || stream.getContent().isEmpty()) continue;
-            if (best == null || stream.getAverageBitrate() > best.getAverageBitrate()) best = stream;
+            boolean isM4a = stream.getFormat() != null && "m4a".equalsIgnoreCase(stream.getFormat().getSuffix());
+            if (isM4a) {
+                if (bestM4a == null || stream.getAverageBitrate() > bestM4a.getAverageBitrate()) bestM4a = stream;
+            } else {
+                if (bestOther == null || stream.getAverageBitrate() > bestOther.getAverageBitrate()) bestOther = stream;
+            }
         }
-        return best;
+        return bestM4a != null ? bestM4a : bestOther;
     }
 
     /**

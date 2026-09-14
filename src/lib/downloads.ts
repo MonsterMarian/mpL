@@ -48,10 +48,32 @@ export function clearDownloads(): DownloadRecord[] {
   return [];
 }
 
+/**
+ * Očistí zadaný text nebo odkaz.
+ *
+ * Podporuje:
+ * - Odkazy obalené dalším textem (např. při sdílení z aplikace YouTube: "Podívej se na: https://youtu.be/...")
+ * - Adresy bez protokolu (např. "youtube.com/watch?v=..." nebo "youtu.be/...")
+ * - Oříznutí bílých znaků
+ */
+export function cleanDownloadUrl(input: string): string {
+  let text = input.trim();
+  if (!text) return "";
+  const match = text.match(/https?:\/\/[^\s]+/i);
+  if (match) {
+    return match[0];
+  }
+  if (/^(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be|open\.spotify\.com)/i.test(text)) {
+    return `https://${text}`;
+  }
+  return text;
+}
+
 /** Odkaz, za kterým je stránka - adresu souboru z něj musí najít nativní vrstva. */
 export function needsResolving(url: string): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase();
+    const clean = cleanDownloadUrl(url);
+    const host = new URL(clean).hostname.toLowerCase();
     return (
       host.includes("youtube.") ||
       host.includes("youtu.be") ||
@@ -70,8 +92,9 @@ export function needsResolving(url: string): boolean {
  * název skladby a tu pak najde na YouTube.
  */
 export function unsupportedSource(url: string): { title: string; description: string } | null {
+  const clean = cleanDownloadUrl(url);
   try {
-    new URL(url);
+    new URL(clean);
   } catch {
     return { title: "Tohle není adresa", description: "Odkaz musí začínat http:// nebo https://." };
   }
