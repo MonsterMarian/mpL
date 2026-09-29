@@ -57,6 +57,7 @@ import {
   formatTime,
   insertNext,
   isSortKey,
+  mergePlayStats,
   nextTrackId,
   previousTrackId,
   reshuffleQueue,
@@ -110,6 +111,7 @@ import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/liv
 import {
   currentNativePlayback,
   listenToNativePlayback,
+  mergeNativePlayStats,
   nativePlaybackAvailable,
   pauseNative,
   playNative,
@@ -610,9 +612,39 @@ export default function HomePage() {
     if (storageReady) localStorage.setItem("microwins:liked_tracks", JSON.stringify([...liked]));
   }, [liked, storageReady]);
 
+  /**
+   * Statistika poslechů. V appce ji drží služba, localStorage je jen záloha
+   * pro prohlížeč a starší APK - WebView ho na disk zapisuje se zpožděním
+   * a po zavření appky se poslední poslechy ztrácely. Při sloučení se
+   * zároveň přinese, co služba napočítala, když byla appka zavřená.
+   */
   React.useEffect(() => {
-    if (storageReady) localStorage.setItem("microwins:play_stats", JSON.stringify(playStats));
+    if (!storageReady) return;
+    localStorage.setItem("microwins:play_stats", JSON.stringify(playStats));
+    void mergeNativePlayStats(playStats).then((merged) => {
+      if (merged) setPlayStats((previous) => mergePlayStats(previous, merged));
+    });
   }, [playStats, storageReady]);
+
+  /**
+   * Započítá poslech. Nativní skladbu už započítala služba, stránka si jen
+   * vyzvedne výsledek - kdyby přičítala i ona, poslech by se zdvojil.
+   */
+  const countPlay = React.useCallback((trackId: string, native: boolean) => {
+    const countHere = () =>
+      setPlayStats((previous) => ({
+        ...previous,
+        [trackId]: { count: (previous[trackId]?.count ?? 0) + 1, at: Date.now() },
+      }));
+    if (!native) {
+      countHere();
+      return;
+    }
+    void mergeNativePlayStats({}).then((merged) => {
+      if (merged) setPlayStats((previous) => mergePlayStats(previous, merged));
+      else countHere();
+    });
+  }, []);
 
   React.useEffect(() => {
     if (storageReady) localStorage.setItem("microwins:sort", sortKey);
@@ -718,10 +750,7 @@ export default function HomePage() {
         setIsPlaying(true);
         setCurrentTime(0);
         nativeLoaded.current = trackId;
-        setPlayStats((previous) => ({
-          ...previous,
-          [trackId]: { count: (previous[trackId]?.count ?? 0) + 1, at: Date.now() },
-        }));
+        countPlay(trackId, true);
       },
       onCompleted: () => {
         logPlayback("služba: skladba dohrála");
@@ -740,7 +769,7 @@ export default function HomePage() {
         else if (command.action === "previous") controls.current.previous();
       },
     });
-  }, [toast]);
+  }, [toast, countPlay]);
 
   /** Odpočet časovače. Vteřinový tik stačí - vyšší přesnost by nikdo nepoznal. */
   React.useEffect(() => {
@@ -958,6 +987,10 @@ export default function HomePage() {
     void onAppResume(() => {
       void loadDeviceMusic();
       void loadDeviceDocuments();
+      // Co mezitím dohrálo nebo se přepnulo ze zámku.
+      void mergeNativePlayStats({}).then((merged) => {
+        if (merged) setPlayStats((previous) => mergePlayStats(previous, merged));
+      });
     }).then((fn) => {
       cleanup = fn;
     });
@@ -982,13 +1015,12 @@ export default function HomePage() {
     stopReading();
     setCurrentTrackId(trackId);
     setIsPlaying(true);
-    setPlayStats((previous) => ({
-      ...previous,
-      [trackId]: { count: (previous[trackId]?.count ?? 0) + 1, at: Date.now() },
-    }));
 
     const track = tracks.find((item) => item.id === trackId);
-    if (track && playsNatively(track)) {
+    const native = Boolean(track && playsNatively(track));
+    // Návrat do rozehrané skladby (po restartu appky) není nový poslech.
+    if (positionMs === 0 && !native) countPlay(trackId, false);
+    if (track && native) {
       nativeLoaded.current = trackId;
       setCurrentTime(positionMs / 1000);
       setDuration(track.durationSeconds);
@@ -1001,6 +1033,8 @@ export default function HomePage() {
         artwork: track.artworkSource ?? null,
         positionMs,
         playWhenReady: true,
+      }).then(() => {
+        if (positionMs === 0) countPlay(trackId, true);
       });
     }
   };

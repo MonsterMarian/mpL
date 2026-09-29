@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
+import type { PlayStats } from "@/lib/library";
 
 /**
  * Přehrávání v nativní službě.
@@ -73,6 +74,7 @@ interface PlaybackPlugin {
   pause(): Promise<void>;
   seek(options: { positionMs: number }): Promise<void>;
   stop(): Promise<void>;
+  mergePlayStats(options: { stats: PlayStats }): Promise<{ stats: PlayStats }>;
   requestNotifications(): Promise<void>;
   /** Dodává Capacitor sám podle deklarovaných oprávnění pluginu. */
   checkPermissions(): Promise<{ notifications: "granted" | "denied" | "prompt" | "prompt-with-rationale" }>;
@@ -152,6 +154,21 @@ export async function setNativeQueue(options: SetQueueRequest): Promise<void> {
     await Playback.setQueue(options);
   } catch {
     // viz výše
+  }
+}
+
+/**
+ * Předá službě statistiku poslechů ze stránky a vrátí sloučenou - včetně
+ * toho, co služba napočítala, když byla appka zavřená. `null` znamená, že
+ * úložiště ve službě není (prohlížeč, starší APK) a platí jen localStorage.
+ */
+export async function mergeNativePlayStats(stats: PlayStats): Promise<PlayStats | null> {
+  if (!nativePlaybackAvailable()) return null;
+  try {
+    const result = await Playback.mergePlayStats({ stats });
+    return result?.stats ?? null;
+  } catch {
+    return null;
   }
 }
 

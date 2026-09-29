@@ -8,6 +8,7 @@ import {
   groupByAlbum,
   groupByArtist,
   insertNext,
+  mergePlayStats,
   nextTrackId,
   previousTrackId,
   reshuffleQueue,
@@ -75,6 +76,24 @@ describe("řazení", () => {
     const input = [...tracks];
     sortTracks(input, "title", {});
     expect(input.map((t) => t.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("statistika poslechů", () => {
+  it("vezme vyšší počet i novější čas, nesčítá", () => {
+    const here: PlayStats = { a: { count: 3, at: 100 }, b: { count: 1, at: 50 } };
+    const service: PlayStats = { a: { count: 5, at: 90 }, c: { count: 2, at: 70 } };
+    expect(mergePlayStats(here, service)).toEqual({
+      a: { count: 5, at: 100 },
+      b: { count: 1, at: 50 },
+      c: { count: 2, at: 70 },
+    });
+  });
+
+  it("beze změny vrátí tentýž objekt", () => {
+    const here: PlayStats = { a: { count: 3, at: 100 } };
+    expect(mergePlayStats(here, { a: { count: 2, at: 100 } })).toBe(here);
+    expect(mergePlayStats(here, {})).toBe(here);
   });
 });
 

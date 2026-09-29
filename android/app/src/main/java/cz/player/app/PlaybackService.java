@@ -535,6 +535,7 @@ public class PlaybackService extends Service {
         artist = orEmpty(item.artist);
         album = orEmpty(item.album);
         loadArtwork(item.artwork);
+        PlayStats.record(this, currentTrackId);
         open(currentUri, 0, true);
         foreground();
         notifyTrackChanged(item.id);
@@ -685,6 +686,11 @@ public class PlaybackService extends Service {
     // --- co volá plugin ---------------------------------------------------
 
     static void load(Context context, String id, String uri, String title, String artist, String album, String artwork, long positionMs, boolean playWhenReady) {
+        // Počítá se hned tady, ne až ve službě: ta intent dostane později
+        // a stránka, která si po načtení řekne o statistiku, by ji dostala
+        // ještě bez tohohle poslechu. Návrat do rozehrané skladby (po
+        // restartu appky) není nový poslech.
+        if (positionMs <= 0) PlayStats.record(context, id);
         Intent intent = new Intent(context, PlaybackService.class)
             .setAction(ACTION_LOAD)
             .putExtra(EXTRA_TRACK_ID, id)

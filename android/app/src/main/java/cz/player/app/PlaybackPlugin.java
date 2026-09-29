@@ -184,6 +184,18 @@ public class PlaybackPlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * Sloučí statistiku poslechů ze stránky s tou ve službě a vrátí výsledek.
+     * Bez `stats` jen vrátí, co služba napočítala.
+     */
+    @PluginMethod
+    public void mergePlayStats(PluginCall call) {
+        PlayStats.merge(getContext(), call.getObject("stats"));
+        JSObject result = new JSObject();
+        result.put("stats", PlayStats.all(getContext()));
+        call.resolve(result);
+    }
+
     @PluginMethod
     public void stop(PluginCall call) {
         PlaybackService.stop(getContext());

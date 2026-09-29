@@ -152,6 +152,10 @@ export function LibraryView(props: LibraryViewProps) {
   const artists = React.useMemo(() => groupByArtist(tracks), [tracks]);
   const librarySeconds = tracks.reduce((total, track) => total + track.durationSeconds, 0);
 
+  // Počet poslechů je vidět jen tam, kde podle něj seznam stojí. Jinak je to
+  // šum vedle interpreta - statistika se počítá dál i tak.
+  const showPlays = sortKey === "played" || sortKey === "recent";
+
   const row = (track: Track, queueIds: string[], extra?: React.ReactNode) => (
     <TrackRow
       key={track.id}
@@ -159,7 +163,7 @@ export function LibraryView(props: LibraryViewProps) {
       active={track.id === currentTrackId}
       playing={isPlaying}
       liked={liked.has(track.id)}
-      plays={playStats[track.id]?.count ?? 0}
+      plays={showPlays ? (playStats[track.id]?.count ?? 0) : 0}
       onPress={() => onPressTrack(track.id, queueIds)}
       onToggle={onToggleTrack}
       onMenu={() => onMenu(track)}

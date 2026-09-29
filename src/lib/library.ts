@@ -39,6 +39,24 @@ export interface PlayStat {
 
 export type PlayStats = Record<string, PlayStat>;
 
+/**
+ * Sloučí dvě statistiky tak, že vyhraje vyšší počet i novější čas. Obě strany
+ * počítají tytéž poslechy, takže sčítání by je zdvojilo. Beze změny vrací
+ * původní objekt, ať se zbytečně nepřekresluje.
+ */
+export function mergePlayStats(base: PlayStats, incoming: PlayStats): PlayStats {
+  let next: PlayStats | null = null;
+  for (const [id, stat] of Object.entries(incoming)) {
+    const count = Number(stat?.count) || 0;
+    const at = Number(stat?.at) || 0;
+    const current = base[id];
+    if (current && current.count >= count && current.at >= at) continue;
+    next ??= { ...base };
+    next[id] = { count: Math.max(current?.count ?? 0, count), at: Math.max(current?.at ?? 0, at) };
+  }
+  return next ?? base;
+}
+
 export type LibraryFilter = "all" | "liked" | "local";
 export type RepeatMode = "off" | "all" | "one";
 export type SortKey = "added" | "recent" | "played" | "title" | "titleDesc" | "artist" | "duration";
