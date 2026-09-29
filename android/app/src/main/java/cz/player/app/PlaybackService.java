@@ -257,12 +257,17 @@ public class PlaybackService extends Service {
         release();
         if (uri == null || uri.isEmpty()) return;
 
-        // Teď už systém ví o čem: sezení se smí hlásit do lišty.
-        if (session != null) session.setActive(true);
-
         prepared = false;
         playWhenReady = autoplay;
         pendingSeekMs = Math.max(0, positionMs);
+
+        // Nová skladba se do sezení zapíše hned, ne až po přípravě přehrávače.
+        // Notifikace jde ven dřív, než je přehrávač připravený, a systém si
+        // k ní přečte to, co v sezení zrovna leží - na zámku pak zůstával
+        // název předchozí skladby.
+        publishMetadata();
+        // Teď už systém ví o čem: sezení se smí hlásit do lišty.
+        if (session != null) session.setActive(true);
 
         try {
             player = new MediaPlayer();
@@ -280,8 +285,12 @@ public class PlaybackService extends Service {
                     pendingSeekMs = 0;
                 }
                 if (playWhenReady) mp.start();
+                // Až teď je známá délka skladby. Samotná změna metadat se do
+                // lišty nepropíše, dokud se znovu nepošle notifikace.
+                publishMetadata();
                 publish();
                 schedule();
+                foreground();
             });
             player.setOnCompletionListener(mp -> {
                 ticker.removeCallbacks(tick);
@@ -402,6 +411,24 @@ public class PlaybackService extends Service {
         if (isPlaying()) ticker.postDelayed(tick, TICK_MS);
     }
 
+    /**
+     * Co hraje - název, interpret, obal a délka. Mění se jen se skladbou,
+     * proto zvlášť od vteřinového hlášení stavu: obal by se jinak posílal
+     * systému každou vteřinu.
+     */
+    private void publishMetadata() {
+        if (session == null) return;
+        session.setMetadata(
+            new MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM, album)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs())
+                .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+                .build()
+        );
+    }
+
     /** Stav do systému i do webové vrstvy naráz - ať se nerozejdou. */
     private void publish() {
         boolean playing = isPlaying();
@@ -409,15 +436,6 @@ public class PlaybackService extends Service {
         long duration = durationMs();
 
         if (session != null) {
-            session.setMetadata(
-                new MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, title)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
-                    .putString(MediaMetadata.METADATA_KEY_ALBUM, album)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, duration)
-                    .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
-                    .build()
-            );
             session.setPlaybackState(
                 new PlaybackState.Builder()
                     .setActions(
