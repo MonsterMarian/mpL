@@ -167,11 +167,9 @@ export function DownloadView({
           ...prev,
           { id: downloadId, fileName: result.fileName ?? fileName, progress: 0, phase: "downloading" },
         ]);
-        // Fallback: pokud downloadComplete event nedorazí (thread timing), přenač knihovnu
-        // za 20s, 45s a 90s – pokryje jak rychlé stahování tak pomalou MP3 konverzi.
-        const t1 = window.setTimeout(() => onDownloadedRef.current?.(), 20_000);
-        const t2 = window.setTimeout(() => onDownloadedRef.current?.(), 45_000);
-        const t3 = window.setTimeout(() => onDownloadedRef.current?.(), 90_000);
+        const t1 = window.setTimeout(() => onDownloadedRef.current?.(), 3_000);
+        const t2 = window.setTimeout(() => onDownloadedRef.current?.(), 8_000);
+        const t3 = window.setTimeout(() => onDownloadedRef.current?.(), 15_000);
         // Pokud downloadComplete přijde dřív, zbytečné timery pryč
         const clearFallbacks = () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
         MediaLibrary.addListener("downloadComplete", (e) => {

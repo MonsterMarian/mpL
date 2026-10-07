@@ -549,10 +549,22 @@ public class PlaybackService extends Service {
         if (!hasTrack()) return;
         try {
             Notification notification = buildNotification();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            if (isPlaying()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                }
             } else {
-                startForeground(NOTIFICATION_ID, notification);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_DETACH);
+                } else {
+                    stopForeground(false);
+                }
+                NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (manager != null) {
+                    manager.notify(NOTIFICATION_ID, notification);
+                }
             }
         } catch (Exception error) {
             // Android 12+ nepustí službu do popředí odkudkoliv. Hudba hraje dál,
@@ -639,12 +651,21 @@ public class PlaybackService extends Service {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        Intent delete = new Intent(this, PlaybackService.class).setAction(ACTION_STOP);
+        PendingIntent deletePending = PendingIntent.getService(
+            this,
+            99,
+            delete,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
         boolean playing = isPlaying();
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title.isEmpty() ? "P/_ayer" : title)
             .setContentText(artist.isEmpty() ? "Přehrává se" : artist)
             .setContentIntent(content)
+            .setDeleteIntent(deletePending)
             .setOngoing(playing)
             .setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_PUBLIC)

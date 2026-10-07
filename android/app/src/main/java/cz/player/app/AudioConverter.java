@@ -264,6 +264,27 @@ public class AudioConverter {
      * Saves an MP3 file into MediaStore (Music directory).
      */
     public static Uri saveMp3ToMediaStore(Context context, File mp3File, String fileName, String title, String artist) throws IOException {
+        return saveAudioToMediaStore(context, mp3File, fileName, title, artist);
+    }
+
+    /**
+     * Saves an audio file (M4A, MP3, WebM, FLAC, etc.) directly into MediaStore (Music directory).
+     */
+    public static Uri saveAudioToMediaStore(Context context, File audioFile, String fileName, String title, String artist) throws IOException {
+        String lower = fileName.toLowerCase();
+        String mimeType = "audio/mpeg";
+        if (lower.endsWith(".m4a") || lower.endsWith(".mp4") || lower.endsWith(".aac")) {
+            mimeType = "audio/mp4";
+        } else if (lower.endsWith(".webm") || lower.endsWith(".opus")) {
+            mimeType = "audio/webm";
+        } else if (lower.endsWith(".ogg")) {
+            mimeType = "audio/ogg";
+        } else if (lower.endsWith(".flac")) {
+            mimeType = "audio/flac";
+        } else if (lower.endsWith(".wav")) {
+            mimeType = "audio/wav";
+        }
+
         ContentResolver resolver = context.getContentResolver();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentValues values = new ContentValues();
@@ -272,7 +293,7 @@ public class AudioConverter {
             if (artist != null && !artist.isEmpty()) {
                 values.put(MediaStore.Audio.Media.ARTIST, artist);
             }
-            values.put(MediaStore.Audio.Media.MIME_TYPE, "audio/mpeg");
+            values.put(MediaStore.Audio.Media.MIME_TYPE, mimeType);
             values.put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC);
             values.put(MediaStore.Audio.Media.IS_MUSIC, 1);
             values.put(MediaStore.Audio.Media.IS_PENDING, 1);
@@ -283,9 +304,9 @@ public class AudioConverter {
             }
 
             try (OutputStream out = resolver.openOutputStream(uri);
-                 InputStream in = new FileInputStream(mp3File)) {
+                 InputStream in = new FileInputStream(audioFile)) {
                 if (out == null) throw new IOException("Nelze zapisovat do MediaStore URI.");
-                byte[] buf = new byte[16384];
+                byte[] buf = new byte[32768];
                 int len;
                 while ((len = in.read(buf)) > 0) {
                     out.write(buf, 0, len);
@@ -304,14 +325,16 @@ public class AudioConverter {
             }
             File dest = new File(musicDir, fileName);
             int count = 1;
-            String base = fileName.endsWith(".mp3") ? fileName.substring(0, fileName.length() - 4) : fileName;
+            int dot = fileName.lastIndexOf('.');
+            String base = dot > 0 ? fileName.substring(0, dot) : fileName;
+            String ext = dot > 0 ? fileName.substring(dot) : "";
             while (dest.exists()) {
-                dest = new File(musicDir, base + " (" + count++ + ").mp3");
+                dest = new File(musicDir, base + " (" + count++ + ")" + ext);
             }
 
             try (OutputStream out = new FileOutputStream(dest);
-                 InputStream in = new FileInputStream(mp3File)) {
-                byte[] buf = new byte[16384];
+                 InputStream in = new FileInputStream(audioFile)) {
+                byte[] buf = new byte[32768];
                 int len;
                 while ((len = in.read(buf)) > 0) {
                     out.write(buf, 0, len);
@@ -321,7 +344,7 @@ public class AudioConverter {
             android.media.MediaScannerConnection.scanFile(
                 context,
                 new String[]{ dest.getAbsolutePath() },
-                new String[]{ "audio/mpeg" },
+                new String[]{ mimeType },
                 null
             );
             return Uri.fromFile(dest);

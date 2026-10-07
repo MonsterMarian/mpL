@@ -193,7 +193,8 @@ public class StreamPlugin extends Plugin {
                         return;
                     }
                     result.put("url", best.getContent());
-                    result.put("extension", "mp3");
+                    String ext = best.getFormat() != null ? best.getFormat().getSuffix() : "m4a";
+                    result.put("extension", extensionOf(ext));
                 } else {
                     VideoStream best = bestVideo(info.getVideoStreams());
                     if (best == null) {

@@ -75,7 +75,7 @@ public class MediaLibraryPlugin extends Plugin {
     private static final Uri ALBUM_ART_URI = Uri.parse("content://media/external/audio/albumart");
 
     private static final String DOWNLOAD_CHANNEL_ID = "downloads";
-    private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(4);
     private final OkHttpClient httpClient = new OkHttpClient();
 
     private void ensureDownloadChannel() {
@@ -547,13 +547,21 @@ public class MediaLibraryPlugin extends Plugin {
             title = fileName.endsWith(".mp3") ? fileName.substring(0, fileName.length() - 4) : fileName;
         }
 
-        boolean isMp3 = fileName.toLowerCase().endsWith(".mp3");
-        boolean video = fileName.toLowerCase().endsWith(".mp4")
-            || fileName.toLowerCase().endsWith(".mkv")
-            || fileName.toLowerCase().endsWith(".webm");
+        String lower = fileName.toLowerCase();
+        boolean isAudio = lower.endsWith(".mp3")
+            || lower.endsWith(".m4a")
+            || lower.endsWith(".aac")
+            || lower.endsWith(".opus")
+            || lower.endsWith(".ogg")
+            || lower.endsWith(".flac")
+            || lower.endsWith(".wav");
 
-        if (isMp3) {
-            startMp3Download(call, source, fileName, title, artist);
+        boolean video = lower.endsWith(".mp4")
+            || lower.endsWith(".mkv")
+            || lower.endsWith(".webm");
+
+        if (isAudio) {
+            startAudioDownload(call, source, fileName, title, artist);
             return;
         }
 
@@ -562,7 +570,7 @@ public class MediaLibraryPlugin extends Plugin {
         try {
             DownloadManager.Request request = new DownloadManager.Request(source)
                 .setTitle(fileName)
-                .setDescription("P/_ayer")
+                .setDescription("Player")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(folder, fileName)
                 .setAllowedOverMetered(true)
@@ -583,7 +591,7 @@ public class MediaLibraryPlugin extends Plugin {
         }
     }
 
-    private void startMp3Download(PluginCall call, Uri source, String fileName, String title, String artist) {
+    private void startAudioDownload(PluginCall call, Uri source, String fileName, String title, String artist) {
         ensureDownloadChannel();
         int notificationId = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
         Context context = getContext();
@@ -609,14 +617,21 @@ public class MediaLibraryPlugin extends Plugin {
 
         downloadExecutor.execute(() -> {
             File rawFile = null;
-            File wavFile = null;
-            File mp3File = null;
             String downloadId = String.valueOf(notificationId);
+            android.os.PowerManager pm = (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            android.os.PowerManager.WakeLock wakeLock = null;
+            if (pm != null) {
+                try {
+                    wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "cz.player.app:download");
+                    wakeLock.acquire(10 * 60 * 1000L);
+                } catch (Exception ignored) {}
+            }
+
             try {
                 rawFile = File.createTempFile("dl_raw_", ".tmp", context.getCacheDir());
                 Request request = new Request.Builder()
                     .url(source.toString())
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
                     .build();
 
                 try (Response response = httpClient.newCall(request).execute()) {
@@ -628,7 +643,7 @@ public class MediaLibraryPlugin extends Plugin {
                     long contentLength = body.contentLength();
                     try (InputStream in = body.byteStream();
                          FileOutputStream fos = new FileOutputStream(rawFile)) {
-                        byte[] buffer = new byte[16384];
+                        byte[] buffer = new byte[32768];
                         long totalRead = 0;
                         int read;
                         int lastPercent = -1;
@@ -644,7 +659,6 @@ public class MediaLibraryPlugin extends Plugin {
                                     try {
                                         notificationManager.notify(notificationId, builder.build());
                                     } catch (SecurityException ignored) {}
-                                    // Emituj progress event do JS — musí být na main threadu
                                     final int pct = percent;
                                     getActivity().runOnUiThread(() -> {
                                         JSObject prog = new JSObject();
@@ -661,34 +675,8 @@ public class MediaLibraryPlugin extends Plugin {
                     }
                 }
 
-                if (AudioConverter.isMp3File(rawFile)) {
-                    AudioConverter.saveMp3ToMediaStore(context, rawFile, fileName, title, artist);
-                } else {
-                    builder.setContentText("Převádím do MP3…")
-                        .setProgress(0, 0, true);
-                    try {
-                        notificationManager.notify(notificationId, builder.build());
-                    } catch (SecurityException ignored) {}
-                    // Informuj JS o fázi konverze — musí být na main threadu
-                    getActivity().runOnUiThread(() -> {
-                        JSObject conv = new JSObject();
-                        conv.put("id", downloadId);
-                        conv.put("fileName", fileName);
-                        conv.put("progress", -1);
-                        conv.put("phase", "converting");
-                        notifyListeners("downloadProgress", conv);
-                    });
-
-                    wavFile = File.createTempFile("dl_wav_", ".wav", context.getCacheDir());
-                    AudioConverter.decodeToWav(rawFile, wavFile);
-                    rawFile.delete();
-
-                    mp3File = File.createTempFile("dl_mp3_", ".mp3", context.getCacheDir());
-                    AudioConverter.wavToMp3(wavFile, mp3File, title, artist);
-                    wavFile.delete();
-
-                    AudioConverter.saveMp3ToMediaStore(context, mp3File, fileName, title, artist);
-                }
+                // Save directly into MediaStore (takes 0.05s, no WAV/LAME re-encoding!)
+                AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
 
                 builder.setContentText("Staženo do složky Hudba")
                     .setProgress(0, 0, false)
@@ -699,16 +687,16 @@ public class MediaLibraryPlugin extends Plugin {
                 } catch (SecurityException ignored) {}
 
                 getActivity().runOnUiThread(() -> {
-                    JSObject event = new JSObject();
-                    event.put("id", downloadId);
-                    event.put("fileName", fileName);
-                    event.put("status", "completed");
-                    notifyListeners("downloadComplete", event);
+                    JSObject comp = new JSObject();
+                    comp.put("id", downloadId);
+                    comp.put("fileName", fileName);
+                    comp.put("status", "completed");
+                    notifyListeners("downloadComplete", comp);
                 });
 
             } catch (Exception error) {
-                android.util.Log.e("MediaLibrary", "Stahování do MP3 selhalo", error);
-                builder.setContentText("Stahování selhalo: " + error.getMessage())
+                android.util.Log.e("MediaLibrary", "Stahování audia selhalo", error);
+                builder.setContentText("Stahování selhalo: " + (error.getMessage() != null ? error.getMessage() : "Chyba"))
                     .setProgress(0, 0, false)
                     .setOngoing(false)
                     .setAutoCancel(true);
@@ -717,17 +705,22 @@ public class MediaLibraryPlugin extends Plugin {
                 } catch (SecurityException ignored) {}
 
                 getActivity().runOnUiThread(() -> {
-                    JSObject event = new JSObject();
-                    event.put("id", downloadId);
-                    event.put("fileName", fileName);
-                    event.put("status", "failed");
-                    event.put("error", error.getMessage());
-                    notifyListeners("downloadError", event);
+                    JSObject err = new JSObject();
+                    err.put("id", downloadId);
+                    err.put("fileName", fileName);
+                    err.put("status", "failed");
+                    err.put("error", error.getMessage());
+                    notifyListeners("downloadError", err);
                 });
             } finally {
-                if (rawFile != null && rawFile.exists()) rawFile.delete();
-                if (wavFile != null && wavFile.exists()) wavFile.delete();
-                if (mp3File != null && mp3File.exists()) mp3File.delete();
+                if (rawFile != null && rawFile.exists()) {
+                    rawFile.delete();
+                }
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    try {
+                        wakeLock.release();
+                    } catch (Exception ignored) {}
+                }
             }
         });
     }
