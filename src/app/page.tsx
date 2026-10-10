@@ -568,6 +568,15 @@ export default function HomePage() {
     const savedSort = localStorage.getItem("microwins:sort");
     if (isSortKey(savedSort)) setSortKey(savedSort);
 
+    // Opakování a náhodné pořadí přežijí restart. Bez toho se po otevření
+    // ukázalo „vypnuto" a první synchronizace fronty to vnutila i službě,
+    // která do té doby pořád opakovala jednu skladbu.
+    const savedRepeat = localStorage.getItem("microwins:repeat");
+    if (savedRepeat === "off" || savedRepeat === "all" || savedRepeat === "one") setRepeatMode(savedRepeat);
+    if (localStorage.getItem("microwins:shuffle") === "1") setIsShuffled(true);
+    const savedRate = Number(localStorage.getItem("microwins:speech_rate"));
+    if (savedRate >= 0.5 && savedRate <= 3) setSpeechRate(savedRate);
+
     setPlaylists(loadPlaylists());
 
     // Kde uživatel skončil. Skladba se jen připraví a nastaví čas - hrát začne
@@ -649,6 +658,18 @@ export default function HomePage() {
   React.useEffect(() => {
     if (storageReady) localStorage.setItem("microwins:sort", sortKey);
   }, [sortKey, storageReady]);
+
+  React.useEffect(() => {
+    if (storageReady) localStorage.setItem("microwins:repeat", repeatMode);
+  }, [repeatMode, storageReady]);
+
+  React.useEffect(() => {
+    if (storageReady) localStorage.setItem("microwins:shuffle", isShuffled ? "1" : "0");
+  }, [isShuffled, storageReady]);
+
+  React.useEffect(() => {
+    if (storageReady) localStorage.setItem("microwins:speech_rate", String(speechRate));
+  }, [speechRate, storageReady]);
 
   React.useEffect(() => {
     if (storageReady) savePlaylists(playlists);
@@ -1126,7 +1147,8 @@ export default function HomePage() {
    * dál, a tlačítka další/předchozí na zámku a v liště fungují okamžitě v Javě.
    */
   React.useEffect(() => {
-    if (!nativeReady) return;
+    // Před načtením uložených voleb by služba dostala výchozí „bez opakování".
+    if (!nativeReady || !storageReady) return;
     const byId = new Map(tracks.map((t) => [t.id, t]));
     const queueTracks = activeQueue.ids
       .map((id) => byId.get(id))
@@ -1147,7 +1169,7 @@ export default function HomePage() {
       currentId: currentTrackId ?? "",
       repeatMode,
     });
-  }, [nativeReady, activeQueue, tracks, currentTrackId, repeatMode]);
+  }, [nativeReady, storageReady, activeQueue, tracks, currentTrackId, repeatMode]);
 
   const playNext = () => {
     const next = nextTrackId(activeQueue, currentTrackId, true);
