@@ -37,6 +37,8 @@ import { cn } from "@/lib/utils";
  */
 type Kind = "audio" | "video";
 
+const isVideoFile = (fileName: string) => /\.(mp4|mkv|webm)$/i.test(fileName);
+
 interface ActiveDownload {
   id: string;
   fileName: string;
@@ -68,12 +70,19 @@ export function DownloadView({
    * vrátí `download()` - bez téhle paměti by po něm v seznamu zůstal řádek
    * „0 %" navždy.
    */
-  const finished = React.useRef(new Set<string>());
+  const finished = React.useRef(new Map<string, "completed" | "failed">());
   /** Záložní přečtení knihovny pro každé stahování - ruší se při dokončení. */
   const fallbacks = React.useRef(new Map<string, number[]>());
+  /**
+   * Co se zapíše do historie, až stahování opravdu doběhne. Dřív se zapisovalo
+   * hned při spuštění a v „Naposledy staženo" pak svítila i videa, která se
+   * nikdy nestáhla.
+   */
+  const pendingHistory = React.useRef(new Map<string, DownloadRecord>());
 
-  const settle = (id: string) => {
-    finished.current.add(id);
+  const settle = (id: string, outcome: "completed" | "failed") => {
+    finished.current.set(id, outcome);
+    pendingHistory.current.delete(id);
     for (const timer of fallbacks.current.get(id) ?? []) window.clearTimeout(timer);
     fallbacks.current.delete(id);
     setActiveDownloads((prev) => prev.filter((d) => d.id !== id));
@@ -109,15 +118,21 @@ export function DownloadView({
 
     listeners.push(
       MediaLibrary.addListener("downloadComplete", (e: DownloadCompleteEvent) => {
-        settle(e.id);
+        const record = pendingHistory.current.get(e.id);
+        settle(e.id, "completed");
+        if (record) setHistory(addDownload({ ...record, at: Date.now() }));
         onDownloadedRef.current?.();
-        onToast?.({ tone: "win", title: "Staženo", description: `${e.fileName} je v knihovně.` });
+        onToast?.({
+          tone: "win",
+          title: "Staženo",
+          description: isVideoFile(e.fileName) ? `${e.fileName} je v sekci Video.` : `${e.fileName} je v knihovně.`,
+        });
       }),
     );
 
     listeners.push(
       MediaLibrary.addListener("downloadError", (e: DownloadErrorEvent) => {
-        settle(e.id);
+        settle(e.id, "failed");
         onToast?.({ tone: "warn", title: "Stahování selhalo", description: e.error?.slice(0, 130) });
       }),
     );
@@ -178,11 +193,13 @@ export function DownloadView({
 
       const downloadId = result?.id;
       const savedName = result?.fileName ?? fileName;
-      // Průběh hlásí jen hudba - tu stahuje appka sama. Video jde přes
-      // systémový stahovač, který appce nic nehlásí, a jeho řádek by tu
-      // visel na „0 %" navždy. Jeho průběh je vidět v liště systému.
-      const reportsProgress = /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(savedName);
+      // Průběh hlásí, co stahuje appka sama. Starší APK posílalo video
+      // systémovému stahovači, který nehlásí nic - jeho řádek by tu visel
+      // na „0 %" navždy, takže se u něj spoléhá na lištu systému.
+      const reportsProgress = result?.reportsProgress ?? /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(savedName);
+      const record: DownloadRecord = { url: address, fileName: savedName, at: Date.now() };
       if (downloadId && reportsProgress && !finished.current.has(downloadId)) {
+        pendingHistory.current.set(downloadId, record);
         setActiveDownloads((prev) =>
           prev.some((d) => d.id === downloadId)
             ? prev
@@ -195,13 +212,29 @@ export function DownloadView({
         );
       }
 
-      setHistory(addDownload({ url: address, fileName: savedName, at: Date.now() }));
+      // Bez hlášení konce se do historie zapisuje hned - jinak by se tam
+      // nedostalo nikdy.
+      // Totéž, když krátký soubor doběhl dřív, než se `download()` vrátil.
+      // Video ve starém APK jde systémovému stahovači, kterému ho YouTube
+      // většinou odmítne - do historie se proto nezapisuje naslepo.
+      const legacyVideo = !reportsProgress && isVideoFile(savedName);
+      if ((!reportsProgress && !legacyVideo) || (downloadId && finished.current.get(downloadId) === "completed")) {
+        setHistory(addDownload(record));
+      }
       setUrl("");
-      onToast?.({
-        tone: "info",
-        title: "Stahuji",
-        description: reportsProgress ? "Průběh vidíš níže." : "Průběh vidíš v liště telefonu.",
-      });
+      onToast?.(
+        legacyVideo
+          ? {
+              tone: "warn",
+              title: "Video předáno systému",
+              description: "Tahle verze APK video z YouTube spolehlivě nestáhne. Nainstaluj nové Player.apk.",
+            }
+          : {
+              tone: "info",
+              title: "Stahuji",
+              description: reportsProgress ? "Průběh vidíš níže." : "Průběh vidíš v liště telefonu.",
+            },
+      );
     } catch (error) {
       console.error("Stahování selhalo", error);
       const message = error instanceof Error ? error.message : String(error);
@@ -356,7 +389,7 @@ export function DownloadView({
             {history.map((record) => (
               <li key={`${record.at}-${record.fileName}`} className="flex items-center gap-3 px-3 py-2.5">
                 <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-muted-foreground">
-                  {/\.(mp4|mkv|webm)$/i.test(record.fileName) ? <Video className="size-4" /> : <Music2 className="size-4" />}
+                  {isVideoFile(record.fileName) ? <Video className="size-4" /> : <Music2 className="size-4" />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{record.fileName}</span>

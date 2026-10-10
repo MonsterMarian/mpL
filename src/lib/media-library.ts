@@ -83,7 +83,12 @@ interface MediaLibraryPlugin {
     fileName?: string;
     title?: string;
     artist?: string;
-  }): Promise<{ id: string; fileName: string }>;
+  }): Promise<{
+    id: string;
+    fileName: string;
+    /** Appka stahuje sama a ohlásí průběh i konec. Starší APK u videa ne. */
+    reportsProgress?: boolean;
+  }>;
   /**
    * Dokumenty v telefonu (PDF, EPUB, TXT). Chce to „přístup ke všem souborům" -
    * PDF nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.

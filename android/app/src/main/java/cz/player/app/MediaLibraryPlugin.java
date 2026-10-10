@@ -566,12 +566,16 @@ public class MediaLibraryPlugin extends Plugin {
             || lower.endsWith(".mkv")
             || lower.endsWith(".webm");
 
-        if (isAudio) {
-            startAudioDownload(call, source, fileName, title, artist);
+        // Hudbu i video stahuje appka sama. Systémovému stahovači servery
+        // YouTube adresu streamu odmítaly (jiný User-Agent, žádné dělení na
+        // kusy) a jeho selhání se do appky nijak nehlásilo - v historii pak
+        // svítilo video, které se nikdy nestáhlo.
+        if (isAudio || video) {
+            startMediaDownload(call, source, fileName, title, artist, video);
             return;
         }
 
-        String folder = video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_MUSIC;
+        String folder = Environment.DIRECTORY_MUSIC;
 
         try {
             DownloadManager.Request request = new DownloadManager.Request(source)
@@ -597,7 +601,71 @@ public class MediaLibraryPlugin extends Plugin {
         }
     }
 
-    private void startAudioDownload(PluginCall call, Uri source, String fileName, String title, String artist) {
+    private static final String DOWNLOAD_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
+    /** Velikost kusu pro servery YouTube - větší souvislé čtení začnou brzdit. */
+    private static final long DOWNLOAD_CHUNK = 10L * 1024 * 1024;
+
+    private interface DownloadProgress {
+        void update(long done, long total);
+    }
+
+    /**
+     * Stáhne adresu do souboru.
+     *
+     * Servery YouTube (`googlevideo.com`) dlouhé souvislé čtení přiškrtí na
+     * rychlost přehrávání, takže se u nich bere soubor po kusech přes `Range`
+     * - stejně jako to dělá yt-dlp. Ostatní servery jedou jedním dotazem.
+     */
+    private void fetchTo(String url, File target, DownloadProgress progress) throws IOException {
+        boolean chunked = url.contains("googlevideo.com");
+        long done = 0;
+        long total = -1;
+        byte[] buffer = new byte[32768];
+        try (FileOutputStream fos = new FileOutputStream(target)) {
+            while (true) {
+                Request.Builder request = new Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT);
+                if (chunked) request.header("Range", "bytes=" + done + "-" + (done + DOWNLOAD_CHUNK - 1));
+                long before = done;
+                try (Response response = httpClient.newCall(request.build()).execute()) {
+                    // Konec souboru přesně na hranici kusu.
+                    if (response.code() == 416 && done > 0) break;
+                    if (!response.isSuccessful()) throw new IOException("Chyba stahování: HTTP " + response.code());
+                    ResponseBody body = response.body();
+                    if (body == null) throw new IOException("Prázdná odpověď serveru.");
+                    if (response.code() == 206) {
+                        String range = response.header("Content-Range");
+                        if (range != null && range.contains("/")) {
+                            try {
+                                total = Long.parseLong(range.substring(range.lastIndexOf('/') + 1).trim());
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    } else {
+                        // Server rozsah nevzal a posílá celý soubor naráz.
+                        if (done > 0) throw new IOException("Server nepodporuje stahování po částech.");
+                        chunked = false;
+                        total = body.contentLength();
+                    }
+                    try (InputStream in = body.byteStream()) {
+                        int read;
+                        while ((read = in.read(buffer)) != -1) {
+                            fos.write(buffer, 0, read);
+                            done += read;
+                            progress.update(done, total);
+                        }
+                    }
+                }
+                if (!chunked || done == before) break;
+                if (total > 0 ? done >= total : done - before < DOWNLOAD_CHUNK) break;
+            }
+            fos.flush();
+        }
+        if (done == 0) throw new IOException("Stažený soubor je prázdný.");
+        if (total > 0 && done < total) throw new IOException("Stahování skončilo předčasně.");
+    }
+
+    private void startMediaDownload(PluginCall call, Uri source, String fileName, String title, String artist, boolean video) {
         ensureDownloadChannel();
         int notificationId = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
         Context context = getContext();
@@ -619,6 +687,9 @@ public class MediaLibraryPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("id", String.valueOf(notificationId));
         result.put("fileName", fileName);
+        // Stránka podle toho pozná, že dostane průběh i konec - starší APK
+        // posílalo video systémovému stahovači, který nehlásil nic.
+        result.put("reportsProgress", true);
         call.resolve(result);
 
         downloadExecutor.execute(() -> {
@@ -629,62 +700,39 @@ public class MediaLibraryPlugin extends Plugin {
             if (pm != null) {
                 try {
                     wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "cz.player.app:download");
-                    wakeLock.acquire(10 * 60 * 1000L);
+                    // Video umí trvat déle než písnička; zámek se pouští ve finally.
+                    wakeLock.acquire(60 * 60 * 1000L);
                 } catch (Exception ignored) {}
             }
 
             try {
                 rawFile = File.createTempFile("dl_raw_", ".tmp", context.getCacheDir());
-                Request request = new Request.Builder()
-                    .url(source.toString())
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-                    .build();
+                final int[] lastPercent = { -1 };
+                fetchTo(source.toString(), rawFile, (done, total) -> {
+                    if (total <= 0) return;
+                    int percent = (int) Math.min(100, (done * 100) / total);
+                    if (percent < lastPercent[0] + 5) return;
+                    lastPercent[0] = percent;
+                    builder.setContentText("Stahuji… " + percent + "%")
+                        .setProgress(100, percent, false);
+                    try {
+                        notificationManager.notify(notificationId, builder.build());
+                    } catch (SecurityException ignored) {}
+                    mainThread.post(() -> {
+                        JSObject prog = new JSObject();
+                        prog.put("id", downloadId);
+                        prog.put("fileName", fileName);
+                        prog.put("progress", percent);
+                        prog.put("phase", "downloading");
+                        notifyListeners("downloadProgress", prog);
+                    });
+                });
 
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (!response.isSuccessful()) {
-                        throw new IOException("Chyba stahování: HTTP " + response.code());
-                    }
-                    ResponseBody body = response.body();
-                    if (body == null) throw new IOException("Prázdná odpověď serveru.");
-                    long contentLength = body.contentLength();
-                    try (InputStream in = body.byteStream();
-                         FileOutputStream fos = new FileOutputStream(rawFile)) {
-                        byte[] buffer = new byte[32768];
-                        long totalRead = 0;
-                        int read;
-                        int lastPercent = -1;
-                        while ((read = in.read(buffer)) != -1) {
-                            fos.write(buffer, 0, read);
-                            totalRead += read;
-                            if (contentLength > 0) {
-                                int percent = (int) ((totalRead * 100) / contentLength);
-                                if (percent >= lastPercent + 5) {
-                                    lastPercent = percent;
-                                    builder.setContentText("Stahuji… " + percent + "%")
-                                        .setProgress(100, percent, false);
-                                    try {
-                                        notificationManager.notify(notificationId, builder.build());
-                                    } catch (SecurityException ignored) {}
-                                    final int pct = percent;
-                                    mainThread.post(() -> {
-                                        JSObject prog = new JSObject();
-                                        prog.put("id", downloadId);
-                                        prog.put("fileName", fileName);
-                                        prog.put("progress", pct);
-                                        prog.put("phase", "downloading");
-                                        notifyListeners("downloadProgress", prog);
-                                    });
-                                }
-                            }
-                        }
-                        fos.flush();
-                    }
-                }
+                // Rovnou do MediaStore, bez převodu - hotové za zlomek vteřiny.
+                if (video) AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
+                else AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
 
-                // Save directly into MediaStore (takes 0.05s, no WAV/LAME re-encoding!)
-                AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
-
-                builder.setContentText("Staženo do složky Hudba")
+                builder.setContentText(video ? "Staženo do složky Filmy" : "Staženo do složky Hudba")
                     .setProgress(0, 0, false)
                     .setOngoing(false)
                     .setAutoCancel(true);

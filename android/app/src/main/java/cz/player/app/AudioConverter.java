@@ -268,6 +268,83 @@ public class AudioConverter {
     }
 
     /**
+     * Uloží stažené video do Filmů přes MediaStore - tam ho najde systémová
+     * galerie i sekce Video v appce.
+     */
+    public static Uri saveVideoToMediaStore(Context context, File videoFile, String fileName, String title) throws IOException {
+        String lower = fileName.toLowerCase();
+        String mimeType = "video/mp4";
+        if (lower.endsWith(".webm")) mimeType = "video/webm";
+        else if (lower.endsWith(".mkv")) mimeType = "video/x-matroska";
+
+        ContentResolver resolver = context.getContentResolver();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Video.Media.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Video.Media.TITLE, title != null && !title.isEmpty() ? title : fileName);
+            values.put(MediaStore.Video.Media.MIME_TYPE, mimeType);
+            values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES);
+            values.put(MediaStore.Video.Media.IS_PENDING, 1);
+
+            Uri uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) {
+                throw new IOException("Nepodařilo se vytvořit záznam v MediaStore.");
+            }
+            try {
+                try (OutputStream out = resolver.openOutputStream(uri);
+                     InputStream in = new FileInputStream(videoFile)) {
+                    if (out == null) throw new IOException("Nelze zapisovat do MediaStore URI.");
+                    byte[] buf = new byte[65536];
+                    int len;
+                    while ((len = in.read(buf)) > 0) {
+                        out.write(buf, 0, len);
+                    }
+                    out.flush();
+                }
+                values.clear();
+                values.put(MediaStore.Video.Media.IS_PENDING, 0);
+                resolver.update(uri, values, null, null);
+            } catch (IOException | RuntimeException error) {
+                // Nedopsaný záznam by v galerii visel jako rozbité video.
+                try {
+                    resolver.delete(uri, null, null);
+                } catch (Exception ignored) {}
+                throw error;
+            }
+            return uri;
+        }
+
+        File moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
+        if (!moviesDir.exists()) {
+            moviesDir.mkdirs();
+        }
+        File dest = new File(moviesDir, fileName);
+        int count = 1;
+        int dot = fileName.lastIndexOf('.');
+        String base = dot > 0 ? fileName.substring(0, dot) : fileName;
+        String ext = dot > 0 ? fileName.substring(dot) : "";
+        while (dest.exists()) {
+            dest = new File(moviesDir, base + " (" + count++ + ")" + ext);
+        }
+        try (OutputStream out = new FileOutputStream(dest);
+             InputStream in = new FileInputStream(videoFile)) {
+            byte[] buf = new byte[65536];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            out.flush();
+        }
+        android.media.MediaScannerConnection.scanFile(
+            context,
+            new String[]{ dest.getAbsolutePath() },
+            new String[]{ mimeType },
+            null
+        );
+        return Uri.fromFile(dest);
+    }
+
+    /**
      * Saves an audio file (M4A, MP3, WebM, FLAC, etc.) directly into MediaStore (Music directory).
      */
     public static Uri saveAudioToMediaStore(Context context, File audioFile, String fileName, String title, String artist) throws IOException {
