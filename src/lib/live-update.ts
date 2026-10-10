@@ -194,6 +194,28 @@ async function bundleDir(version: string): Promise<string> {
   return uri.uri.replace(/^file:\/\//, "");
 }
 
+/**
+ * Smaže staré balíky z dat appky. Každý má megabajty a bez úklidu jich
+ * po pár aktualizacích ležely v telefonu desítky.
+ *
+ * Volá se jen ve chvíli, kdy appka prokazatelně běží z `keep` - mazat dřív by
+ * šlo pod rukama souborům, ze kterých se zrovna startuje. Čekající balík
+ * (stažený, ještě nenasazený) zůstává taky.
+ */
+async function removeOldBundles(keep: string): Promise<void> {
+  try {
+    const pending = pendingBundleVersion();
+    const listing = await withTimeout(Filesystem.readdir({ path: "bundles", directory: Directory.Data }), "Filesystem.readdir");
+    for (const entry of listing.files) {
+      const name = typeof entry === "string" ? entry : entry.name;
+      if (!name || name === keep || name === pending) continue;
+      await Filesystem.rmdir({ path: `bundles/${name}`, directory: Directory.Data, recursive: true }).catch(() => {});
+    }
+  } catch {
+    // Úklid je bonus - když se nepovede, zkusí se při dalším startu.
+  }
+}
+
 export async function applyPendingUpdate(): Promise<ApplyResult> {
   // Celé v try: cokoli, co spadne mimo něj, skončí jako tlačítko, které
   // "nic nedělá" - žádná hláška, žádná změna, žádná stopa.
@@ -223,6 +245,7 @@ export async function applyPendingUpdate(): Promise<ApplyResult> {
       write(CURRENT_KEY, target);
       write(PENDING_KEY, null);
       write(BOOTING_KEY, null);
+      void removeOldBundles(target);
       return { applied: null };
     }
 

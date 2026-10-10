@@ -151,6 +151,9 @@ export function LibraryView(props: LibraryViewProps) {
   const albums = React.useMemo(() => groupByAlbum(tracks), [tracks]);
   const artists = React.useMemo(() => groupByArtist(tracks), [tracks]);
   const librarySeconds = tracks.reduce((total, track) => total + track.durationSeconds, 0);
+  // Jednou pro celý seznam, ne pro každý řádek zvlášť: stránka se překresluje
+  // s každou vteřinou přehrávání a u tisíců skladeb to bylo milion operací.
+  const visibleIds = React.useMemo(() => visibleTracks.map((track) => track.id), [visibleTracks]);
 
   // Počet poslechů je vidět jen tam, kde podle něj seznam stojí. Jinak je to
   // šum vedle interpreta - statistika se počítá dál i tak.
@@ -203,7 +206,7 @@ export function LibraryView(props: LibraryViewProps) {
 
   return (
     <section className="animate-in-up">
-      {selectionBar(visibleTracks.map((track) => track.id))}
+      {selectionBar(visibleIds)}
       <div className="mb-5">
         <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Knihovna</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
@@ -265,7 +268,7 @@ export function LibraryView(props: LibraryViewProps) {
 
           {visibleTracks.length ? (
             <div className="-mx-2">
-              {visibleTracks.map((track) => row(track, visibleTracks.map((t) => t.id)))}
+              {visibleTracks.map((track) => row(track, visibleIds))}
             </div>
           ) : (
             <EmptyLibrary

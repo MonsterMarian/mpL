@@ -165,6 +165,14 @@ describe("fronta", () => {
     expect(insertNext(queueOf("a", "b", "c"), ["c"], "a").ids).toEqual(["a", "c", "b"]);
   });
 
+  it("zařazení do zamíchané fronty nerozhází původní pořadí", () => {
+    const shuffled = { ids: ["c", "a", "b"], base: ["a", "b", "c"] };
+    const next = insertNext(shuffled, ["d"], "c");
+    expect(next.ids).toEqual(["c", "d", "a", "b"]);
+    expect(next.base).toEqual(["a", "b", "c", "d"]);
+    expect(reshuffleQueue(appendToQueue(shuffled, ["e"], "c"), "c", false).ids).toEqual(["a", "b", "c", "e"]);
+  });
+
   it("přidat do fronty jde na konec a neduplikuje", () => {
     expect(appendToQueue(queueOf("a", "b"), ["a", "c"], "b").ids).toEqual(["b", "a", "c"]);
   });

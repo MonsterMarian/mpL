@@ -63,6 +63,21 @@ export function DownloadView({
   // Ref na onDownloaded, aby listener ve useEffect nebral zastaralou closure
   const onDownloadedRef = React.useRef(onDownloaded);
   React.useEffect(() => { onDownloadedRef.current = onDownloaded; }, [onDownloaded]);
+  /**
+   * Stahování, která už skončila. Krátký soubor umí doběhnout dřív, než se
+   * vrátí `download()` - bez téhle paměti by po něm v seznamu zůstal řádek
+   * „0 %" navždy.
+   */
+  const finished = React.useRef(new Set<string>());
+  /** Záložní přečtení knihovny pro každé stahování - ruší se při dokončení. */
+  const fallbacks = React.useRef(new Map<string, number[]>());
+
+  const settle = (id: string) => {
+    finished.current.add(id);
+    for (const timer of fallbacks.current.get(id) ?? []) window.clearTimeout(timer);
+    fallbacks.current.delete(id);
+    setActiveDownloads((prev) => prev.filter((d) => d.id !== id));
+  };
 
   React.useEffect(() => {
     setHistory(loadDownloads());
@@ -79,6 +94,7 @@ export function DownloadView({
 
     listeners.push(
       MediaLibrary.addListener("downloadProgress", (e: DownloadProgressEvent) => {
+        if (finished.current.has(e.id)) return;
         setActiveDownloads((prev) => {
           const existing = prev.find((d) => d.id === e.id);
           if (!existing) {
@@ -93,7 +109,7 @@ export function DownloadView({
 
     listeners.push(
       MediaLibrary.addListener("downloadComplete", (e: DownloadCompleteEvent) => {
-        setActiveDownloads((prev) => prev.filter((d) => d.id !== e.id));
+        settle(e.id);
         onDownloadedRef.current?.();
         onToast?.({ tone: "win", title: "Staženo", description: `${e.fileName} je v knihovně.` });
       }),
@@ -101,7 +117,7 @@ export function DownloadView({
 
     listeners.push(
       MediaLibrary.addListener("downloadError", (e: DownloadErrorEvent) => {
-        setActiveDownloads((prev) => prev.filter((d) => d.id !== e.id));
+        settle(e.id);
         onToast?.({ tone: "warn", title: "Stahování selhalo", description: e.error?.slice(0, 130) });
       }),
     );
@@ -160,29 +176,32 @@ export function DownloadView({
         artist: streamArtist,
       });
 
-      // Ihned zaregistrujeme aktivní download do stavu
       const downloadId = result?.id;
-      if (downloadId) {
-        setActiveDownloads((prev) => [
-          ...prev,
-          { id: downloadId, fileName: result.fileName ?? fileName, progress: 0, phase: "downloading" },
-        ]);
-        const t1 = window.setTimeout(() => onDownloadedRef.current?.(), 3_000);
-        const t2 = window.setTimeout(() => onDownloadedRef.current?.(), 8_000);
-        const t3 = window.setTimeout(() => onDownloadedRef.current?.(), 15_000);
-        // Pokud downloadComplete přijde dřív, zbytečné timery pryč
-        const clearFallbacks = () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-        MediaLibrary.addListener("downloadComplete", (e) => {
-          if (e.id === downloadId) clearFallbacks();
-        });
-        MediaLibrary.addListener("downloadError", (e) => {
-          if (e.id === downloadId) clearFallbacks();
-        });
+      const savedName = result?.fileName ?? fileName;
+      // Průběh hlásí jen hudba - tu stahuje appka sama. Video jde přes
+      // systémový stahovač, který appce nic nehlásí, a jeho řádek by tu
+      // visel na „0 %" navždy. Jeho průběh je vidět v liště systému.
+      const reportsProgress = /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(savedName);
+      if (downloadId && reportsProgress && !finished.current.has(downloadId)) {
+        setActiveDownloads((prev) =>
+          prev.some((d) => d.id === downloadId)
+            ? prev
+            : [...prev, { id: downloadId, fileName: savedName, progress: 0, phase: "downloading" }],
+        );
+        // Záloha pro starší APK, které dokončení nehlásí.
+        fallbacks.current.set(
+          downloadId,
+          [3_000, 8_000, 15_000].map((ms) => window.setTimeout(() => onDownloadedRef.current?.(), ms)),
+        );
       }
 
-      setHistory(addDownload({ url: address, fileName: result?.fileName ?? fileName, at: Date.now() }));
+      setHistory(addDownload({ url: address, fileName: savedName, at: Date.now() }));
       setUrl("");
-      onToast?.({ tone: "info", title: "Stahuji", description: "Průběh vidíš níže." });
+      onToast?.({
+        tone: "info",
+        title: "Stahuji",
+        description: reportsProgress ? "Průběh vidíš níže." : "Průběh vidíš v liště telefonu.",
+      });
     } catch (error) {
       console.error("Stahování selhalo", error);
       const message = error instanceof Error ? error.message : String(error);

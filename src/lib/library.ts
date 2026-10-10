@@ -251,21 +251,27 @@ export function previousTrackId(queue: Queue, currentId: string | null): string 
   return queue.ids[index - 1];
 }
 
-/** „Přehrát jako další" - hned za rozehranou skladbu, ne na konec fronty. */
+/**
+ * „Přehrát jako další" - hned za rozehranou skladbu, ne na konec fronty.
+ *
+ * Vkládá se do obou pořadí. Dřív se `base` přepsal zamíchaným pořadím
+ * a vypnutí náhodného pořadí pak nemělo kam se vrátit.
+ */
 export function insertNext(queue: Queue, trackIds: string[], currentId: string | null): Queue {
-  const clean = (ids: string[]) => ids.filter((id) => !trackIds.includes(id) || id === currentId);
-  const ids = clean(queue.ids);
-  const at = currentId ? ids.indexOf(currentId) : -1;
   const toAdd = trackIds.filter((id) => id !== currentId);
-  ids.splice(at + 1, 0, ...toAdd);
-  return { base: ids, ids };
+  const place = (order: string[]) => {
+    const ids = order.filter((id) => !toAdd.includes(id));
+    const at = currentId ? ids.indexOf(currentId) : -1;
+    ids.splice(at + 1, 0, ...toAdd);
+    return ids;
+  };
+  return { base: place(queue.base), ids: place(queue.ids) };
 }
 
 export function appendToQueue(queue: Queue, trackIds: string[], currentId: string | null): Queue {
-  const ids = queue.ids.filter((id) => !trackIds.includes(id) || id === currentId);
   const toAdd = trackIds.filter((id) => id !== currentId);
-  const next = [...ids, ...toAdd];
-  return { base: next, ids: next };
+  const place = (order: string[]) => [...order.filter((id) => !toAdd.includes(id)), ...toAdd];
+  return { base: place(queue.base), ids: place(queue.ids) };
 }
 
 /** Skladba pryč z fronty - ať už ji uživatel vyhodil, nebo smazal ze zařízení. */

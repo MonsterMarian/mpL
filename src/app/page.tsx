@@ -118,6 +118,7 @@ import {
   resumeNative,
   seekNative,
   setNativeQueue,
+  stopNative,
 } from "@/lib/playback-service";
 import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
@@ -758,9 +759,17 @@ export default function HomePage() {
    * patří. Appka je proti ní jen okno: po otevření se srovná podle toho, co
    * zrovna hraje, místo aby přehrávání přerazila.
    */
+  /**
+   * Kontrola časovače spánku. Volá ji i hlášení stavu ze služby: se zhasnutým
+   * displejem WebView uspí `setInterval` a časovač by doběhl až po odemčení,
+   * kdežto služba se hlásí každou vteřinu dál.
+   */
+  const sleepCheck = React.useRef<() => void>(() => {});
+
   React.useEffect(() => {
     return listenToNativePlayback({
       onState: ({ playing, positionMs, durationMs }) => {
+        sleepCheck.current();
         setIsPlaying(playing);
         setCurrentTime(positionMs / 1000);
         if (durationMs > 0) setDuration(durationMs / 1000);
@@ -798,19 +807,26 @@ export default function HomePage() {
       setSleepLeft(0);
       return;
     }
+    let fired = false;
     const tick = () => {
+      if (fired) return;
       const left = sleepAt - Date.now();
       setSleepLeft(Math.max(0, left));
       if (left > 0) return;
+      fired = true;
       audioRef.current?.pause();
       void pauseNative();
       setIsPlaying(false);
       setSleepAt(null);
       toast({ tone: "info", title: "Časovač doběhl", description: "Hudba usnula." });
     };
+    sleepCheck.current = tick;
     tick();
     const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      sleepCheck.current = () => {};
+    };
   }, [sleepAt, toast]);
 
   /**
@@ -977,7 +993,9 @@ export default function HomePage() {
       return true;
     }
     // Otevřená kniha je přes celou obrazovku, takže zpět zavírá napřed ji.
-    if (documentId_) {
+    // Jen v Dokumentech: naposledy čtená kniha se otevírá už při startu
+    // a Zpět v knihovně by ji neviditelně zavřel místo ukončení appky.
+    if (documentId_ && activeView === "reader") {
       closeDocument();
       return true;
     }
@@ -1078,9 +1096,18 @@ export default function HomePage() {
       stopReading();
       setIsPlaying(true);
       // Po restartu appky služba nic načteného nemá - tehdy se skladba musí
-      // podat znovu, i s pozicí, kde se posledně skončilo.
-      if (nativeLoaded.current === currentTrack.id) void resumeNative();
-      else startTrack(currentTrack.id, Math.round(currentTime * 1000));
+      // podat znovu, i s pozicí, kde se posledně skončilo. Totéž po zavření
+      // notifikace: služba skončila a holé „přehrát" by nikoho neprobudilo.
+      const track = currentTrack;
+      const restart = () => startTrack(track.id, Math.round(currentTimeRef.current * 1000));
+      if (nativeLoaded.current !== track.id) {
+        restart();
+        return;
+      }
+      void currentNativePlayback().then((snapshot) => {
+        if (snapshot?.running && snapshot.uri === track.uri) void resumeNative();
+        else restart();
+      });
       return;
     }
 
@@ -1149,6 +1176,13 @@ export default function HomePage() {
   React.useEffect(() => {
     // Před načtením uložených voleb by služba dostala výchozí „bez opakování".
     if (!nativeReady || !storageReady) return;
+    // Časovač „do konce skladby": služba dostane prázdnou frontu bez
+    // opakování. Jinak by po dohrání sama přešla na další skladbu a stránka
+    // by se o konci nedozvěděla - hudba by hrála dál.
+    if (sleepAfterTrack) {
+      void setNativeQueue({ items: [], currentId: currentTrackId ?? "", repeatMode: "off" });
+      return;
+    }
     const byId = new Map(tracks.map((t) => [t.id, t]));
     const queueTracks = activeQueue.ids
       .map((id) => byId.get(id))
@@ -1169,7 +1203,16 @@ export default function HomePage() {
       currentId: currentTrackId ?? "",
       repeatMode,
     });
-  }, [nativeReady, storageReady, activeQueue, tracks, currentTrackId, repeatMode]);
+  }, [nativeReady, storageReady, activeQueue, tracks, currentTrackId, repeatMode, sleepAfterTrack]);
+
+  /**
+   * Náhradní fronta se po rozjetí přehrávání zafixuje. Dokud žila jen
+   * v `useMemo`, při zapnutém míchání se s každou další skladbou zamíchala
+   * znovu (předchozí skladba vedla jinam) a vyhodit z ní nešlo nic.
+   */
+  React.useEffect(() => {
+    if (playbackStarted && !queue.ids.length && activeQueue.ids.length) setQueue(activeQueue);
+  }, [playbackStarted, queue, activeQueue]);
 
   const playNext = () => {
     const next = nextTrackId(activeQueue, currentTrackId, true);
@@ -1322,30 +1365,37 @@ export default function HomePage() {
    * Rozehraná skladba nejdřív předá štafetu další ve frontě - kdyby se jen
    * vymazala, přehrávač by zůstal viset na něčem, co už neexistuje.
    */
-  const forgetTrack = (trackId: string) => {
-    if (trackId === currentTrackId) {
-      const next = nextTrackId(activeQueue, currentTrackId, false);
+  const forgetTracks = (trackIds: string[]) => {
+    const gone = new Set(trackIds);
+    if (currentTrackId && gone.has(currentTrackId)) {
+      // Štafeta jde jen na skladbu, která zůstává. Dřív se při mazání celého
+      // alba pouštěla další na řadě - a ta mizela zrovna taky.
+      const order = activeQueue.ids;
+      const next = order.slice(order.indexOf(currentTrackId) + 1).find((id) => !gone.has(id));
       if (next) startTrack(next);
       else {
         audioRef.current?.pause();
+        // Služba by smazaný soubor dohrála a nechala po něm notifikaci.
+        void stopNative();
+        nativeLoaded.current = null;
         setIsPlaying(false);
         setCurrentTrackId(null);
         setNowPlayingOpen(false);
       }
     }
-    setTracks((previous) => previous.filter((track) => track.id !== trackId));
-    setQueue((previous) => dropFromQueue(previous, trackId));
-    setPlaylists((previous) => forgetTrackInPlaylists(previous, trackId));
+    setTracks((previous) => previous.filter((track) => !gone.has(track.id)));
+    setQueue((previous) => trackIds.reduce(dropFromQueue, previous));
+    setPlaylists((previous) => trackIds.reduce(forgetTrackInPlaylists, previous));
     setLiked((previous) => {
-      if (!previous.has(trackId)) return previous;
+      if (!trackIds.some((id) => previous.has(id))) return previous;
       const next = new Set(previous);
-      next.delete(trackId);
+      for (const id of trackIds) next.delete(id);
       return next;
     });
     setPlayStats((previous) => {
-      if (!previous[trackId]) return previous;
+      if (!trackIds.some((id) => previous[id])) return previous;
       const next = { ...previous };
-      delete next[trackId];
+      for (const id of trackIds) delete next[id];
       return next;
     });
   };
@@ -1369,7 +1419,7 @@ export default function HomePage() {
           return;
         }
       }
-      for (const track of target) forgetTrack(track.id);
+      forgetTracks(target.map((track) => track.id));
       toast({
         tone: "win",
         title: deviceIds.length ? "Smazáno ze zařízení" : "Odebráno z knihovny",
@@ -1890,7 +1940,10 @@ export default function HomePage() {
       return;
     }
 
+    // Hudbu v telefonu hraje služba, ne `<audio>` - bez ní by hrála dál
+    // přes hlas, jen tlačítko by ukazovalo pauzu.
     audioRef.current?.pause();
+    void pauseNative();
     setIsPlaying(false);
     setIsReadingDocument(true);
 
@@ -2553,8 +2606,15 @@ export default function HomePage() {
           <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} layout={videoLayout} />
         ) : null}
 
-        {activeView === "downloads" && addons.downloads ? (
-          <DownloadView onToast={toast} onDownloaded={() => void loadDeviceMusic()} />
+        {/*
+          Stahování zůstává připojené i na jiných záložkách. Když se odpojilo,
+          odhlásilo se od událostí ze služby: dokončené stahování pak knihovnu
+          nepřečetlo a skladba se objevila až po restartu appky.
+        */}
+        {addons.downloads ? (
+          <div hidden={activeView !== "downloads"}>
+            <DownloadView onToast={toast} onDownloaded={() => void loadDeviceMusic()} />
+          </div>
         ) : null}
       </main>
 

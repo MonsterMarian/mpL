@@ -76,6 +76,12 @@ public class MediaLibraryPlugin extends Plugin {
 
     private static final String DOWNLOAD_CHANNEL_ID = "downloads";
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(4);
+    /**
+     * Hlášení stahování do stránky. Přes hlavní vlákno procesu, ne přes
+     * `getActivity()`: stahování běží dál i se zavřeným oknem, aktivita je pak
+     * `null` a výjimka ve vlákně stahování shodila celou appku.
+     */
+    private final android.os.Handler mainThread = new android.os.Handler(android.os.Looper.getMainLooper());
     private final OkHttpClient httpClient = new OkHttpClient();
 
     private void ensureDownloadChannel() {
@@ -660,7 +666,7 @@ public class MediaLibraryPlugin extends Plugin {
                                         notificationManager.notify(notificationId, builder.build());
                                     } catch (SecurityException ignored) {}
                                     final int pct = percent;
-                                    getActivity().runOnUiThread(() -> {
+                                    mainThread.post(() -> {
                                         JSObject prog = new JSObject();
                                         prog.put("id", downloadId);
                                         prog.put("fileName", fileName);
@@ -686,7 +692,7 @@ public class MediaLibraryPlugin extends Plugin {
                     notificationManager.notify(notificationId, builder.build());
                 } catch (SecurityException ignored) {}
 
-                getActivity().runOnUiThread(() -> {
+                mainThread.post(() -> {
                     JSObject comp = new JSObject();
                     comp.put("id", downloadId);
                     comp.put("fileName", fileName);
@@ -704,7 +710,7 @@ public class MediaLibraryPlugin extends Plugin {
                     notificationManager.notify(notificationId, builder.build());
                 } catch (SecurityException ignored) {}
 
-                getActivity().runOnUiThread(() -> {
+                mainThread.post(() -> {
                     JSObject err = new JSObject();
                     err.put("id", downloadId);
                     err.put("fileName", fileName);
