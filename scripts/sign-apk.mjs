@@ -38,6 +38,13 @@ const props = Object.fromEntries(
     }),
 );
 
+// apksigner je javový nástroj a bez JAVA_HOME nenaběhne - v systému Java
+// není. Bere se stejné JDK jako pro build (viz gradle.mjs).
+if (!process.env.JAVA_HOME) {
+  const javaHome = readFileSync("android/gradle.properties", "utf8").match(/^org\.gradle\.java\.home=(.+)$/m)?.[1]?.trim();
+  if (javaHome && existsSync(javaHome)) process.env.JAVA_HOME = javaHome;
+}
+
 // Nejvyšší dostupná verze build-tools, ať skript přežije aktualizaci SDK.
 const buildToolsDir = path.join(SDK, "build-tools");
 const version = readdirSync(buildToolsDir).sort().pop();

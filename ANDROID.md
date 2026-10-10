@@ -23,7 +23,7 @@ a build si na to sáhne sám.
 - Android SDK: `C:\Android\sdk` (platform 35 a 36, build-tools 35 a 36)
   - cesta je zapsaná v `android/local.properties` **lomítky dopředu** —
     `sdk.dir=C:\Android\sdk` se v Java properties přečte jako `C:Androidsdk`
-- JDK 21: `C:\Android\jdk\jdk-21.0.12+8`
+- JDK 21: `C:\Android\jdk\jdk-21.0.12.1+1`
   - Capacitor 8 se kompiluje na Javu 21, v systému je 17;
     build si vlastní JDK bere přes `org.gradle.java.home` v `android/gradle.properties`
 
@@ -103,7 +103,7 @@ npm run android:release
 ```
 
 Postaví balík i APK z jednoho buildu (takže mají stejnou verzi) a rovnou APK
-podepíše do `../MicroWins.apk`. Nutné jen při zásahu do nativní části.
+podepíše do `Player.apk` v kořeni projektu. Nutné jen při zásahu do nativní části.
 
 Samotné podepsání jde spustit i zvlášť: `npm run android:sign`. Schémata v1+v2+v3,
 v4 vypnuté - to používá jen `adb install --incremental` a nechává po sobě
@@ -135,7 +135,7 @@ v tmavém režimu). Když se změní paleta appky, změň je i tam a přegeneruj
 
 ## Podpisový klíč
 
-Release se podepisuje klíčem z `android/microwins.jks`, heslo je
+Release se podepisuje klíčem z `android/player.jks`, heslo je
 v `android/keystore.properties`. Obojí je mimo git.
 
 **Ten soubor zálohuj.** Android považuje appku podepsanou jiným klíčem za jinou
@@ -145,7 +145,7 @@ a nainstalovat znovu, což smaže data.
 Nový klíč (jen když se ten starý ztratí):
 
 ```bash
-C:\Android\jdk\jdk-21.0.12+8\bin\keytool.exe -genkeypair -v -keystore android/microwins.jks -alias microwins -keyalg RSA -keysize 2048 -validity 10000
+C:\Android\jdk\jdk-21.0.12.1+1\bin\keytool.exe -genkeypair -v -keystore android/player.jks -alias player -keyalg RSA -keysize 2048 -validity 10000
 ```
 
 ## Když se APK nedá nainstalovat
