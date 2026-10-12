@@ -76,9 +76,6 @@ interface PlaybackPlugin {
   stop(): Promise<void>;
   mergePlayStats(options: { stats: PlayStats }): Promise<{ stats: PlayStats }>;
   requestNotifications(): Promise<void>;
-  /** Jen APK od 12. 10. 2026 - starší je nemá a volání selže. */
-  batteryStatus(): Promise<{ unrestricted: boolean }>;
-  requestUnrestrictedBattery(): Promise<void>;
   /** Dodává Capacitor sám podle deklarovaných oprávnění pluginu. */
   checkPermissions(): Promise<{ notifications: "granted" | "denied" | "prompt" | "prompt-with-rationale" }>;
   addListener(event: "state", handler: (data: PlaybackStateEvent) => void): Promise<PluginListenerHandle>;
@@ -255,47 +252,24 @@ export interface PlaybackSupport {
   native: boolean;
   plugin: boolean;
   notifications: "granted" | "denied" | "prompt" | "unknown";
-  /**
-   * Běh na pozadí bez omezení baterie. „restricted“ = systém smí přehrávač
-   * po čase uspat a hudba ztichne; „unknown“ = starší APK, které to neumí říct.
-   */
-  battery: "unrestricted" | "restricted" | "unknown";
 }
 
 export async function playbackSupport(): Promise<PlaybackSupport> {
   const native = Capacitor.isNativePlatform();
-  if (!native) return { native: false, plugin: false, notifications: "unknown", battery: "unknown" };
+  if (!native) return { native: false, plugin: false, notifications: "unknown" };
 
   const plugin = Capacitor.isPluginAvailable("Playback");
-  if (!plugin) return { native: true, plugin: false, notifications: "unknown", battery: "unknown" };
+  if (!plugin) return { native: true, plugin: false, notifications: "unknown" };
 
-  const battery: PlaybackSupport["battery"] = await Playback.batteryStatus().then(
-    (state) => (state.unrestricted ? "unrestricted" : "restricted"),
-    () => "unknown",
-  );
   try {
     const state = await Playback.checkPermissions();
     return {
       native: true,
       plugin: true,
       notifications: state.notifications === "prompt-with-rationale" ? "prompt" : state.notifications,
-      battery,
     };
   } catch {
-    return { native: true, plugin: true, notifications: "unknown", battery };
-  }
-}
-
-/**
- * Systémový dotaz na běh bez omezení baterie. Odpověď přijde až po návratu
- * do appky, proto Nastavení stav načte znovu, když se okno vrátí do popředí.
- */
-export async function askForUnrestrictedBattery(): Promise<void> {
-  if (!nativePlaybackAvailable()) return;
-  try {
-    await Playback.requestUnrestrictedBattery();
-  } catch {
-    // Starší APK - dotaz neumí.
+    return { native: true, plugin: true, notifications: "unknown" };
   }
 }
 

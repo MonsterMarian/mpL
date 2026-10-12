@@ -36,6 +36,12 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Stahování, které doběhne i po odchodu z appky (viz DownloadService). -->
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -52,14 +58,12 @@
          na pozadí sestřelí a hudba uprostřed skladby ztichne. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Zámek procesoru pro přehrávač a stahování. Bez něj telefon se
          zhasnutým displejem uspí procesor i uprostřed skladby, a zámky v kódu
          jen tiše selhávaly na SecurityException. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Dotaz „běžet na pozadí bez omezení baterie“ z Nastavení appky.
-         HyperOS jinak umí uspat i přehrávač ve službě v popředí. -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- Video addon. Od Androidu 13 se povoluje zvlášť od hudby, takže si appka
          o přístup k videím řekne, teprve když si addon uživatel zapne. -->

@@ -24,8 +24,6 @@ import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
 import android.util.Size;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
@@ -75,7 +73,7 @@ public class MediaLibraryPlugin extends Plugin {
     /** Obaly alb má MediaStore pod vlastní adresou, ne u samotné skladby. */
     private static final Uri ALBUM_ART_URI = Uri.parse("content://media/external/audio/albumart");
 
-    private static final String DOWNLOAD_CHANNEL_ID = "downloads";
+    private static final String DOWNLOAD_CHANNEL_ID = DownloadService.CHANNEL_ID;
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(4);
     /**
      * Hlášení stahování do stránky. Přes hlavní vlákno procesu, ne přes
@@ -86,18 +84,7 @@ public class MediaLibraryPlugin extends Plugin {
     private final OkHttpClient httpClient = new OkHttpClient();
 
     private void ensureDownloadChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                DOWNLOAD_CHANNEL_ID,
-                "Stahování",
-                NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Průběh stahování a převodu médií");
-            NotificationManager manager = getContext().getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
-        }
+        DownloadService.ensureChannel(getContext());
     }
 
     private String permissionAlias() {
@@ -760,21 +747,19 @@ public class MediaLibraryPlugin extends Plugin {
         int notificationId = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
         Context context = getContext();
 
+        // Konečné oznámení (staženo / selhalo). Průběh ukazuje služba
+        // DownloadService, která zároveň drží proces naživu, když uživatel
+        // z appky odejde - bez ní stahování umřelo v půlce.
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(NOTIFICATION_COLOR)
             .setContentTitle(fileName)
-            .setContentText("Stahuji…")
-            .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setProgress(100, 0, false);
+            .setPriority(NotificationCompat.PRIORITY_LOW);
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
         final long[] lastNotify = { System.currentTimeMillis() };
-        try {
-            notificationManager.notify(notificationId, builder.build());
-        } catch (SecurityException ignored) {}
+        DownloadService.begin(context, String.valueOf(notificationId), fileName);
 
         JSObject result = new JSObject();
         result.put("id", String.valueOf(notificationId));
@@ -805,17 +790,9 @@ public class MediaLibraryPlugin extends Plugin {
                     int percent = (int) Math.min(100, (done * 100) / total);
                     if (percent < lastPercent[0] + 5) return;
                     lastPercent[0] = percent;
-                    // Lišta jen s rozestupem - viz NOTIFY_GAP_MS. Stránka
-                    // dostává průběh dál po pěti procentech.
-                    long now = System.currentTimeMillis();
-                    if (now - lastNotify[0] >= NOTIFY_GAP_MS) {
-                        lastNotify[0] = now;
-                        builder.setContentText("Stahuji… " + percent + "%")
-                            .setProgress(100, percent, false);
-                        try {
-                            notificationManager.notify(notificationId, builder.build());
-                        } catch (SecurityException ignored) {}
-                    }
+                    // Lišta si rozestup hlídá sama (DownloadService.GAP_MS).
+                    lastNotify[0] = System.currentTimeMillis();
+                    DownloadService.progress(downloadId, percent);
                     mainThread.post(() -> {
                         JSObject prog = new JSObject();
                         prog.put("id", downloadId);
@@ -870,6 +847,7 @@ public class MediaLibraryPlugin extends Plugin {
                 if (rawFile != null && rawFile.exists()) {
                     rawFile.delete();
                 }
+                DownloadService.end(downloadId);
                 if (wakeLock != null && wakeLock.isHeld()) {
                     try {
                         wakeLock.release();
