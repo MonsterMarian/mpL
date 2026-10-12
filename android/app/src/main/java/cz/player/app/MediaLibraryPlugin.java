@@ -12,6 +12,7 @@ import android.content.IntentSender;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.pdf.PdfRenderer;
 import android.media.MediaMetadataRetriever;
@@ -571,7 +572,7 @@ public class MediaLibraryPlugin extends Plugin {
         // kusy) a jeho selhání se do appky nijak nehlásilo - v historii pak
         // svítilo video, které se nikdy nestáhlo.
         if (isAudio || video) {
-            startMediaDownload(call, source, fileName, title, artist, video);
+            startMediaDownload(call, source, fileName, title, artist, video, call.getString("artworkUrl", null));
             return;
         }
 
@@ -599,6 +600,85 @@ public class MediaLibraryPlugin extends Plugin {
         } catch (Exception error) {
             call.reject("Stahování se nepodařilo spustit.", "DOWNLOAD_FAILED", error);
         }
+    }
+
+    /**
+     * Konečný stav oznámení (staženo / selhalo). Pošle se až po rozestupu od
+     * poslední aktualizace - jinak ho systém zahodí jako příliš častou
+     * aktualizaci a v liště zůstane viset poslední procento.
+     */
+    private void notifyAfterGap(NotificationManagerCompat manager, int id, NotificationCompat.Builder builder, long lastNotify) {
+        long wait = Math.max(0, NOTIFY_GAP_MS - (System.currentTimeMillis() - lastNotify));
+        android.app.Notification done = builder.build();
+        mainThread.postDelayed(() -> {
+            try {
+                manager.notify(id, done);
+            } catch (SecurityException ignored) {}
+        }, wait);
+    }
+
+    /** Složka s obaly stažených skladeb, soubor na skladbu podle id v MediaStore. */
+    static File artworkFile(Context context, long mediaId) {
+        return new File(new File(context.getFilesDir(), "artwork"), mediaId + ".jpg");
+    }
+
+    /**
+     * Obal stažené skladby z náhledu videa.
+     *
+     * Do souboru se nevkládá: MediaStore bere obal podle alba a stažené
+     * skladby bez značky alba spadnou všechny do jednoho alba „Music“ - měly
+     * by tak všechny jeden společný obal. Obal se proto drží u skladby
+     * (soubor podle id) a knihovna ho nabídne místo obalu alba.
+     *
+     * Selhání nevadí: skladba je stažená, jen bez obrázku.
+     */
+    private void saveTrackArtwork(Context context, Uri saved, String url) {
+        if (saved == null || !"content".equals(saved.getScheme())) return;
+        try {
+            long id = ContentUris.parseId(saved);
+            byte[] bytes;
+            Request request = new Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT).build();
+            try (Response response = httpClient.newCall(request).execute()) {
+                ResponseBody body = response.body();
+                if (!response.isSuccessful() || body == null) return;
+                bytes = body.bytes();
+            }
+            Bitmap source = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (source == null) return;
+            Bitmap cover = squareCover(source);
+            File target = artworkFile(context, id);
+            File dir = target.getParentFile();
+            if (dir != null && !dir.exists()) dir.mkdirs();
+            try (FileOutputStream out = new FileOutputStream(target)) {
+                cover.compress(Bitmap.CompressFormat.JPEG, 88, out);
+            }
+            if (cover != source) cover.recycle();
+            source.recycle();
+        } catch (Exception error) {
+            android.util.Log.w("MediaLibrary", "Obal skladby se nepodařilo uložit", error);
+        }
+    }
+
+    /**
+     * Čtvercový výřez ze středu náhledu, nejvýš 720 px. Náhled YouTube ve
+     * formátu 4:3 má video 16:9 mezi černými pruhy - ty se odříznou dřív, než
+     * se bere čtverec, jinak by obal měl černý pruh nahoře i dole.
+     */
+    static Bitmap squareCover(Bitmap source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        int top = 0;
+        int band = height;
+        if (Math.abs(height * 4 - width * 3) <= 4) {
+            band = width * 9 / 16;
+            top = (height - band) / 2;
+        }
+        int side = Math.min(width, band);
+        Bitmap square = Bitmap.createBitmap(source, (width - side) / 2, top + (band - side) / 2, side, side);
+        if (side <= 720) return square;
+        Bitmap scaled = Bitmap.createScaledBitmap(square, 720, 720, true);
+        if (scaled != square && square != source) square.recycle();
+        return scaled;
     }
 
     private static final String DOWNLOAD_USER_AGENT =
@@ -665,13 +745,24 @@ public class MediaLibraryPlugin extends Plugin {
         if (total > 0 && done < total) throw new IOException("Stahování skončilo předčasně.");
     }
 
-    private void startMediaDownload(PluginCall call, Uri source, String fileName, String title, String artist, boolean video) {
+    /** Žlutá ze značky mpL (ikona appky) - barva malé ikony v oznámeních. */
+    static final int NOTIFICATION_COLOR = 0xFFF9BD11;
+
+    /**
+     * Nejkratší rozestup dvou aktualizací jednoho oznámení. Android častější
+     * aktualizace téhož oznámení zahazuje (rate limit) - a zahodil i tu
+     * poslední „Staženo“, takže v liště zůstávalo viset 95-99 %.
+     */
+    private static final long NOTIFY_GAP_MS = 1000;
+
+    private void startMediaDownload(PluginCall call, Uri source, String fileName, String title, String artist, boolean video, String artworkUrl) {
         ensureDownloadChannel();
         int notificationId = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
         Context context = getContext();
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(NOTIFICATION_COLOR)
             .setContentTitle(fileName)
             .setContentText("Stahuji…")
             .setOngoing(true)
@@ -680,6 +771,7 @@ public class MediaLibraryPlugin extends Plugin {
             .setProgress(100, 0, false);
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
+        final long[] lastNotify = { System.currentTimeMillis() };
         try {
             notificationManager.notify(notificationId, builder.build());
         } catch (SecurityException ignored) {}
@@ -713,11 +805,17 @@ public class MediaLibraryPlugin extends Plugin {
                     int percent = (int) Math.min(100, (done * 100) / total);
                     if (percent < lastPercent[0] + 5) return;
                     lastPercent[0] = percent;
-                    builder.setContentText("Stahuji… " + percent + "%")
-                        .setProgress(100, percent, false);
-                    try {
-                        notificationManager.notify(notificationId, builder.build());
-                    } catch (SecurityException ignored) {}
+                    // Lišta jen s rozestupem - viz NOTIFY_GAP_MS. Stránka
+                    // dostává průběh dál po pěti procentech.
+                    long now = System.currentTimeMillis();
+                    if (now - lastNotify[0] >= NOTIFY_GAP_MS) {
+                        lastNotify[0] = now;
+                        builder.setContentText("Stahuji… " + percent + "%")
+                            .setProgress(100, percent, false);
+                        try {
+                            notificationManager.notify(notificationId, builder.build());
+                        } catch (SecurityException ignored) {}
+                    }
                     mainThread.post(() -> {
                         JSObject prog = new JSObject();
                         prog.put("id", downloadId);
@@ -729,16 +827,20 @@ public class MediaLibraryPlugin extends Plugin {
                 });
 
                 // Rovnou do MediaStore, bez převodu - hotové za zlomek vteřiny.
-                if (video) AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
-                else AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
+                if (video) {
+                    AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
+                } else {
+                    Uri saved = AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
+                    // Obal se uloží dřív, než se stránka dozví o konci - ta si
+                    // pak znovu načte knihovnu a skladba už ho má.
+                    if (artworkUrl != null && !artworkUrl.isEmpty()) saveTrackArtwork(context, saved, artworkUrl);
+                }
 
                 builder.setContentText(video ? "Staženo do složky Filmy" : "Staženo do složky Hudba")
                     .setProgress(0, 0, false)
                     .setOngoing(false)
                     .setAutoCancel(true);
-                try {
-                    notificationManager.notify(notificationId, builder.build());
-                } catch (SecurityException ignored) {}
+                notifyAfterGap(notificationManager, notificationId, builder, lastNotify[0]);
 
                 mainThread.post(() -> {
                     JSObject comp = new JSObject();
@@ -754,9 +856,7 @@ public class MediaLibraryPlugin extends Plugin {
                     .setProgress(0, 0, false)
                     .setOngoing(false)
                     .setAutoCancel(true);
-                try {
-                    notificationManager.notify(notificationId, builder.build());
-                } catch (SecurityException ignored) {}
+                notifyAfterGap(notificationManager, notificationId, builder, lastNotify[0]);
 
                 mainThread.post(() -> {
                     JSObject err = new JSObject();
@@ -870,6 +970,7 @@ public class MediaLibraryPlugin extends Plugin {
             MediaStore.Audio.Media.DISPLAY_NAME
         };
         JSONArray tracks = new JSONArray();
+        Set<Long> seenIds = new HashSet<>();
         Cursor cursor = null;
 
         try {
@@ -906,6 +1007,10 @@ public class MediaLibraryPlugin extends Plugin {
                     String artwork = albumId > 0
                         ? ContentUris.withAppendedId(ALBUM_ART_URI, albumId).toString()
                         : null;
+                    // Stažená skladba má obal z náhledu videa - jen svůj.
+                    File custom = artworkFile(getContext(), id);
+                    if (custom.exists()) artwork = Uri.fromFile(custom).toString();
+                    seenIds.add(id);
 
                     JSObject track = new JSObject();
                     track.put("id", String.valueOf(id));
@@ -926,6 +1031,20 @@ public class MediaLibraryPlugin extends Plugin {
             return;
         } finally {
             if (cursor != null) cursor.close();
+        }
+
+        // Obaly skladeb, které už v zařízení nejsou, by jen zabíraly místo.
+        File[] covers = new File(getContext().getFilesDir(), "artwork").listFiles();
+        if (covers != null) {
+            for (File cover : covers) {
+                String name = cover.getName();
+                if (!name.endsWith(".jpg")) continue;
+                try {
+                    if (!seenIds.contains(Long.parseLong(name.substring(0, name.length() - 4)))) cover.delete();
+                } catch (NumberFormatException ignored) {
+                    // Cizí soubor - není náš, nechá se být.
+                }
+            }
         }
 
         JSObject result = new JSObject();

@@ -185,6 +185,9 @@ public class StreamPlugin extends Plugin {
                 result.put("title", info.getName());
                 result.put("author", info.getUploaderName());
                 result.put("durationSeconds", info.getDuration());
+                // Náhled videa - stažená skladba ho dostane jako vlastní obal.
+                String thumbnail = bestThumbnail(info.getThumbnails());
+                if (thumbnail != null) result.put("thumbnail", thumbnail);
 
                 if (audioOnly) {
                     AudioStream best = bestAudio(info.getAudioStreams());
@@ -237,6 +240,26 @@ public class StreamPlugin extends Plugin {
             return "https://www.youtube.com/watch?v=" + videoMatcher.group(1);
         }
         return clean;
+    }
+
+    /**
+     * Největší náhled. YouTube jich dává několik (od 120 px po 1280 px); větší
+     * se v přehrávači i na zámku čte líp a appka si ho stejně zmenší.
+     */
+    private String bestThumbnail(List<org.schabi.newpipe.extractor.Image> images) {
+        if (images == null || images.isEmpty()) return null;
+        org.schabi.newpipe.extractor.Image best = null;
+        long bestArea = -1;
+        for (org.schabi.newpipe.extractor.Image image : images) {
+            if (image == null || image.getUrl() == null || image.getUrl().isEmpty()) continue;
+            // Neznámý rozměr (-1) bere jako nejmenší, ať nevytlačí známý velký.
+            long area = (long) Math.max(0, image.getWidth()) * Math.max(0, image.getHeight());
+            if (area >= bestArea) {
+                best = image;
+                bestArea = area;
+            }
+        }
+        return best != null ? best.getUrl() : null;
     }
 
     /**

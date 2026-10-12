@@ -12,6 +12,8 @@ export interface ResolvedStream {
   author: string;
   durationSeconds: number;
   extension: string;
+  /** Náhled videa - stažená skladba ho dostane jako obal. Starší APK ho nepošle. */
+  thumbnail?: string;
 }
 
 export interface NativeStreamInfo {

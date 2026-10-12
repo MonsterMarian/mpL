@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Trophy, Info, AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
+import { BRAND_MARK } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 type ToastTone = "win" | "info" | "warn";
@@ -25,8 +26,17 @@ export function useToast(): ToastApi {
   return ctx;
 }
 
-const TONE_ICON = { win: Trophy, info: Info, warn: AlertTriangle } as const;
+/** Jak dlouho hláška visí. Povedená akce (přidáno, založeno) o chvíli déle. */
+const DURATION: Record<ToastTone, number> = { win: 6000, info: 4000, warn: 4000 };
 
+/**
+ * Hlášky appky - vlastní pro mpL.
+ *
+ * Dřív byly převzaté z MicroWins: oranžová plocha a pohár, který v hudebním
+ * přehrávači nedává smysl. Teď je to černá karta se značkou appky (p s notou)
+ * ve žluté z ikony na ploše; varování nese žlutý trojúhelník. Tenký pruh dole
+ * odpočítává, kdy hláška sama zmizí.
+ */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const nextId = React.useRef(1);
@@ -39,7 +49,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     (t: Omit<Toast, "id">) => {
       const id = nextId.current++;
       setToasts((prev) => [...prev, { ...t, id }]);
-      window.setTimeout(() => dismiss(id), t.tone === "win" ? 6000 : 4000);
+      window.setTimeout(() => dismiss(id), DURATION[t.tone]);
     },
     [dismiss],
   );
@@ -55,37 +65,65 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         role="status"
         aria-live="polite"
       >
-        {toasts.map((t) => {
-          const Icon = TONE_ICON[t.tone];
-          return (
-            <div
-              key={t.id}
-              className={cn(
-                "animate-in-up pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border p-3 shadow-lg",
-                t.tone === "win"
-                  ? "border-win/40 bg-win-muted text-win-muted-foreground"
-                  : "bg-popover text-popover-foreground",
-              )}
-            >
-              <Icon className="mt-0.5 size-4 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{t.title}</p>
-                {t.description ? (
-                  <p className="mt-0.5 text-xs opacity-80">{t.description}</p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => dismiss(t.id)}
-                aria-label="Zavřít"
-                className="opacity-60 transition-opacity hover:opacity-100"
-              >
-                <X className="size-4" />
-              </button>
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={cn(
+              "animate-in-up pointer-events-auto relative flex w-full max-w-sm items-start gap-3 overflow-hidden rounded-xl border bg-popover p-3 pr-2 text-popover-foreground shadow-lg shadow-black/60",
+              t.tone === "info" ? "border-border" : "border-notice/40",
+            )}
+          >
+            {t.tone === "warn" ? (
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-notice" />
+            ) : (
+              <BrandMark />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{t.title}</p>
+              {t.description ? (
+                <p className="mt-0.5 text-xs text-muted-foreground">{t.description}</p>
+              ) : null}
             </div>
-          );
-        })}
+            <button
+              type="button"
+              onClick={() => dismiss(t.id)}
+              aria-label="Zavřít"
+              className="-my-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+            <span
+              aria-hidden
+              className="mw-countdown absolute inset-x-0 bottom-0 h-0.5 bg-notice/70"
+              style={{ "--mw-countdown": `${DURATION[t.tone]}ms` } as React.CSSProperties}
+            />
+          </div>
+        ))}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+/**
+ * Značka appky obarvená žlutou z ikony. Obrázek značky slouží jen jako maska,
+ * barvu dává CSS - stejný tvar jako na ploše, bez druhé kopie v jiné barvě.
+ * (Data URI, ne soubor: balík živé aktualizace binární PNG rozbije.)
+ */
+function BrandMark() {
+  return (
+    <span
+      aria-hidden
+      className="-mt-0.5 size-6 shrink-0 bg-notice"
+      style={{
+        maskImage: `url("${BRAND_MARK}")`,
+        WebkitMaskImage: `url("${BRAND_MARK}")`,
+        maskSize: "contain",
+        WebkitMaskSize: "contain",
+        maskRepeat: "no-repeat",
+        WebkitMaskRepeat: "no-repeat",
+        maskPosition: "center",
+        WebkitMaskPosition: "center",
+      }}
+    />
   );
 }

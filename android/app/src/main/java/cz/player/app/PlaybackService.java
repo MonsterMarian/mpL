@@ -18,10 +18,12 @@ import android.media.MediaPlayer;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import java.io.InputStream;
 
 /**
@@ -123,6 +125,11 @@ public class PlaybackService extends Service {
     private boolean playWhenReady = false;
     /** Kam skočit, jakmile bude přehrávač připravený. */
     private long pendingSeekMs = 0;
+    /** Poslední známá pozice - kam se vrátit, když systémový přehrávač spadne. */
+    private long lastPositionMs = 0;
+    /** Chyby po sobě bez jediné úspěšně otevřené skladby. */
+    private int failures = 0;
+    private WifiManager.WifiLock wifiLock;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -206,6 +213,7 @@ public class PlaybackService extends Service {
         }
 
         if (ACTION_LOAD.equals(action)) {
+            failures = 0;
             currentTrackId = orEmpty(intent.getStringExtra(EXTRA_TRACK_ID));
             title = orEmpty(intent.getStringExtra(EXTRA_TITLE));
             artist = orEmpty(intent.getStringExtra(EXTRA_ARTIST));
@@ -234,6 +242,7 @@ public class PlaybackService extends Service {
         if (instance == this) instance = null;
         ticker.removeCallbacks(tick);
         release();
+        releaseWifi();
         try {
             stopForeground(Service.STOP_FOREGROUND_REMOVE);
         } catch (Exception error) {
@@ -277,9 +286,15 @@ public class PlaybackService extends Service {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             );
+            // Se zhasnutým displejem smí telefon uspat procesor - a přehrávač,
+            // který dekóduje skladbu, s ním. Zámek drží MediaPlayer jen po dobu
+            // hraní, pauza ho sama pustí.
+            player.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+            holdWifi(uri);
             player.setDataSource(this, Uri.parse(uri));
             player.setOnPreparedListener(mp -> {
                 prepared = true;
+                failures = 0;
                 if (pendingSeekMs > 0) {
                     mp.seekTo((int) pendingSeekMs);
                     pendingSeekMs = 0;
@@ -312,13 +327,17 @@ public class PlaybackService extends Service {
                         return;
                     }
                 }
+                // Fronta došla. Služba už nic hrát nechystá, takže pustí
+                // popředí (notifikace jde odsunout) - další skladbu vybere
+                // stránka, pokud nějakou má.
+                playWhenReady = false;
+                foreground();
                 Listener target = listener;
                 if (target != null) target.onCompleted();
             });
             player.setOnErrorListener((mp, what, extra) -> {
                 prepared = false;
-                Listener target = listener;
-                if (target != null) target.onError("Přehrávač selhal (" + what + "/" + extra + ")");
+                recover(what, extra);
                 return true;
             });
             player.prepareAsync();
@@ -329,8 +348,80 @@ public class PlaybackService extends Service {
         }
     }
 
+    /**
+     * Chyba přehrávače uprostřed poslechu.
+     *
+     * Dřív se jen ohlásila stránce a hudba ztichla - jenže stránka na pozadí
+     * spí, takže to nikdo neviděl a nic se nedělo. Teď:
+     *  - spadlý systémový přehrávač (`MEDIA_ERROR_SERVER_DIED`) se znovu otevře
+     *    na stejném místě skladby,
+     *  - nečitelný soubor se přeskočí na další ve frontě,
+     * a obojí jen tolikrát, kolik je ve frontě skladeb - fronta samých
+     * rozbitých souborů nesmí točit dokola.
+     */
+    private void recover(int what, int extra) {
+        String message = "Přehrávač selhal (" + what + "/" + extra + ")";
+        CrashLog.note(this, message + " u " + title);
+        Listener target = listener;
+        if (target != null) target.onError(message);
+
+        boolean wanted = playWhenReady;
+        failures++;
+        if (!wanted || failures > Math.max(3, queue.size())) {
+            release();
+            playWhenReady = false;
+            foreground();
+            return;
+        }
+        if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED) {
+            open(currentUri, lastPositionMs, true);
+            foreground();
+            return;
+        }
+        if (!queue.isEmpty() && (currentIndex + 1 < queue.size() || "all".equals(repeatMode))) {
+            skipNext(false);
+            return;
+        }
+        release();
+        playWhenReady = false;
+        foreground();
+    }
+
+    /**
+     * Skladba ze sítě: bez zámku Wi-Fi telefon se zhasnutým displejem uspí
+     * i síťovou kartu a přehrávač po vyčerpání zásoby ztichne. Místní soubor
+     * zámek nepotřebuje.
+     */
+    private void holdWifi(String uri) {
+        boolean remote = uri != null && (uri.startsWith("http://") || uri.startsWith("https://"));
+        try {
+            if (!remote) {
+                releaseWifi();
+                return;
+            }
+            if (wifiLock == null) {
+                WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wifi == null) return;
+                wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "cz.player.app:playback");
+                wifiLock.setReferenceCounted(false);
+            }
+            if (!wifiLock.isHeld()) wifiLock.acquire();
+        } catch (Exception error) {
+            // Bez zámku to hraje taky, jen hrozí výpadek se zhasnutým displejem.
+        }
+    }
+
+    private void releaseWifi() {
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Exception error) {
+            // Zámek už neplatí.
+        }
+    }
+
     private void resume() {
         playWhenReady = true;
+        holdWifi(currentUri);
         try {
             if (player != null && prepared && !player.isPlaying()) player.start();
         } catch (Exception error) {
@@ -343,6 +434,7 @@ public class PlaybackService extends Service {
 
     private void pause() {
         playWhenReady = false;
+        releaseWifi();
         try {
             if (player != null && prepared && player.isPlaying()) player.pause();
         } catch (Exception error) {
@@ -434,6 +526,7 @@ public class PlaybackService extends Service {
         boolean playing = isPlaying();
         long position = positionMs();
         long duration = durationMs();
+        if (playing) lastPositionMs = position;
 
         if (session != null) {
             session.setPlaybackState(
@@ -543,32 +636,74 @@ public class PlaybackService extends Service {
 
     // --- notifikace -------------------------------------------------------
 
+    /**
+     * Notifikace a stav služby v popředí.
+     *
+     * Dvě věci, na kterých přehrávání dřív samo umíralo:
+     *
+     * 1. **Popředí drží i skladba, která se teprve chystá.** Mezi dvěma
+     *    skladbami přehrávač chvíli nehraje (připravuje další soubor). Dřív
+     *    služba v tu chvíli z popředí vypadla - a na pozadí ji tam Android 12+
+     *    už znovu nepustí. Služba bez popředí pak systém po chvíli zabil
+     *    (HyperOS hned) a hudba ztichla. Rozhoduje proto `playWhenReady`,
+     *    ne jen `isPlaying()`.
+     * 2. **`startForeground` se volá pokaždé.** Služba se startuje přes
+     *    `startForegroundService` i kvůli pauze nebo posunu, a takový start
+     *    musí do 10 s zavolat `startForeground`, jinak Android **shodí celou
+     *    appku** (`ForegroundServiceDidNotStartInTimeException`). Pauza ho
+     *    dřív nevolala vůbec. Teď se služba vždy přihlásí do popředí a při
+     *    pauze se hned odpojí - notifikace zůstane, jen jde odsunout.
+     */
     private void foreground() {
         // Notifikace o přehrávání bez skladby by lhala. Druhá pojistka k té
         // v onStartCommand - do popředí vede víc cest.
         if (!hasTrack()) return;
+        Notification notification;
         try {
-            Notification notification = buildNotification();
-            if (isPlaying()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-                } else {
-                    startForeground(NOTIFICATION_ID, notification);
-                }
+            notification = buildNotification();
+        } catch (Exception error) {
+            CrashLog.note(this, "Notifikace přehrávání: " + error);
+            return;
+        }
+
+        boolean promoted = false;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
             } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_DETACH);
-                } else {
-                    stopForeground(false);
-                }
-                NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                if (manager != null) {
-                    manager.notify(NOTIFICATION_ID, notification);
-                }
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            promoted = true;
+        } catch (Exception error) {
+            // Android 12+ nepustí do popředí službu, kterou nic nespustilo
+            // z popředí (typicky pauza na pozadí). Notifikace se pak jen
+            // obnoví níž. Když to ale selže při hraní, je to stopa k tomu,
+            // proč hudba ztichla - proto se to zapíše.
+            if (isPlaying() || playWhenReady) CrashLog.note(this, "Do popředí nepuštěno: " + error);
+        }
+
+        if (isPlaying() || playWhenReady) {
+            if (!promoted) notifyQuietly(notification);
+            return;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_DETACH);
+            } else {
+                stopForeground(false);
             }
         } catch (Exception error) {
-            // Android 12+ nepustí službu do popředí odkudkoliv. Hudba hraje dál,
-            // jen ji systém může na pozadí ukončit dřív.
+            // Nebyla v popředí - není co odpojovat.
+        }
+        notifyQuietly(notification);
+    }
+
+    private void notifyQuietly(Notification notification) {
+        try {
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) manager.notify(NOTIFICATION_ID, notification);
+        } catch (Exception error) {
+            // Bez povolení notifikací hudba hraje dál, jen bez ovládání v liště.
         }
     }
 
@@ -662,6 +797,7 @@ public class PlaybackService extends Service {
         boolean playing = isPlaying();
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(MediaLibraryPlugin.NOTIFICATION_COLOR)
             .setContentTitle(title.isEmpty() ? "P/_ayer" : title)
             .setContentText(artist.isEmpty() ? "Přehrává se" : artist)
             .setContentIntent(content)

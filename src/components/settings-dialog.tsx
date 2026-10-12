@@ -14,7 +14,12 @@ import {
   type LoggedError,
   type PlaybackEvent,
 } from "@/lib/diagnostics";
-import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
+import {
+  askForNotifications,
+  askForUnrestrictedBattery,
+  playbackSupport,
+  type PlaybackSupport,
+} from "@/lib/playback-service";
 import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
 import { SectionIcon } from "@/components/ui/section-icon";
 import { VIDEO_LAYOUTS, loadVideoLayout, saveVideoLayout, type VideoLayout } from "@/lib/video-layout";
@@ -422,6 +427,17 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
     if (open) refresh();
   }, [open, refresh]);
 
+  /* Dotaz na baterii otevírá systémové okno a odpověď se dozví až po návratu
+     do appky - stav se proto načte znovu, když se stránka zase ukáže. */
+  React.useEffect(() => {
+    if (!open) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [open, refresh]);
+
   if (!support || !support.native) return null;
 
   if (!support.plugin) {
@@ -461,6 +477,36 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
           </Button>
         )}
       </div>
+      {support.battery === "unknown" ? null : (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border px-3 py-2.5 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-foreground">Hraní na pozadí</span>
+            <span
+              className={cn(
+                "text-xs font-medium",
+                support.battery === "unrestricted" ? "text-win" : "text-muted-foreground",
+              )}
+            >
+              {support.battery === "unrestricted" ? "Bez omezení" : "Omezené baterií"}
+            </span>
+          </div>
+          {support.battery === "unrestricted" ? (
+            <p className="text-xs text-muted-foreground">
+              Na Xiaomi ještě appku v seznamu posledních aplikací zamkni (podrž ji a ťukni na zámek), jinak ji
+              zavření všech aplikací ukončí i s hudbou.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">
+                S úsporou baterie může systém přehrávač po chvíli uspat a hudba uprostřed poslechu ztichne.
+              </p>
+              <Button type="button" className="mt-1" onClick={() => void askForUnrestrictedBattery()}>
+                Povolit hraní bez omezení
+              </Button>
+            </>
+          )}
+        </div>
+      )}
     </Section>
   );
 }

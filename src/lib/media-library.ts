@@ -83,6 +83,8 @@ interface MediaLibraryPlugin {
     fileName?: string;
     title?: string;
     artist?: string;
+    /** Obrázek, který se uloží jako obal stažené skladby. */
+    artworkUrl?: string;
   }): Promise<{
     id: string;
     fileName: string;

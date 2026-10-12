@@ -11,7 +11,7 @@
  * Cesta k JDK se čte z gradle.properties, aby byla v projektu na jednom místě.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ANDROID = "android";
@@ -31,11 +31,36 @@ if (!existsSync(path.join(ANDROID, "local.properties"))) {
 }
 
 const properties = readFileSync(path.join(ANDROID, "gradle.properties"), "utf8");
-const javaHome = properties.match(/^\s*org\.gradle\.java\.home\s*=\s*(.+)$/m)?.[1].trim();
+let javaHome = properties.match(/^\s*org\.gradle\.java\.home\s*=\s*(.+)$/m)?.[1].trim();
+/** JDK jinde než v gradle.properties - Gradle ho dostane na příkazové řádce. */
+let javaHomeOverride = null;
+
+/**
+ * Projekt se staví na víc počítačích a každý má JDK v jiné verzi složky
+ * (`jdk-21.0.12+8` vs. `jdk-21.0.12.1+1`). Když to z gradle.properties tady
+ * není, vezme se nejnovější JDK ze stejné složky - soubor v repozitáři se
+ * kvůli tomu nepřepisuje, jinak by se build rozbil na tom druhém stroji.
+ */
+function siblingJdk(missing) {
+  const dir = path.dirname(missing);
+  if (!existsSync(dir)) return null;
+  const found = readdirSync(dir)
+    .filter((name) => name.startsWith("jdk"))
+    .map((name) => path.join(dir, name).split(path.sep).join("/"))
+    .filter((home) => existsSync(path.join(home, "bin", process.platform === "win32" ? "java.exe" : "java")))
+    .sort();
+  return found.at(-1) ?? null;
+}
 
 if (javaHome && !existsSync(javaHome)) {
-  console.error(`JDK z gradle.properties neexistuje: ${javaHome}`);
-  process.exit(1);
+  const fallback = siblingJdk(javaHome) ?? (process.env.JAVA_HOME && existsSync(process.env.JAVA_HOME) ? process.env.JAVA_HOME : null);
+  if (!fallback) {
+    console.error(`JDK z gradle.properties neexistuje: ${javaHome}`);
+    process.exit(1);
+  }
+  console.warn(`JDK z gradle.properties (${javaHome}) tu není, beru ${fallback}.`);
+  javaHome = fallback;
+  javaHomeOverride = fallback;
 }
 
 /**
@@ -73,6 +98,8 @@ function unixSocketWorkaround(javaHome) {
 }
 
 const args = process.argv.slice(2);
+// Systémová vlastnost z příkazové řádky přebije tu z gradle.properties.
+if (javaHomeOverride) args.unshift(`-Dorg.gradle.java.home=${javaHomeOverride}`);
 // Dávkový soubor Node přímo spustit neumí, musí přes cmd.exe. Jinde je wrapper
 // obyčejný spustitelný skript a jde zavolat rovnou.
 const [command, commandArgs] =

@@ -223,6 +223,59 @@ public class PlaybackPlugin extends Plugin {
     }
 
     /**
+     * Smí appka běžet na pozadí bez omezení baterie? HyperOS (a nejen on)
+     * umí i službu v popředí po čase uspat, když má appka „úsporný“ režim -
+     * a pak hudba uprostřed poslechu ztichne.
+     */
+    @PluginMethod
+    public void batteryStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("unrestricted", unrestricted());
+        call.resolve(result);
+    }
+
+    /**
+     * Systémový dotaz „povolit běh na pozadí bez omezení“. Kde ho systém
+     * nenabídne, otevře se aspoň nastavení appky, kde se baterie přepne ručně.
+     */
+    @PluginMethod
+    public void requestUnrestrictedBattery(PluginCall call) {
+        android.content.Context context = getContext();
+        if (unrestricted()) {
+            call.resolve();
+            return;
+        }
+        try {
+            android.content.Intent ask = new android.content.Intent(
+                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                android.net.Uri.parse("package:" + context.getPackageName())
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(ask);
+        } catch (Exception error) {
+            try {
+                android.content.Intent details = new android.content.Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:" + context.getPackageName())
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(details);
+            } catch (Exception ignored) {
+                // Bez nastavení appky není kam poslat - stav zůstane, jak byl.
+            }
+        }
+        call.resolve();
+    }
+
+    private boolean unrestricted() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        try {
+            android.os.PowerManager power = (android.os.PowerManager) getContext().getSystemService(android.content.Context.POWER_SERVICE);
+            return power != null && power.isIgnoringBatteryOptimizations(getContext().getPackageName());
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    /**
      * Čísla se čtou přes `optDouble`, ne přes `call.getLong`. Ten vrací výchozí
      * hodnotu pro všechno, co není přesně `Long` - a JSON z JavaScriptu dá
      * `Integer`, takže by pozice chodila jako nula.

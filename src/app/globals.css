@@ -53,10 +53,18 @@
   --progress-muted: color-mix(in oklab, var(--brand) 16%, var(--black));
   --progress-muted-foreground: var(--brand);
   --track: rgb(255 255 255 / 14%);
+  /*
+   * Žlutá ze spouštěcí ikony appky - jen pro hlášky a oznámení. Je to ta
+   * barva, kterou člověk zná z plochy telefonu, a hlášky ji nesou, aby
+   * nevypadaly jako převzaté odjinud (oranžová s pohárem byla z MicroWins).
+   * Nativní oznámení mají stejnou (MediaLibraryPlugin.NOTIFICATION_COLOR).
+   */
+  --notice: #f9bd11;
 }
 
 @theme inline {
   --color-brand: var(--brand);
+  --color-notice: var(--notice);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -283,6 +291,28 @@
 
   .animate-in-up {
     animation: mw-in 0.18s ease-out both;
+  }
+
+  /* Odpočet hlášky: pruh dole se za dobu zobrazení stáhne do ztracena. */
+  @keyframes mw-countdown {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  .mw-countdown {
+    transform-origin: left;
+    animation: mw-countdown var(--mw-countdown, 4s) linear both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mw-countdown {
+      animation: none;
+      opacity: 0;
+    }
   }
 
   /*

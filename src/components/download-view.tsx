@@ -164,6 +164,7 @@ export function DownloadView({
       let fileName = guessFileName(address);
       let streamTitle: string | undefined;
       let streamArtist: string | undefined;
+      let streamArtwork: string | undefined;
 
       if (needsResolving(address)) {
         if (!nativeStreamAvailable()) {
@@ -181,6 +182,7 @@ export function DownloadView({
         fileName = safeFileName(`${found.author ? `${found.author} - ` : ""}${found.title}`, found.extension);
         streamTitle = found.title;
         streamArtist = found.author;
+        streamArtwork = found.thumbnail;
       }
 
       setBusy("starting");
@@ -189,6 +191,7 @@ export function DownloadView({
         fileName,
         title: streamTitle,
         artist: streamArtist,
+        artworkUrl: streamArtwork,
       });
 
       const downloadId = result?.id;
