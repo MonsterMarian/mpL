@@ -73,6 +73,56 @@ public class MediaLibraryPlugin extends Plugin {
     /** Obaly alb má MediaStore pod vlastní adresou, ne u samotné skladby. */
     private static final Uri ALBUM_ART_URI = Uri.parse("content://media/external/audio/albumart");
 
+    /** Kolik ticha po poslední změně, než se stránce ohlásí. */
+    private static final long LIBRARY_SETTLE_MS = 1500;
+
+    /**
+     * Hudba v telefonu se změnila, zatímco je appka otevřená - soubor smazaný
+     * z počítače, jinou appkou na rozdělené obrazovce, nově stažený. Bez toho
+     * appka ukazovala skladbu, která už neexistuje: nešla přehrát ani smazat,
+     * dokud se z appky neodešlo a nevrátilo.
+     *
+     * MediaStore hlásí změny po kouscích (každý soubor zvlášť, skenování po
+     * částech), takže se počká na chvíli klidu a stránka dostane jedno hlášení.
+     */
+    private android.database.ContentObserver libraryObserver;
+    private final Runnable libraryChanged = () -> notifyListeners("libraryChanged", new JSObject());
+
+    @Override
+    public void load() {
+        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        libraryObserver = new android.database.ContentObserver(handler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                handler.removeCallbacks(libraryChanged);
+                handler.postDelayed(libraryChanged, LIBRARY_SETTLE_MS);
+            }
+        };
+        try {
+            getContext().getContentResolver().registerContentObserver(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                true,
+                libraryObserver
+            );
+        } catch (Exception error) {
+            // Bez sledování zůstává obnova při návratu do appky.
+            libraryObserver = null;
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (libraryObserver != null) {
+            try {
+                getContext().getContentResolver().unregisterContentObserver(libraryObserver);
+            } catch (Exception ignored) {
+                // Už odhlášený.
+            }
+            libraryObserver = null;
+        }
+        super.handleOnDestroy();
+    }
+
     private static final String DOWNLOAD_CHANNEL_ID = DownloadService.CHANNEL_ID;
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(4);
     /**

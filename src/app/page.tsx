@@ -505,6 +505,9 @@ export default function HomePage() {
       setLibraryReady(true);
     }
   }, [toast]);
+  /** Pro posluchače, kteří se kvůli tomu nemají přihlašovat znovu. */
+  const loadDeviceMusicRef = React.useRef(loadDeviceMusic);
+  loadDeviceMusicRef.current = loadDeviceMusic;
 
   /**
    * Co leží v telefonu.
@@ -789,6 +792,9 @@ export default function HomePage() {
       onFailed: (message) => {
         logPlayback(`služba: ${message}`);
         toast({ tone: "warn", title: "Skladbu se nepodařilo přehrát", description: "Soubor už nemusí být v zařízení." });
+        // Nejčastěji soubor zmizel - knihovna se přečte znovu a mrtvý řádek
+        // v ní nezůstane.
+        void loadDeviceMusicRef.current();
       },
       onCommand: (command) => {
         logPlayback(`${command.source === "notification" ? "notifikace" : "systém"}: ${command.action}`);
@@ -1035,6 +1041,30 @@ export default function HomePage() {
     });
     return () => cleanup();
   }, [loadDeviceMusic, loadDeviceDocuments]);
+
+  /**
+   * Hudba v telefonu se změnila, zatímco je appka otevřená (smazaná z počítače,
+   * jinou appkou, nově stažená). Bez toho v knihovně visela skladba, jejíž
+   * soubor už neexistuje - nešla přehrát ani smazat. Hlášení posílá nativní
+   * vrstva až po chvíli klidu, takže dávka změn znamená jedno načtení.
+   */
+  React.useEffect(() => {
+    if (!canReadDeviceMedia()) return;
+    let handle: { remove: () => Promise<void> } | null = null;
+    let gone = false;
+    MediaLibrary.addListener("libraryChanged", () => void loadDeviceMusic())
+      .then((h) => {
+        if (gone) void h.remove();
+        else handle = h;
+      })
+      .catch(() => {
+        // Starší APK hlášení neposílá - zůstává obnova při návratu do appky.
+      });
+    return () => {
+      gone = true;
+      void handle?.remove();
+    };
+  }, [loadDeviceMusic]);
 
   const toggleLike = (trackId: string) => {
     setLiked((previous) => {

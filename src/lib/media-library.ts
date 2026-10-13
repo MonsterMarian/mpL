@@ -116,6 +116,8 @@ interface MediaLibraryPlugin {
   addListener(event: "downloadComplete", handler: (e: DownloadCompleteEvent) => void): Promise<PluginListenerHandle>;
   /** Stahování selhalo. */
   addListener(event: "downloadError", handler: (e: DownloadErrorEvent) => void): Promise<PluginListenerHandle>;
+  /** Hudba v telefonu se změnila, zatímco je appka otevřená. Jen APK od 13. 10. 2026. */
+  addListener(event: "libraryChanged", handler: () => void): Promise<PluginListenerHandle>;
 }
 
 export const MediaLibrary = registerPlugin<MediaLibraryPlugin>("MediaLibrary");
