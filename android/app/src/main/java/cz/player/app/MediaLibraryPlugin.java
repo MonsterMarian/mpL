@@ -634,11 +634,51 @@ public class MediaLibraryPlugin extends Plugin {
     }
 
     /**
+     * Název, interpret, album a obrázek přímo do souboru (zatím M4A - to
+     * stahuje YouTube). Obrázek tak přežije přeinstalaci appky, uvidí ho
+     * i jiný přehrávač a MediaStore z něj udělá obal alba. Album je název
+     * skladby jako u singlu - se společným albem „Music" by všechna stažená
+     * videa sdílela jeden obal. Selhání nevadí: skladba se uloží bez značek.
+     */
+    private void tagAudio(File file, String fileName, String title, String artist, Bitmap cover) {
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".m4a") && !lower.endsWith(".mp4")) return;
+        try {
+            byte[] jpeg = null;
+            if (cover != null) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                cover.compress(Bitmap.CompressFormat.JPEG, 88, out);
+                jpeg = out.toByteArray();
+            }
+            String name = title != null && !title.trim().isEmpty() ? title : fileName.replaceFirst("\\.[^.]+$", "");
+            Mp4Tags.write(file, name, artist, name, jpeg);
+        } catch (Exception error) {
+            android.util.Log.w("MediaLibrary", "Značky do souboru se nepodařilo zapsat", error);
+        }
+    }
+
+    /**
      * Náhled videa jako čtvercový obal - pro uložení ke skladbě i pro velkou
      * ikonu v oznámení „Staženo". Bez sítě nebo bez náhledu vrátí null.
      */
     private Bitmap fetchCover(String url) {
         if (url == null || url.isEmpty()) return null;
+        // NewPipe často vrátí jen náhled 336 px - obal by byl rozmazaný. YouTube
+        // má u videí i větší (1280, 640 a 480 px; stará videa jen ten poslední),
+        // a kde nějaký chybí, odpoví 404 a jde se na další.
+        java.util.regex.Matcher youtube = java.util.regex.Pattern
+            .compile("i\\.ytimg\\.com/vi(?:_webp)?/([^/?]+)/")
+            .matcher(url);
+        if (youtube.find()) {
+            for (String size : new String[] { "maxresdefault", "sddefault", "hqdefault" }) {
+                Bitmap larger = downloadCover("https://i.ytimg.com/vi/" + youtube.group(1) + "/" + size + ".jpg");
+                if (larger != null) return larger;
+            }
+        }
+        return downloadCover(url);
+    }
+
+    private Bitmap downloadCover(String url) {
         try {
             byte[] bytes;
             Request request = new Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT).build();
@@ -847,6 +887,7 @@ public class MediaLibraryPlugin extends Plugin {
                 if (video) {
                     AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
                 } else {
+                    tagAudio(rawFile, fileName, title, artist, cover);
                     Uri saved = AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
                     // Obal se uloží dřív, než se stránka dozví o konci - ta si
                     // pak znovu načte knihovnu a skladba už ho má.
