@@ -619,30 +619,51 @@ public class MediaLibraryPlugin extends Plugin {
      *
      * Selhání nevadí: skladba je stažená, jen bez obrázku.
      */
-    private void saveTrackArtwork(Context context, Uri saved, String url) {
-        if (saved == null || !"content".equals(saved.getScheme())) return;
+    private void saveTrackArtwork(Context context, Uri saved, Bitmap cover) {
+        if (cover == null || saved == null || !"content".equals(saved.getScheme())) return;
         try {
-            long id = ContentUris.parseId(saved);
-            byte[] bytes;
-            Request request = new Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT).build();
-            try (Response response = httpClient.newCall(request).execute()) {
-                ResponseBody body = response.body();
-                if (!response.isSuccessful() || body == null) return;
-                bytes = body.bytes();
-            }
-            Bitmap source = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-            if (source == null) return;
-            Bitmap cover = squareCover(source);
-            File target = artworkFile(context, id);
+            File target = artworkFile(context, ContentUris.parseId(saved));
             File dir = target.getParentFile();
             if (dir != null && !dir.exists()) dir.mkdirs();
             try (FileOutputStream out = new FileOutputStream(target)) {
                 cover.compress(Bitmap.CompressFormat.JPEG, 88, out);
             }
-            if (cover != source) cover.recycle();
-            source.recycle();
         } catch (Exception error) {
             android.util.Log.w("MediaLibrary", "Obal skladby se nepodařilo uložit", error);
+        }
+    }
+
+    /**
+     * Náhled videa jako čtvercový obal - pro uložení ke skladbě i pro velkou
+     * ikonu v oznámení „Staženo". Bez sítě nebo bez náhledu vrátí null.
+     */
+    private Bitmap fetchCover(String url) {
+        if (url == null || url.isEmpty()) return null;
+        try {
+            byte[] bytes;
+            Request request = new Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT).build();
+            try (Response response = httpClient.newCall(request).execute()) {
+                ResponseBody body = response.body();
+                if (!response.isSuccessful() || body == null) return null;
+                bytes = body.bytes();
+            }
+            Bitmap source = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (source == null) return null;
+            Bitmap cover = squareCover(source);
+            if (cover != source) source.recycle();
+            return cover;
+        } catch (Exception error) {
+            android.util.Log.w("MediaLibrary", "Náhled se nepodařilo stáhnout", error);
+            return null;
+        }
+    }
+
+    /** Barevné logo appky - velká ikona oznámení u věci bez vlastního obrázku. */
+    private Bitmap brandCover(Context context) {
+        try {
+            return BitmapFactory.decodeResource(context.getResources(), R.drawable.brand_art);
+        } catch (Exception error) {
+            return null;
         }
     }
 
@@ -803,6 +824,7 @@ public class MediaLibraryPlugin extends Plugin {
                     });
                 });
 
+                Bitmap cover = fetchCover(artworkUrl);
                 // Rovnou do MediaStore, bez převodu - hotové za zlomek vteřiny.
                 if (video) {
                     AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
@@ -810,8 +832,14 @@ public class MediaLibraryPlugin extends Plugin {
                     Uri saved = AudioConverter.saveAudioToMediaStore(context, rawFile, fileName, title, artist);
                     // Obal se uloží dřív, než se stránka dozví o konci - ta si
                     // pak znovu načte knihovnu a skladba už ho má.
-                    if (artworkUrl != null && !artworkUrl.isEmpty()) saveTrackArtwork(context, saved, artworkUrl);
+                    saveTrackArtwork(context, saved, cover);
                 }
+
+                // V oznámení „Staženo" je vidět, co se stáhlo: obrázek skladby
+                // (náhled videa), a když žádný není, barevné logo appky.
+                // Malá ikona vlevo zůstává silueta - systém ji jinou nevezme.
+                Bitmap large = cover != null ? cover : brandCover(context);
+                if (large != null) builder.setLargeIcon(large);
 
                 builder.setContentText(video ? "Staženo do složky Filmy" : "Staženo do složky Hudba")
                     .setProgress(0, 0, false)
