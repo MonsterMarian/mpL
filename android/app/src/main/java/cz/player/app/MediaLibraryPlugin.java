@@ -658,13 +658,28 @@ public class MediaLibraryPlugin extends Plugin {
         }
     }
 
-    /** Barevné logo appky - velká ikona oznámení u věci bez vlastního obrázku. */
-    private Bitmap brandCover(Context context) {
-        try {
-            return BitmapFactory.decodeResource(context.getResources(), R.drawable.brand_art);
-        } catch (Exception error) {
-            return null;
+    /**
+     * Velká ikona oznámení - stejné pravidlo pro všechna oznámení appky:
+     * obrázek té věci (obal skladby, náhled videa), a když žádný není,
+     * barevné logo appky. Malá ikona vlevo je vždy silueta značky, jinou
+     * systém nevezme.
+     */
+    static Bitmap largeIcon(Context context, Bitmap cover) {
+        return cover != null ? cover : brandCover(context);
+    }
+
+    private static Bitmap brand;
+
+    /** Barevné logo appky. Načte se jednou - oznámení s průběhem se kreslí často. */
+    static synchronized Bitmap brandCover(Context context) {
+        if (brand == null) {
+            try {
+                brand = BitmapFactory.decodeResource(context.getResources(), R.drawable.brand_art);
+            } catch (Exception error) {
+                return null;
+            }
         }
+        return brand;
     }
 
     /**
@@ -803,6 +818,10 @@ public class MediaLibraryPlugin extends Plugin {
                 } catch (Exception ignored) {}
             }
 
+            // Obrázek se stáhne hned na začátku (pár kB), ať ho ukáže už
+            // oznámení s průběhem - a pak i „Staženo" nebo „selhalo".
+            Bitmap cover = fetchCover(artworkUrl);
+            DownloadService.cover(downloadId, cover);
             try {
                 rawFile = File.createTempFile("dl_raw_", ".tmp", context.getCacheDir());
                 final int[] lastPercent = { -1 };
@@ -824,7 +843,6 @@ public class MediaLibraryPlugin extends Plugin {
                     });
                 });
 
-                Bitmap cover = fetchCover(artworkUrl);
                 // Rovnou do MediaStore, bez převodu - hotové za zlomek vteřiny.
                 if (video) {
                     AudioConverter.saveVideoToMediaStore(context, rawFile, fileName, title);
@@ -835,12 +853,7 @@ public class MediaLibraryPlugin extends Plugin {
                     saveTrackArtwork(context, saved, cover);
                 }
 
-                // V oznámení „Staženo" je vidět, co se stáhlo: obrázek skladby
-                // (náhled videa), a když žádný není, barevné logo appky.
-                // Malá ikona vlevo zůstává silueta - systém ji jinou nevezme.
-                Bitmap large = cover != null ? cover : brandCover(context);
-                if (large != null) builder.setLargeIcon(large);
-
+                builder.setLargeIcon(largeIcon(context, cover));
                 builder.setContentText(video ? "Staženo do složky Filmy" : "Staženo do složky Hudba")
                     .setProgress(0, 0, false)
                     .setOngoing(false)
@@ -857,6 +870,7 @@ public class MediaLibraryPlugin extends Plugin {
 
             } catch (Exception error) {
                 android.util.Log.e("MediaLibrary", "Stahování audia selhalo", error);
+                builder.setLargeIcon(largeIcon(context, cover));
                 builder.setContentText("Stahování selhalo: " + (error.getMessage() != null ? error.getMessage() : "Chyba"))
                     .setProgress(0, 0, false)
                     .setOngoing(false)

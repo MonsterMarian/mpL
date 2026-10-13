@@ -44,6 +44,8 @@ public class DownloadService extends Service {
     private static final class Entry {
         final String name;
         int percent = -1;
+        /** Obrázek stahované věci; bez něj jde do oznámení logo appky. */
+        android.graphics.Bitmap cover;
 
         Entry(String name) {
             this.name = name;
@@ -76,6 +78,18 @@ public class DownloadService extends Service {
             // Bez služby se stahuje dál, jen odchod z appky ho může přerušit.
             CrashLog.note(context, "Služba stahování nenastartovala: " + error);
         }
+    }
+
+    /** Obrázek stahované věci - náhled přijde chvíli po začátku stahování. */
+    static void cover(String id, android.graphics.Bitmap cover) {
+        if (cover == null) return;
+        synchronized (active) {
+            Entry entry = active.get(id);
+            if (entry == null) return;
+            entry.cover = cover;
+        }
+        DownloadService running = instance;
+        if (running != null) running.main.post(running::refreshSoon);
     }
 
     static void progress(String id, int percent) {
@@ -182,11 +196,13 @@ public class DownloadService extends Service {
         String title;
         int percent;
         int count;
+        android.graphics.Bitmap cover;
         synchronized (active) {
             count = active.size();
             Entry first = active.isEmpty() ? null : active.values().iterator().next();
             title = count == 0 ? "Stahování" : count == 1 ? first.name : "Stahuji " + count + " " + (count < 5 ? "soubory" : "souborů");
             percent = first != null ? first.percent : -1;
+            cover = first != null ? first.cover : null;
         }
 
         Intent open = new Intent(this, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -204,6 +220,9 @@ public class DownloadService extends Service {
             // Ať se oznámení ukáže hned, ne až po deseti vteřinách (Android 12+).
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setProgress(100, Math.max(0, percent), percent < 0);
+        // Stejně jako ostatní oznámení: obrázek stahované věci, jinak logo.
+        android.graphics.Bitmap large = MediaLibraryPlugin.largeIcon(this, cover);
+        if (large != null) builder.setLargeIcon(large);
         return builder.build();
     }
 
