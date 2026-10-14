@@ -9,6 +9,10 @@ export interface DownloadRecord {
   url: string;
   fileName: string;
   at: number;
+  /** Hudba, nebo video - podle toho se stahuje znovu. Starší záznamy ho nemají. */
+  kind?: "audio" | "video";
+  /** Stahování selhalo - v historii má tlačítko „Stáhnout znovu“. */
+  failed?: boolean;
 }
 
 const STORAGE_KEY = "microwins:downloads";
@@ -29,6 +33,10 @@ export function loadDownloads(): DownloadRecord[] {
   }
 }
 
+/**
+ * Zapíše stahování do historie. Stejný odkaz je v ní jednou - povedené
+ * opakování tak nahradí řádek, kde stahování selhalo.
+ */
 export function addDownload(record: DownloadRecord): DownloadRecord[] {
   const next = [record, ...loadDownloads().filter((item) => item.url !== record.url)].slice(0, LIMIT);
   try {

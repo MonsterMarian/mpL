@@ -930,10 +930,22 @@ public class MediaLibraryPlugin extends Plugin {
         // Konečné oznámení (staženo / selhalo). Průběh ukazuje služba
         // DownloadService, která zároveň drží proces naživu, když uživatel
         // z appky odejde - bez ní stahování umřelo v půlce.
+        // Klepnutí na „Staženo“ i „selhalo“ otevře appku - stejně jako
+        // oznámení přehrávače. Bez toho se po klepnutí jen zavřelo.
+        Intent open = new Intent(context, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent openApp = PendingIntent.getActivity(
+            context,
+            notificationId,
+            open,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(NOTIFICATION_COLOR)
             .setContentTitle(fileName)
+            .setContentIntent(openApp)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW);
 

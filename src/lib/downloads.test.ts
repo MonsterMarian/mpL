@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { cleanDownloadUrl, guessFileName, needsResolving, safeFileName, unsupportedSource } from "./downloads";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  addDownload,
+  cleanDownloadUrl,
+  guessFileName,
+  needsResolving,
+  safeFileName,
+  unsupportedSource,
+} from "./downloads";
 
 describe("downloads helper", () => {
   it("cleans standard YouTube watch URL", () => {
@@ -42,5 +49,28 @@ describe("downloads helper", () => {
   it("guesses filename from direct URL", () => {
     expect(guessFileName("https://example.com/music/sample.mp3")).toBe("sample.mp3");
     expect(guessFileName("https://example.com/stream/file")).toBe("file.mp3");
+  });
+});
+
+describe("historie stahování", () => {
+  const store = new Map<string, string>();
+  afterEach(() => {
+    store.clear();
+    vi.unstubAllGlobals();
+  });
+  const stubStorage = () =>
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    });
+
+  /* Selhané stahování zůstane v historii s tlačítkem „Stáhnout znovu“ -
+     povedené opakování ho nahradí, nevzniknou dva řádky. */
+  it("povedené opakování nahradí řádek, kde stahování selhalo", () => {
+    stubStorage();
+    addDownload({ url: "https://youtu.be/a", fileName: "A.m4a", at: 1, kind: "audio", failed: true });
+    const next = addDownload({ url: "https://youtu.be/a", fileName: "A.m4a", at: 2, kind: "audio" });
+    expect(next).toEqual([{ url: "https://youtu.be/a", fileName: "A.m4a", at: 2, kind: "audio" }]);
   });
 });

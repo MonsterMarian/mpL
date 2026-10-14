@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, ArrowDownToLine, Loader2, Music2, Trash2, Video } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, Loader2, Music2, RotateCw, Trash2, Video } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   MediaLibrary,
@@ -129,7 +129,10 @@ export function DownloadView({
 
     listeners.push(
       MediaLibrary.addListener("downloadError", (e: DownloadErrorEvent) => {
+        const record = pendingHistory.current.get(e.id);
         settle(e.id, "failed");
+        // Selhané stahování zůstane v historii - s tlačítkem „Stáhnout znovu“.
+        if (record) setHistory(addDownload({ ...record, at: Date.now(), failed: true }));
         onToast?.({ tone: "warn", title: "Stahování selhalo", description: e.error?.slice(0, 130) });
       }),
     );
@@ -140,9 +143,13 @@ export function DownloadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = async (event: React.FormEvent) => {
+  const start = (event: React.FormEvent) => {
     event.preventDefault();
-    const address = cleanDownloadUrl(url);
+    void download(cleanDownloadUrl(url), kind, () => setUrl(""));
+  };
+
+  /** Stáhne odkaz - z formuláře i znovu z historie, když poprvé selhal. */
+  const download = async (address: string, kind: Kind, onStarted?: () => void) => {
     if (!address || busy) return;
 
     const broken = unsupportedSource(address);
@@ -196,7 +203,7 @@ export function DownloadView({
       // systémovému stahovači, který nehlásí nic - jeho řádek by tu visel
       // na „0 %" navždy, takže se u něj spoléhá na lištu systému.
       const reportsProgress = result?.reportsProgress ?? /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(savedName);
-      const record: DownloadRecord = { url: address, fileName: savedName, at: Date.now() };
+      const record: DownloadRecord = { url: address, fileName: savedName, at: Date.now(), kind };
       if (downloadId && reportsProgress && !finished.current.has(downloadId)) {
         pendingHistory.current.set(downloadId, record);
         setActiveDownloads((prev) =>
@@ -220,7 +227,7 @@ export function DownloadView({
       if ((!reportsProgress && !legacyVideo) || (downloadId && finished.current.get(downloadId) === "completed")) {
         setHistory(addDownload(record));
       }
-      setUrl("");
+      onStarted?.();
       onToast?.(
         legacyVideo
           ? {
@@ -387,16 +394,48 @@ export function DownloadView({
           <ul className="divide-y rounded-2xl border">
             {history.map((record) => (
               <li key={`${record.at}-${record.fileName}`} className="flex items-center gap-3 px-3 py-2.5">
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-muted-foreground">
-                  {isVideoFile(record.fileName) ? <Video className="size-4" /> : <Music2 className="size-4" />}
+                <span
+                  className={cn(
+                    "grid size-9 shrink-0 place-items-center rounded-lg bg-white/[0.06]",
+                    record.failed ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {record.failed ? (
+                    <AlertTriangle className="size-4" />
+                  ) : isVideoFile(record.fileName) ? (
+                    <Video className="size-4" />
+                  ) : (
+                    <Music2 className="size-4" />
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{record.fileName}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{record.url}</span>
+                  <span
+                    className={cn(
+                      "block truncate text-xs",
+                      record.failed ? "text-destructive" : "text-muted-foreground",
+                    )}
+                  >
+                    {record.failed ? "Stahování selhalo" : record.url}
+                  </span>
                 </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                  {new Date(record.at).toLocaleDateString("cs")}
-                </span>
+                {/* Znovu jen tam, kde to selhalo - povedené stahování nemá co opakovat. */}
+                {record.failed ? (
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void download(record.url, record.kind ?? (isVideoFile(record.fileName) ? "video" : "audio"))
+                    }
+                    className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+                  >
+                    <RotateCw className="size-3.5" /> Stáhnout znovu
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    {new Date(record.at).toLocaleDateString("cs")}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
