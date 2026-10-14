@@ -8,6 +8,7 @@ import {
   Disc3,
   Heart,
   Loader2,
+  Library,
   ListOrdered,
   Mic2,
   Pencil,
@@ -36,7 +37,6 @@ import {
 } from "@/lib/library";
 import type { Playlist } from "@/lib/playlists";
 import { BRAND_MARK } from "@/lib/brand";
-import { BrandIcon } from "@/components/ui/brand-icon";
 import { Cover, TrackRow } from "./track-row";
 
 /**
@@ -54,7 +54,7 @@ export interface Browse {
 }
 
 const TABS: { id: LibraryTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "tracks", label: "Skladby", icon: BrandIcon },
+  { id: "tracks", label: "Skladby", icon: Library },
   { id: "albums", label: "Alba", icon: Disc3 },
   { id: "artists", label: "Interpreti", icon: Mic2 },
   { id: "playlists", label: "Playlisty", icon: ListOrdered },
