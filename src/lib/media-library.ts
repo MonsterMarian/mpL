@@ -98,6 +98,12 @@ interface MediaLibraryPlugin {
    * PDF nejsou z pohledu Androidu média, takže je povolení k hudbě nekryje.
    */
   listDocuments(): Promise<{ granted: boolean; documents: NativeDocument[] }>;
+  /**
+   * Smaže dokumenty ze zařízení, bez systémového okna - appka má přístup ke
+   * všem souborům a ptá se sama (respektive nabídne „Vrátit"). Vrací adresy,
+   * které jsou opravdu pryč. Je jen v novějších APK.
+   */
+  deleteDocuments(options: { uris: string[] }): Promise<{ deleted: string[] }>;
   /** Obálka dokumentu - první stránka PDF jako data URI. */
   documentThumbnail(options: { uri: string }): Promise<{ thumbnail: string | null; pages?: number }>;
   checkAllFilesAccess(): Promise<{ granted: boolean }>;

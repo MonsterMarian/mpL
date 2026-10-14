@@ -4,13 +4,11 @@ import * as React from "react";
 import {
   ArrowDownUp,
   Check,
-  CheckCheck,
   ChevronLeft,
   Disc3,
   Heart,
   Loader2,
   ListMusic,
-  ListPlus,
   Mic2,
   Music2,
   Pencil,
@@ -18,13 +16,13 @@ import {
   Plus,
   Search,
   Shuffle,
-  MoreHorizontal,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { SelectionHeader } from "@/components/selection";
 import {
   SORT_OPTIONS,
   formatTotal,
@@ -96,13 +94,11 @@ export interface LibraryViewProps {
   onMenu: (track: Track) => void;
   /** Zařazení skladby do fronty (potažení). */
   onQueueTrack?: (track: Track) => void;
-  /** Zařazení všech vybraných skladeb do fronty. */
-  onQueueSelected?: () => void;
   /** Vybrané skladby; `null` = režim výběru neběží. */
   selected: ReadonlySet<string> | null;
+  onStartSelection: (trackId: string) => void;
   onSelectAll: (trackIds: string[]) => void;
   onEndSelection: () => void;
-  onSelectionMenu: () => void;
   onPlayCollection: (trackIds: string[], shuffle: boolean) => void;
   onCreatePlaylist: (name: string) => void;
   onRenamePlaylist: (id: string, name: string) => void;
@@ -137,13 +133,12 @@ export function LibraryView(props: LibraryViewProps) {
     onToggleTrack,
     onMenu,
     onQueueTrack,
-    onQueueSelected,
     onPlayCollection,
     onCreatePlaylist,
     selected,
+    onStartSelection,
     onSelectAll,
     onEndSelection,
-    onSelectionMenu,
   } = props;
 
   const albums = React.useMemo(() => groupByAlbum(tracks), [tracks]);
@@ -172,22 +167,20 @@ export function LibraryView(props: LibraryViewProps) {
       extra={extra}
       selecting={selected !== null}
       selected={selected?.has(track.id) ?? false}
-      // Podržení rovnou otevře nabídku - výběr víc skladeb je v ní. Dřív se
-      // jen vybralo a k mazání se muselo ještě přes tři tečky. Ve výběru
-      // podržení nedělá nic, ať nerozbije, co už je vybrané.
-      onLongPress={selected ? undefined : () => onMenu(track)}
+      // Podržení skladbu vybere a akce se hned ukážou dole (viz
+      // `SelectionActions`). Ve výběru podržení nedělá nic, ať nerozbije,
+      // co už je vybrané.
+      onLongPress={selected ? undefined : () => onStartSelection(track.id)}
     />
   );
 
   const selectionBar = (visibleIds: string[]) =>
     selected ? (
-      <SelectionBar
+      <SelectionHeader
         count={selected.size}
         allSelected={visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))}
         onSelectAll={() => onSelectAll(visibleIds)}
         onEnd={onEndSelection}
-        onMenu={onSelectionMenu}
-        onQueue={onQueueSelected}
       />
     ) : null;
 
@@ -309,74 +302,6 @@ export function LibraryView(props: LibraryViewProps) {
         />
       ) : null}
     </section>
-  );
-}
-
-/**
- * Lišta výběru.
- *
- * Drží se nahoře nad seznamem a lepí se pod hlavičku, aby při procházení
- * dlouhé knihovny neutekla - jinak by se z výběru nedalo ven bez scrolování
- * na začátek.
- */
-function SelectionBar({
-  count,
-  allSelected,
-  onSelectAll,
-  onEnd,
-  onMenu,
-  onQueue,
-}: {
-  count: number;
-  allSelected: boolean;
-  onSelectAll: () => void;
-  onEnd: () => void;
-  onMenu: () => void;
-  onQueue?: () => void;
-}) {
-  return (
-    <div className="animate-in-up sticky top-16 z-30 -mx-4 mb-4 flex items-center gap-2 border-b border-white/[0.08] bg-background/95 px-4 py-2.5 backdrop-blur">
-      <button
-        type="button"
-        onClick={onEnd}
-        aria-label="Zrušit výběr"
-        className="-ml-2 rounded-lg p-2 text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <X className="size-5" />
-      </button>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-        {count ? `${count} ${count === 1 ? "vybraná" : count < 5 ? "vybrané" : "vybraných"}` : "Nic není vybrané"}
-      </span>
-      <button
-        type="button"
-        onClick={onSelectAll}
-        className={cn(
-          "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors hover:bg-accent",
-          allSelected && "border-brand/40 text-brand",
-        )}
-      >
-        <CheckCheck className="size-3.5" /> Vše
-      </button>
-      {onQueue ? (
-        <button
-          type="button"
-          onClick={onQueue}
-          disabled={!count}
-          className="flex h-9 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          <ListPlus className="size-3.5" /> Do fronty
-        </button>
-      ) : null}
-      <button
-        type="button"
-        onClick={onMenu}
-        disabled={!count}
-        aria-label="Co s vybranými"
-        className="flex size-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-      >
-        <MoreHorizontal className="size-4" />
-      </button>
-    </div>
   );
 }
 

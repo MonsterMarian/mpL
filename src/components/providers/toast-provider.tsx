@@ -12,10 +12,16 @@ interface Toast {
   tone: ToastTone;
   title: string;
   description?: string;
+  /** Tlačítko v hlášce - třeba „Vrátit" po smazání. Klepnutí hlášku zavře. */
+  action?: { label: string; onClick: () => void };
+  /** Jak dlouho hláška visí, když nestačí výchozí doba podle tónu. */
+  duration?: number;
 }
 
+export type ToastMessage = Omit<Toast, "id">;
+
 interface ToastApi {
-  toast: (t: Omit<Toast, "id">) => void;
+  toast: (t: ToastMessage) => void;
 }
 
 const ToastContext = React.createContext<ToastApi | null>(null);
@@ -46,10 +52,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toast = React.useCallback(
-    (t: Omit<Toast, "id">) => {
+    (t: ToastMessage) => {
       const id = nextId.current++;
       setToasts((prev) => [...prev, { ...t, id }]);
-      window.setTimeout(() => dismiss(id), DURATION[t.tone]);
+      window.setTimeout(() => dismiss(id), t.duration ?? DURATION[t.tone]);
     },
     [dismiss],
   );
@@ -84,6 +90,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 <p className="mt-0.5 text-xs text-muted-foreground">{t.description}</p>
               ) : null}
             </div>
+            {t.action ? (
+              <button
+                type="button"
+                onClick={() => {
+                  t.action?.onClick();
+                  dismiss(t.id);
+                }}
+                className="-my-1 h-8 shrink-0 rounded-md px-2.5 text-sm font-semibold text-brand transition-colors hover:bg-white/[0.06]"
+              >
+                {t.action.label}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => dismiss(t.id)}
@@ -95,7 +113,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <span
               aria-hidden
               className="mw-countdown absolute inset-x-0 bottom-0 h-0.5 bg-notice/70"
-              style={{ "--mw-countdown": `${DURATION[t.tone]}ms` } as React.CSSProperties}
+              style={{ "--mw-countdown": `${t.duration ?? DURATION[t.tone]}ms` } as React.CSSProperties}
             />
           </div>
         ))}

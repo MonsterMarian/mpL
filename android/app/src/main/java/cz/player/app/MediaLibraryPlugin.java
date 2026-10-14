@@ -342,6 +342,60 @@ public class MediaLibraryPlugin extends Plugin {
         }
     }
 
+    /**
+     * Smaže dokumenty ze zařízení.
+     *
+     * PDF ani EPUB nejsou média, takže `createDeleteRequest` na ně nejde - ale
+     * appka má přístup ke všem souborům (bez něj by je ani nenašla), a tak
+     * smaže soubor přímo. Systém se proto neptá; appka místo otázky ukáže
+     * „Vrátit" a maže až po něm. Vrací adresy, které jsou opravdu pryč.
+     */
+    @PluginMethod
+    public void deleteDocuments(PluginCall call) {
+        if (!hasAllFiles()) {
+            call.reject("Mazání souborů potřebuje přístup ke všem souborům.", "MEDIA_PERMISSION_DENIED");
+            return;
+        }
+        List<String> raw;
+        try {
+            JSArray uris = call.getArray("uris");
+            raw = uris != null ? uris.toList() : Collections.<String>emptyList();
+        } catch (JSONException error) {
+            raw = Collections.emptyList();
+        }
+
+        ContentResolver resolver = getContext().getContentResolver();
+        JSArray deleted = new JSArray();
+        for (String value : raw) {
+            if (value == null || value.trim().isEmpty()) continue;
+            Uri uri = Uri.parse(value.trim());
+            String path = null;
+            try (Cursor cursor = resolver.query(uri, new String[] { MediaStore.Files.FileColumns.DATA }, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) path = cursor.getString(0);
+            } catch (Exception ignored) {
+                // Bez cesty zbývá smazat záznam v MediaStore.
+            }
+
+            boolean gone = false;
+            if (path != null) {
+                File file = new File(path);
+                gone = file.delete() || !file.exists();
+            }
+            try {
+                // Záznam v MediaStore, ať se smazaný soubor nevrátí do seznamu.
+                // Na Androidu 11+ ho uklidí už smazání souboru, tady se jen dojistí.
+                if (resolver.delete(uri, null, null) > 0 && path == null) gone = true;
+            } catch (Exception ignored) {
+                // Soubor je pryč, záznam po něm uklidí systém sám.
+            }
+            if (gone) deleted.put(value);
+        }
+
+        JSObject result = new JSObject();
+        result.put("deleted", deleted);
+        call.resolve(result);
+    }
+
     /** Svazky, kde můžou dokumenty ležet - vnitřní paměť i karta. */
     private List<String> documentVolumes() {
         List<String> volumes = new ArrayList<>();

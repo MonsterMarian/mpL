@@ -7,19 +7,22 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatTotal, trackCountLabel, type Track } from "@/lib/library";
 import type { Playlist } from "@/lib/playlists";
-import { Cover } from "./track-row";
 
 /**
  * Co všechno se dá se skladbou udělat.
  *
- * Jeden panel se třemi stavy, ne tři okna nad sebou: výběr playlistu i otázka
- * na mazání se odehrají na stejném místě, takže se nikam nemusí proklikávat
- * zpátky přes navrstvené dialogy.
+ * Jeden panel se dvěma stavy, ne dvě okna nad sebou: výběr playlistu se
+ * odehraje na stejném místě, takže se nikam nemusí proklikávat zpátky přes
+ * navrstvené dialogy.
+ *
+ * Mazání se tu znovu neptá. Soubor z telefonu potvrzuje Android vlastním
+ * oknem a odebrání z knihovny jde vrátit tlačítkem v hlášce - druhá otázka
+ * „opravdu?" by byla jen klepnutí navíc.
  *
  * Bere jednu skladbu i celý výběr - z pohledu nabídky je to totéž, jen se jinak
  * jmenuje a jinak počítá.
  */
-type MenuView = "menu" | "playlists" | "delete";
+export type MenuView = "menu" | "playlists";
 
 export interface TrackMenuProps {
   /** Skladby, kterých se nabídka týká. Prázdné pole = zavřeno. */
@@ -31,6 +34,8 @@ export interface TrackMenuProps {
   deleting: boolean;
   /** Nabídnout „vybrat víc" - u hromadné akce už to nedává smysl. */
   canSelect: boolean;
+  /** Čím panel začne - z lišty výběru se jde rovnou na playlisty. */
+  initialView?: MenuView;
   onClose: () => void;
   onPlayNext: () => void;
   onQueue: () => void;
@@ -48,6 +53,7 @@ export function TrackMenu({
   fromDevice,
   deleting,
   canSelect,
+  initialView = "menu",
   onClose,
   onPlayNext,
   onQueue,
@@ -67,9 +73,9 @@ export function TrackMenu({
 
   React.useEffect(() => {
     if (!open) return;
-    setView("menu");
+    setView(initialView);
     setNewName("");
-  }, [open, tracks]);
+  }, [open, tracks, initialView]);
 
   if (!items.length) return null;
 
@@ -84,16 +90,8 @@ export function TrackMenu({
     <Sheet
       open={open}
       onOpenChange={(next) => !next && onClose()}
-      title={view === "delete" ? (fromDevice ? "Smazat ze zařízení?" : "Odebrat z knihovny?") : title}
-      description={
-        view === "delete"
-          ? fromDevice
-            ? "Soubor zmizí z telefonu, ne jen z knihovny. Vrátit to nejde."
-            : "Skladba zmizí z knihovny. Soubor v telefonu zůstane."
-          : view === "playlists"
-            ? "Vyber playlist, nebo založ nový."
-            : description
-      }
+      title={title}
+      description={view === "playlists" ? "Vyber playlist, nebo založ nový." : description}
     >
       {view === "menu" ? (
         <div className="flex flex-col gap-1 pb-1">
@@ -111,10 +109,7 @@ export function TrackMenu({
             label={fromDevice ? "Smazat ze zařízení" : "Odebrat z knihovny"}
             tone="destructive"
             busy={deleting}
-            // Soubor z telefonu potvrzuje Android vlastním oknem, takže by
-            // tahle otázka byla jen druhá stejná za sebou. Ptá se jen tam, kde
-            // se odebírá z knihovny a systém do toho nemluví.
-            onClick={() => (fromDevice ? onDelete() : setView("delete"))}
+            onClick={onDelete}
           />
         </div>
       ) : null}
@@ -166,41 +161,6 @@ export function TrackMenu({
               <Plus className="size-4" /> Založit
             </button>
           </form>
-        </div>
-      ) : null}
-
-      {view === "delete" ? (
-        <div className="flex flex-col gap-4 pb-1">
-          <div className="flex items-center gap-3 rounded-xl border px-3 py-2.5">
-            <Cover artwork={items[0].artwork} className="size-11 rounded-lg" />
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-medium">{title}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {single ? single.artist : formatTotal(seconds) ?? ""}
-              </span>
-            </span>
-          </div>
-          {fromDevice ? (
-            <p className="text-xs text-muted-foreground">Android se ještě jednou zeptá vlastním oknem.</p>
-          ) : null}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setView("menu")}
-              className="flex h-11 flex-1 items-center justify-center rounded-xl border text-sm transition-colors hover:bg-accent"
-            >
-              Zpět
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              disabled={deleting}
-              className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-destructive text-sm font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-              {fromDevice ? "Smazat" : "Odebrat"}
-            </button>
-          </div>
         </div>
       ) : null}
     </Sheet>

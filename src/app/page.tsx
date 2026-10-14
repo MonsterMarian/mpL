@@ -6,6 +6,11 @@ import {
   BookOpenText,
   Bookmark,
   BookmarkCheck,
+  Heart,
+  HeartOff,
+  ListEnd,
+  ListPlus,
+  Plus,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -34,13 +39,15 @@ import { DownloadView } from "@/components/download-view";
 import { LibraryView, type Browse, type LibraryTab } from "@/components/music/library-view";
 import { NowPlaying } from "@/components/music/now-playing";
 import { PlayerDock } from "@/components/music/player-dock";
-import { TrackMenu } from "@/components/music/track-menu";
+import { TrackMenu, type MenuView } from "@/components/music/track-menu";
+import { SelectionActions, SelectionHeader, SelectedMark } from "@/components/selection";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
+import { UNDO_MS, countWord, mergeBack } from "@/lib/undo";
 import {
   MediaLibrary,
   NativeAudioTrack,
@@ -261,6 +268,8 @@ export default function HomePage() {
   const [menuTracks, setMenuTracks] = React.useState<Track[]>([]);
   /** Vybrané skladby pro hromadné akce; `null` = režim výběru neběží. */
   const [selected, setSelected] = React.useState<Set<string> | null>(null);
+  /** Čím nabídka začne - lišta výběru ji otevírá rovnou na playlistech. */
+  const [menuView, setMenuView] = React.useState<MenuView>("menu");
   const [deleting, setDeleting] = React.useState(false);
   const [libraryTab, setLibraryTab] = React.useState<LibraryTab>("tracks");
   /** Otevřené album, interpret nebo playlist. */
@@ -319,8 +328,11 @@ export default function HomePage() {
   const [isLoadingDocument, setIsLoadingDocument] = React.useState(false);
   /** Volba hlasu u textového dokumentu. Ve vykreslené čtečce sedí ve své liště. */
   const [voiceOpen, setVoiceOpen] = React.useState(false);
-  /** Kniha čekající na potvrzení, že se má smazat. Mazání je bez návratu. */
-  const [docToDelete, setDocToDelete] = React.useState<StoredDocument | null>(null);
+  /**
+   * Vybrané knihy pro hromadné akce: `lib:<id>` z knihovny appky, `dev:<id>`
+   * ze složek v telefonu. `null` = výběr neběží.
+   */
+  const [docSelected, setDocSelected] = React.useState<Set<string> | null>(null);
   /**
    * Dokumentu chybí soubor, takže z něj zbyl jen vytažený text.
    *
@@ -982,6 +994,10 @@ export default function HomePage() {
       setSelected(null);
       return true;
     }
+    if (docSelected) {
+      setDocSelected(null);
+      return true;
+    }
     if (sleepOpen) {
       setSleepOpen(false);
       return true;
@@ -1333,7 +1349,43 @@ export default function HomePage() {
 
   const closeMenu = () => {
     setMenuTracks([]);
+    setMenuView("menu");
     setSelected(null);
+  };
+
+  /** Vybrané skladby v pořadí knihovny. */
+  const selectedTracks = selected ? tracks.filter((track) => selected.has(track.id)) : [];
+
+  /** Co jde s výběrem udělat - totéž co v nabídce u jedné skladby. */
+  const trackActions = (target: Track[]) => {
+    const everyLiked = target.length > 0 && target.every((track) => liked.has(track.id));
+    return [
+      { key: "next", icon: ListEnd, label: "Jako další", onClick: () => queueAction(target, "next") },
+      { key: "queue", icon: ListPlus, label: "Do fronty", onClick: () => queueAction(target, "end") },
+      {
+        key: "like",
+        icon: everyLiked ? HeartOff : Heart,
+        label: everyLiked ? "Z oblíbených" : "Oblíbit",
+        onClick: () => toggleLikeAll(target),
+      },
+      {
+        key: "playlist",
+        icon: Plus,
+        label: "Playlist",
+        onClick: () => {
+          setMenuView("playlists");
+          setMenuTracks(target);
+        },
+      },
+      {
+        key: "delete",
+        icon: Trash2,
+        label: "Smazat",
+        tone: "destructive" as const,
+        busy: deleting,
+        onClick: () => void deleteTracks(target),
+      },
+    ];
   };
 
   const queueAction = (target: Track[], where: "next" | "end") => {
@@ -1431,37 +1483,88 @@ export default function HomePage() {
   };
 
   /**
-   * Smazání souboru ze zařízení. Od Androidu 11 se ptá systém vlastním oknem,
-   * takže odmítnutí není chyba - skladba prostě zůstane, kde byla.
+   * Smazání skladeb.
+   *
+   * Soubor v telefonu maže Android a sám se zeptá vlastním oknem - to je ta
+   * jediná otázka, appka se před ním už neptá a po něm nic nehlásí: zmizelá
+   * skladba je odpověď dost jasná. Odmítnuté okno není chyba, skladba prostě
+   * zůstane, kde byla.
+   *
+   * Co v telefonu neleží (ručně vybraný soubor), jen zmizí z knihovny - bez
+   * otázky, zato s „Vrátit" v hlášce.
    */
   const deleteTracks = async (target: Track[]) => {
     if (!target.length) return;
-    const deviceIds = canReadDeviceMedia()
-      ? target.filter((track) => track.source === "device").map((track) => track.id.replace(/^device-/, ""))
-      : [];
-    setDeleting(true);
-    try {
-      if (deviceIds.length) {
+    const onDevice = canReadDeviceMedia() ? target.filter((track) => track.source === "device") : [];
+    const elsewhere = target.filter((track) => !onDevice.includes(track));
+    closeMenu();
+
+    if (onDevice.length) {
+      setDeleting(true);
+      try {
         // Všechna id naráz: systém se pak zeptá jednou, ne u každé skladby zvlášť.
-        const result = await MediaLibrary.deleteAudio({ ids: deviceIds });
-        if (!result?.deleted) {
-          toast({ tone: "info", title: "Skladby zůstávají", description: "Mazání nebylo potvrzené." });
-          return;
-        }
+        const result = await MediaLibrary.deleteAudio({
+          ids: onDevice.map((track) => track.id.replace(/^device-/, "")),
+        });
+        if (!result?.deleted) return;
+        forgetTracks(onDevice.map((track) => track.id));
+      } catch (error) {
+        console.error("Skladby se nepodařilo smazat", error);
+        toast({ tone: "warn", title: "Smazání selhalo", description: "Soubor se nepodařilo odstranit ze zařízení." });
+        return;
+      } finally {
+        setDeleting(false);
       }
-      forgetTracks(target.map((track) => track.id));
-      toast({
-        tone: "win",
-        title: deviceIds.length ? "Smazáno ze zařízení" : "Odebráno z knihovny",
-        description: label(target),
-      });
-    } catch (error) {
-      console.error("Skladby se nepodařilo smazat", error);
-      toast({ tone: "warn", title: "Smazání selhalo", description: "Soubor se nepodařilo odstranit ze zařízení." });
-    } finally {
-      setDeleting(false);
-      closeMenu();
     }
+
+    if (elsewhere.length) removeTracksWithUndo(elsewhere);
+  };
+
+  /**
+   * Odebrání z knihovny, které jde vrátit. Skladby, srdíčka, počty přehrání
+   * a místa v playlistech se vrátí, kam patřily; fronta a to, co zrovna hraje,
+   * už ne - to se mezitím mohlo pohnout dál.
+   */
+  const removeTracksWithUndo = (target: Track[]) => {
+    const back = new Set(target.map((track) => track.id));
+    const before = { tracks, playlists, liked, playStats };
+    forgetTracks([...back]);
+    toast({
+      tone: "info",
+      title: "Odebráno z knihovny",
+      description: label(target),
+      duration: UNDO_MS,
+      action: {
+        label: "Vrátit",
+        onClick: () => {
+          setTracks((current) => mergeBack(before.tracks, current, back));
+          setPlaylists((current) =>
+            current.map((playlist) => {
+              const old = before.playlists.find((item) => item.id === playlist.id);
+              if (!old || !old.trackIds.some((id) => back.has(id))) return playlist;
+              const kept = new Set(playlist.trackIds);
+              return {
+                ...playlist,
+                trackIds: [
+                  ...old.trackIds.filter((id) => kept.has(id) || back.has(id)),
+                  ...playlist.trackIds.filter((id) => !old.trackIds.includes(id)),
+                ],
+              };
+            }),
+          );
+          setLiked((current) => {
+            const next = new Set(current);
+            for (const id of back) if (before.liked.has(id)) next.add(id);
+            return next;
+          });
+          setPlayStats((current) => {
+            const next = { ...current };
+            for (const id of back) if (before.playStats[id]) next[id] = before.playStats[id];
+            return next;
+          });
+        },
+      },
+    });
   };
 
   const startSleepTimer = (minutes: number) => {
@@ -1814,21 +1917,119 @@ export default function HomePage() {
     }
   };
 
-  const forgetDocument = async (id: string) => {
-    stopReading();
-    await removeDocument(id);
-    await removeDocumentFile(id);
-    const rest = documents.filter((doc) => doc.id !== id);
-    setDocuments(rest);
-    if (documentId_ !== id) return;
-    setDocumentError(null);
-    if (rest[0]) {
-      openDocument(rest[0]);
-      return;
-    }
-    dropPdf();
-    setDocumentId(null);
+  const toggleDoc = (key: string) =>
+    setDocSelected((previous) => {
+      if (!previous) return previous;
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  /** Knihy, které jsou zrovna vidět - na ně míří „Vše" ve výběru. */
+  const visibleDocKeys = activeDoc
+    ? []
+    : [
+        ...(docFolder
+          ? deviceDocs.filter((doc) => (doc.folder || "Jinde") === docFolder).map((doc) => `dev:${doc.id}`)
+          : []),
+        ...documents.map((doc) => `lib:${doc.id}`),
+      ];
+
+  /**
+   * Smazání knih bez otázky „opravdu?": zmizí hned a hláška nabídne „Vrátit".
+   * Doopravdy se smažou, až hláška odejde (viz `lib/undo.ts`).
+   *
+   * Z knihovny appky mizí jen to, co si appka o knize drží - záložky a uložená
+   * kopie. Kniha ze složky v telefonu se smaže i ze zařízení.
+   */
+  const deleteDocs = (keys: Iterable<string>) => {
+    const wanted = new Set(keys);
+    const fromLibrary = documents.filter((doc) => wanted.has(`lib:${doc.id}`));
+    const fromDevice = deviceDocs.filter((doc) => wanted.has(`dev:${doc.id}`));
+    const count = fromLibrary.length + fromDevice.length;
+    if (!count) return;
+
+    setDocSelected(null);
+    const libraryBack = new Set(fromLibrary.map((doc) => doc.id));
+    const deviceBack = new Set(fromDevice.map((doc) => doc.id));
+    const before = { documents, deviceDocs };
+    setDocuments((current) => current.filter((doc) => !libraryBack.has(doc.id)));
+    setDeviceDocs((current) => current.filter((doc) => !deviceBack.has(doc.id)));
+
+    let undone = false;
+    const timer = window.setTimeout(() => {
+      if (!undone) void commitDocDeletes(fromLibrary, fromDevice);
+    }, UNDO_MS);
+
+    toast({
+      tone: "info",
+      title: fromDevice.length ? "Smazáno" : "Odebráno z knihovny",
+      description: count === 1 ? (fromLibrary[0]?.name ?? fromDevice[0].name) : countWord(count, ["soubor", "soubory", "souborů"]),
+      duration: UNDO_MS,
+      action: {
+        label: "Vrátit",
+        onClick: () => {
+          undone = true;
+          window.clearTimeout(timer);
+          setDocuments((current) => mergeBack(before.documents, current, libraryBack));
+          setDeviceDocs((current) => mergeBack(before.deviceDocs, current, deviceBack));
+        },
+      },
+    });
   };
+
+  const commitDocDeletes = async (fromLibrary: StoredDocument[], fromDevice: NativeDocument[]) => {
+    for (const doc of fromLibrary) {
+      await removeDocument(doc.id);
+      await removeDocumentFile(doc.id);
+    }
+    if (!fromDevice.length) return;
+
+    let failed = fromDevice;
+    let missing = false;
+    try {
+      const result = await MediaLibrary.deleteDocuments({ uris: fromDevice.map((doc) => doc.uri) });
+      const gone = new Set(result?.deleted ?? []);
+      failed = fromDevice.filter((doc) => !gone.has(doc.uri));
+    } catch (error) {
+      console.error("Soubory se nepodařilo smazat", error);
+      missing = (error as { code?: string } | null)?.code === "UNIMPLEMENTED";
+    }
+    if (!failed.length) return;
+    // Co v telefonu zůstalo, patří zpátky do seznamu - jinak by appka tvrdila,
+    // že je pryč něco, co tam pořád leží.
+    setDeviceDocs((current) => [...current, ...failed.filter((doc) => !current.some((item) => item.id === doc.id))]);
+    toast({
+      tone: "warn",
+      title: "Smazání selhalo",
+      description: missing
+        ? "Mazání souborů umí až novější APK - živá aktualizace nativní část nevymění."
+        : "Soubor se nepodařilo odstranit ze zařízení.",
+    });
+  };
+
+  /** Akce s vybranými knihami. Otevřít jde jen jedna. */
+  const docActions = (keys: string[]) => [
+    ...(keys.length === 1
+      ? [
+          {
+            key: "open",
+            icon: BookOpen,
+            label: "Otevřít",
+            onClick: () => {
+              const key = keys[0];
+              setDocSelected(null);
+              const fromLibrary = documents.find((doc) => key === `lib:${doc.id}`);
+              if (fromLibrary) return openDocument(fromLibrary);
+              const fromDevice = deviceDocs.find((doc) => key === `dev:${doc.id}`);
+              if (fromDevice) void openDeviceDocument(fromDevice);
+            },
+          },
+        ]
+      : []),
+    { key: "delete", icon: Trash2, label: "Smazat", tone: "destructive" as const, onClick: () => deleteDocs(keys) },
+  ];
 
   // --- čtení nahlas ----------------------------------------------------------
 
@@ -2240,11 +2441,10 @@ export default function HomePage() {
             onToggleTrack={togglePlayback}
             onMenu={(track) => setMenuTracks([track])}
             onQueueTrack={(track) => queueAction([track], "end")}
-            onQueueSelected={() => selected && queueAction(tracks.filter((track) => selected.has(track.id)), "end")}
             selected={selected}
+            onStartSelection={(trackId) => setSelected(new Set([trackId]))}
             onSelectAll={(trackIds) => setSelected(new Set(trackIds))}
             onEndSelection={() => setSelected(null)}
-            onSelectionMenu={() => setMenuTracks(tracks.filter((track) => selected?.has(track.id)))}
             onPlayCollection={playCollection}
             onCreatePlaylist={(name) => createPlaylistWith(name)}
             onRenamePlaylist={(id, name) => setPlaylists((previous) => renamePlaylist(previous, id, name))}
@@ -2289,6 +2489,15 @@ export default function HomePage() {
                   <FolderOpen className="size-3.5" /> Povolit přístup
                 </button>
               </div>
+            ) : null}
+
+            {docSelected && !activeDoc ? (
+              <SelectionHeader
+                count={docSelected.size}
+                allSelected={visibleDocKeys.length > 0 && visibleDocKeys.every((key) => docSelected.has(key))}
+                onSelectAll={() => setDocSelected(new Set(visibleDocKeys))}
+                onEnd={() => setDocSelected(null)}
+              />
             ) : null}
 
             {!activeDoc ? (
@@ -2348,10 +2557,18 @@ export default function HomePage() {
                         <button
                           key={doc.id}
                           type="button"
-                          onClick={() => void openDeviceDocument(doc)}
+                          onClick={() => (docSelected ? toggleDoc(`dev:${doc.id}`) : void openDeviceDocument(doc))}
+                          onContextMenu={(event) => {
+                            // Podržení prstu knihu vybere a dole ukáže, co s ní.
+                            event.preventDefault();
+                            if (!docSelected) setDocSelected(new Set([`dev:${doc.id}`]));
+                          }}
                           className="text-left"
                         >
-                          <DocumentCover document={doc} className="aspect-[3/4] w-full" />
+                          <span className="relative block overflow-hidden rounded-xl">
+                            <DocumentCover document={doc} className="aspect-[3/4] w-full" />
+                            {docSelected ? <SelectedMark selected={docSelected.has(`dev:${doc.id}`)} /> : null}
+                          </span>
                           <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
                           <span className="block text-[11px] text-muted-foreground">
                             {Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB
@@ -2375,7 +2592,15 @@ export default function HomePage() {
                   const read = doc.pages.length > 1 ? (at / (doc.pages.length - 1)) * 100 : 0;
                   return (
                     <div key={doc.id} className="group relative">
-                      <button type="button" onClick={() => openDocument(doc)} className="w-full text-left">
+                      <button
+                        type="button"
+                        onClick={() => (docSelected ? toggleDoc(`lib:${doc.id}`) : openDocument(doc))}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          if (!docSelected) setDocSelected(new Set([`lib:${doc.id}`]));
+                        }}
+                        className="w-full text-left"
+                      >
                         <span
                           className={cn(
                             "relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-xl border bg-white/[0.05]",
@@ -2391,6 +2616,7 @@ export default function HomePage() {
                           <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/10">
                             <span className="block h-full bg-brand" style={{ width: `${read}%` }} />
                           </span>
+                          {docSelected ? <SelectedMark selected={docSelected.has(`lib:${doc.id}`)} /> : null}
                         </span>
                         <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
                         <span className="block text-[11px] tabular-nums text-muted-foreground">
@@ -2399,16 +2625,19 @@ export default function HomePage() {
                       </button>
                       {/*
                         Vidět pořád, ne až pod myší: na telefonu se najet myší
-                        nedá, takže mazání dřív nešlo vůbec.
+                        nedá, takže mazání dřív nešlo vůbec. Ve výběru ustoupí
+                        značce „vybráno".
                       */}
-                      <button
-                        type="button"
-                        onClick={() => setDocToDelete(doc)}
-                        className="absolute right-1 top-1 rounded-lg bg-black/70 p-1.5 text-white/80 transition-colors hover:bg-black/85 hover:text-white"
-                        aria-label={`Smazat ${doc.name} z knihovny`}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      {docSelected ? null : (
+                        <button
+                          type="button"
+                          onClick={() => deleteDocs([`lib:${doc.id}`])}
+                          className="absolute right-1 top-1 rounded-lg bg-black/70 p-1.5 text-white/80 transition-colors hover:bg-black/85 hover:text-white"
+                          aria-label={`Smazat ${doc.name} z knihovny`}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -2768,6 +2997,14 @@ export default function HomePage() {
         onRemoveFromQueue={(trackId) => setQueue((previous) => dropFromQueue(previous, trackId))}
       />
 
+      {activeView === "reader" && docSelected && !activeDoc ? (
+        <SelectionActions count={docSelected.size} actions={docActions([...docSelected])} />
+      ) : null}
+
+      {activeView === "library" && selected ? (
+        <SelectionActions count={selectedTracks.length} actions={trackActions(selectedTracks)} />
+      ) : null}
+
       <TrackMenu
         tracks={menuTracks}
         liked={menuTracks.length > 0 && menuTracks.every((track) => liked.has(track.id))}
@@ -2775,7 +3012,11 @@ export default function HomePage() {
         fromDevice={canReadDeviceMedia() && menuTracks.some((track) => track.source === "device")}
         deleting={deleting}
         canSelect={selected === null && menuTracks.length === 1}
-        onClose={() => setMenuTracks([])}
+        initialView={menuView}
+        onClose={() => {
+          setMenuTracks([]);
+          setMenuView("menu");
+        }}
         onPlayNext={() => queueAction(menuTracks, "next")}
         onQueue={() => queueAction(menuTracks, "end")}
         onLike={() => toggleLikeAll(menuTracks)}
@@ -2787,36 +3028,6 @@ export default function HomePage() {
         onCreatePlaylist={(name) => createPlaylistWith(name, menuTracks)}
         onDelete={() => void deleteTracks(menuTracks)}
       />
-
-      <Dialog
-        open={docToDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setDocToDelete(null);
-        }}
-        title="Smazat z knihovny?"
-        description={docToDelete?.name}
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setDocToDelete(null)}>
-              Nechat
-            </Button>
-            <Button
-              onClick={() => {
-                const doomed = docToDelete;
-                setDocToDelete(null);
-                if (doomed) void forgetDocument(doomed.id);
-              }}
-            >
-              Smazat
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          Zmizí z knihovny i se záložkami a s uloženou kopií. Soubor v telefonu zůstane, kde je -
-          smaže se jen to, co si o něm drží appka.
-        </p>
-      </Dialog>
 
       <Dialog
         open={voiceOpen}

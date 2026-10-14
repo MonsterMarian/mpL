@@ -4,7 +4,9 @@ import * as React from "react";
 import { Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Sheet } from "@/components/ui/sheet";
+import { SelectedMark, SelectionActions, SelectionHeader } from "@/components/selection";
+import type { ToastMessage } from "@/components/providers/toast-provider";
+import { UNDO_MS, countWord, mergeBack } from "@/lib/undo";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
 import { nativeStreamAvailable, playVideoNatively } from "@/lib/stream";
@@ -113,7 +115,7 @@ export function VideoLibrary({
 }: {
   /** Zavolá se, než se video rozjede - hlavní obrazovka na to ztlumí zbytek. */
   onBeforePlay: () => void;
-  onToast?: (message: { tone: "info" | "warn" | "win"; title: string; description?: string }) => void;
+  onToast?: (message: ToastMessage) => void;
   /**
    * Ohlásí, jestli je otevřený přehrávač uvnitř appky, a jak ho zavřít.
    * Hardwarové Zpět řeší hlavní obrazovka na jednom místě, takže potřebuje
@@ -135,9 +137,10 @@ export function VideoLibrary({
   const [length, setLength] = React.useState(0);
   const [controlsVisible, setControls] = React.useState(true);
   const [query, setQuery] = React.useState("");
-  /** Film, nad kterým visí nabídka (podržení prstu). */
-  const [menuId, setMenuId] = React.useState<string | null>(null);
+  /** Vybrané filmy pro hromadné akce; `null` = výběr neběží. */
+  const [selected, setSelected] = React.useState<Set<string> | null>(null);
   const [deleting, setDeleting] = React.useState(false);
+  const selecting = selected !== null;
   /**
    * Je v telefonu nainstalovaná appka, která umí nativní přehrávač?
    *
@@ -281,40 +284,69 @@ export function VideoLibrary({
   };
 
   /**
-   * Smaže film z telefonu. Potvrzuje to Android vlastním oknem, takže appka
-   * se znovu neptá; odkliknuté okno není chyba, film prostě zůstane.
-   * Ručně vybraný soubor v telefonu nic nezabírá - jen zmizí ze seznamu.
+   * Smaže filmy.
+   *
+   * Film z telefonu maže Android a zeptá se vlastním oknem - jednou za celý
+   * výběr. To je ta jediná otázka: appka se před ním neptá a po něm nic
+   * nehlásí, zmizelé filmy jsou odpověď dost jasná. Odkliknuté okno není
+   * chyba, filmy prostě zůstanou.
+   *
+   * Ručně vybraný soubor v telefonu nic nezabírá - jen zmizí ze seznamu,
+   * bez otázky a s „Vrátit" v hlášce.
    */
-  const deleteVideo = async (video: VideoItem) => {
-    if (video.source === "local") {
-      setVideos((previous) => previous.filter((item) => item.id !== video.id));
-      setMenuId(null);
-      return;
-    }
-    setDeleting(true);
-    try {
-      const result = await MediaLibrary.deleteVideo({ ids: [video.id.replace(/^device-/, "")] });
-      if (!result?.deleted) {
-        onToast?.({ tone: "info", title: "Film zůstává", description: "Mazání nebylo potvrzené." });
+  const deleteVideos = async (target: VideoItem[]) => {
+    if (!target.length) return;
+    setSelected(null);
+    const onDevice = target.filter((video) => video.source === "device");
+    const local = target.filter((video) => video.source === "local");
+
+    if (onDevice.length) {
+      setDeleting(true);
+      try {
+        const result = await MediaLibrary.deleteVideo({
+          ids: onDevice.map((video) => video.id.replace(/^device-/, "")),
+        });
+        if (!result?.deleted) return;
+        const gone = new Set(onDevice.map((video) => video.id));
+        setVideos((previous) => previous.filter((item) => !gone.has(item.id)));
+      } catch (error) {
+        console.error("Filmy se nepodařilo smazat", error);
+        const missing = (error as { code?: string } | null)?.code === "UNIMPLEMENTED";
+        onToast?.({
+          tone: "warn",
+          title: "Smazání selhalo",
+          description: missing
+            ? "Mazání filmů umí až novější APK - živá aktualizace nativní část nevymění."
+            : "Soubor se nepodařilo odstranit ze zařízení.",
+        });
         return;
+      } finally {
+        setDeleting(false);
       }
-      setVideos((previous) => previous.filter((item) => item.id !== video.id));
-      onToast?.({ tone: "win", title: "Smazáno ze zařízení", description: video.title });
-    } catch (error) {
-      console.error("Film se nepodařilo smazat", error);
-      const missing = (error as { code?: string } | null)?.code === "UNIMPLEMENTED";
+    }
+
+    if (local.length) {
+      const back = new Set(local.map((video) => video.id));
+      const before = videos;
+      setVideos((previous) => previous.filter((item) => !back.has(item.id)));
       onToast?.({
-        tone: "warn",
-        title: "Smazání selhalo",
-        description: missing
-          ? "Mazání filmů umí až novější APK - živá aktualizace nativní část nevymění."
-          : "Soubor se nepodařilo odstranit ze zařízení.",
+        tone: "info",
+        title: "Odebráno ze seznamu",
+        description: local.length === 1 ? local[0].title : countWord(local.length, ["video", "videa", "videí"]),
+        duration: UNDO_MS,
+        action: { label: "Vrátit", onClick: () => setVideos((current) => mergeBack(before, current, back)) },
       });
-    } finally {
-      setDeleting(false);
-      setMenuId(null);
     }
   };
+
+  const toggleSelected = (id: string) =>
+    setSelected((previous) => {
+      if (!previous) return previous;
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   React.useEffect(() => {
     if (!currentId) return;
@@ -329,9 +361,10 @@ export function VideoLibrary({
   // Hardwarové Zpět patří tomu, co je navrchu. Přehrávač je přes celou
   // obrazovku, takže se má zavřít dřív, než se odejde ze sekce.
   React.useEffect(() => {
-    onPlayerChange?.(currentId ? () => setCurrentId(null) : null);
+    // Výběr filmů je navrchu taky - Zpět ho zruší dřív, než odejde ze sekce.
+    onPlayerChange?.(currentId ? () => setCurrentId(null) : selecting ? () => setSelected(null) : null);
     return () => onPlayerChange?.(null);
-  }, [currentId, onPlayerChange]);
+  }, [currentId, selecting, onPlayerChange]);
 
   // Povolení k videím se uděluje v systémovém nastavení - po návratu se
   // knihovna přečte znovu, jinak to vypadá, že povolení nezabralo.
@@ -346,6 +379,7 @@ export function VideoLibrary({
   const shown = videos.filter(
     (v) => !query || v.title.toLowerCase().includes(query.trim().toLowerCase()),
   );
+  const chosen = selected ? videos.filter((video) => selected.has(video.id)) : [];
 
   return (
     <section className="animate-in-up flex flex-col gap-5">
@@ -528,6 +562,15 @@ export function VideoLibrary({
         </p>
       ) : null}
 
+      {selected ? (
+        <SelectionHeader
+          count={selected.size}
+          allSelected={shown.length > 0 && shown.every((video) => selected.has(video.id))}
+          onSelectAll={() => setSelected(new Set(shown.map((video) => video.id)))}
+          onEnd={() => setSelected(null)}
+        />
+      ) : null}
+
       {videos.length > 0 ? (
         <>
           <Input
@@ -536,7 +579,15 @@ export function VideoLibrary({
             placeholder="Hledat video"
             className="h-9 text-sm"
           />
-          <VideoGallery layout={layout} videos={shown} onPlay={(id) => void play(id)} onMenu={setMenuId} />
+          <VideoGallery
+            layout={layout}
+            videos={shown}
+            selected={selected}
+            onPlay={(id) => (selected ? toggleSelected(id) : void play(id))}
+            onHold={(id) => {
+              if (!selected) setSelected(new Set([id]));
+            }}
+          />
           {shown.length === 0 ? (
             <p className="px-1 text-xs text-muted-foreground">Nic neodpovídá hledání.</p>
           ) : null}
@@ -547,77 +598,47 @@ export function VideoLibrary({
         </p>
       ) : null}
 
-      <VideoMenu
-        video={videos.find((video) => video.id === menuId) ?? null}
-        deleting={deleting}
-        onClose={() => setMenuId(null)}
-        onPlay={(video) => {
-          setMenuId(null);
-          void play(video.id);
-        }}
-        onDelete={(video) => void deleteVideo(video)}
-      />
+      {selected ? (
+        <SelectionActions
+          count={chosen.length}
+          actions={[
+            ...(chosen.length === 1
+              ? [
+                  {
+                    key: "play",
+                    icon: Play,
+                    label: "Přehrát",
+                    onClick: () => {
+                      setSelected(null);
+                      void play(chosen[0].id);
+                    },
+                  },
+                ]
+              : []),
+            {
+              key: "delete",
+              icon: Trash2,
+              label: "Smazat",
+              tone: "destructive" as const,
+              busy: deleting,
+              onClick: () => void deleteVideos(chosen),
+            },
+          ]}
+        />
+      ) : null}
     </section>
-  );
-}
-
-/** Nabídka filmu po podržení prstu - stejně jako u skladeb. */
-function VideoMenu({
-  video,
-  deleting,
-  onClose,
-  onPlay,
-  onDelete,
-}: {
-  video: VideoItem | null;
-  deleting: boolean;
-  onClose: () => void;
-  onPlay: (video: VideoItem) => void;
-  onDelete: (video: VideoItem) => void;
-}) {
-  /** Poslední film zůstane vykreslený, dokud panel dojíždí dolů. */
-  const shown = React.useRef<VideoItem | null>(video);
-  if (video) shown.current = video;
-  const item = video ?? shown.current;
-  if (!item) return null;
-
-  const fromDevice = item.source === "device";
-  const details = [item.durationSeconds ? formatTime(item.durationSeconds) : "", formatSize(item.sizeBytes)]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <Sheet open={video !== null} onOpenChange={(next) => !next && onClose()} title={item.title} description={details}>
-      <div className="flex flex-col gap-1 pb-1">
-        <button
-          type="button"
-          onClick={() => onPlay(item)}
-          className="flex h-12 items-center gap-3 rounded-xl px-3 text-left text-sm transition-colors hover:bg-accent active:bg-accent"
-        >
-          <Play className="size-4 shrink-0 text-muted-foreground" /> Přehrát
-        </button>
-        <button
-          type="button"
-          onClick={() => onDelete(item)}
-          disabled={deleting}
-          className="flex h-12 items-center gap-3 rounded-xl px-3 text-left text-sm text-destructive transition-colors hover:bg-accent active:bg-accent"
-        >
-          {deleting ? <Loader2 className="size-4 shrink-0 animate-spin" /> : <Trash2 className="size-4 shrink-0" />}
-          {fromDevice ? "Smazat ze zařízení" : "Odebrat ze seznamu"}
-        </button>
-      </div>
-    </Sheet>
   );
 }
 
 /**
  * Podržení prstu hlásí WebView jako `contextmenu` - stejně jako u skladeb.
- * Systémovou nabídku (uložit obrázek…) je potřeba zarazit.
+ * Film se tím vybere a dole se ukáže, co s ním. Systémovou nabídku (uložit
+ * obrázek…) je potřeba zarazit.
  */
-function holdFor(onMenu: (id: string) => void, id: string) {
+function holdFor(onHold: (id: string) => void, id: string) {
   return (event: React.MouseEvent) => {
     event.preventDefault();
-    onMenu(id);
+    onHold(id);
   };
 }
 
@@ -631,13 +652,15 @@ function holdFor(onMenu: (id: string) => void, id: string) {
 function VideoGallery({
   layout,
   videos,
+  selected,
   onPlay,
-  onMenu,
+  onHold,
 }: {
   layout: VideoLayout;
   videos: VideoItem[];
+  selected: ReadonlySet<string> | null;
   onPlay: (id: string) => void;
-  onMenu: (id: string) => void;
+  onHold: (id: string) => void;
 }) {
   if (layout === "list") {
     return (
@@ -647,7 +670,7 @@ function VideoGallery({
             key={video.id}
             type="button"
             onClick={() => onPlay(video.id)}
-            onContextMenu={holdFor(onMenu, video.id)}
+            onContextMenu={holdFor(onHold, video.id)}
             className="group flex items-center gap-3 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.05]"
           >
             <span className="relative block aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.06]">
@@ -655,6 +678,7 @@ function VideoGallery({
               <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
                 <Play className="size-5 fill-white text-white" />
               </span>
+              {selected ? <SelectedMark selected={selected.has(video.id)} /> : null}
             </span>
             <span className="min-w-0 flex-1">
               {/* Název na dva řádky: soubory z telefonu se jmenují dlouze a v jednom řádku z nich zbude "VID_2026083…". */}
@@ -678,7 +702,7 @@ function VideoGallery({
             key={video.id}
             type="button"
             onClick={() => onPlay(video.id)}
-            onContextMenu={holdFor(onMenu, video.id)}
+            onContextMenu={holdFor(onHold, video.id)}
             className="group relative block aspect-video w-full overflow-hidden rounded-2xl bg-white/[0.06] text-left"
           >
             <VideoThumbnail video={video} />
@@ -695,6 +719,7 @@ function VideoGallery({
                 <Play className="size-5 fill-white text-white" />
               </span>
             </span>
+            {selected ? <SelectedMark selected={selected.has(video.id)} /> : null}
           </button>
         ))}
       </div>
@@ -708,7 +733,7 @@ function VideoGallery({
           key={video.id}
           type="button"
           onClick={() => onPlay(video.id)}
-          onContextMenu={holdFor(onMenu, video.id)}
+          onContextMenu={holdFor(onHold, video.id)}
           className="group text-left"
         >
           <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">
@@ -719,6 +744,7 @@ function VideoGallery({
             <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
               <Play className="size-8 fill-white text-white" />
             </span>
+            {selected ? <SelectedMark selected={selected.has(video.id)} /> : null}
           </span>
           <span className="mt-1.5 block truncate text-xs font-medium">{video.title}</span>
           <span className="block truncate text-[11px] text-muted-foreground">{formatSize(video.sizeBytes)}</span>
