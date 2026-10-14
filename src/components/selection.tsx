@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Check, CheckCheck, Loader2, X, type LucideIcon } from "lucide-react";
+import { Check, CheckCheck, Loader2, Trash2, X, type LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 /**
@@ -128,5 +130,51 @@ export function SelectedMark({ selected, className }: { selected: boolean; class
         {selected ? <Check className="size-4" strokeWidth={3} /> : null}
       </span>
     </span>
+  );
+}
+
+/**
+ * Otázka před smazáním souborů z telefonu - vrátit to nejde.
+ *
+ * Systémové okno Androidu na to nestačí: appka s přístupem ke všem souborům
+ * ho nedostane, Android jí mazání schválí potichu. 14. 10. 2026 tak filmy
+ * zmizely bez jediné otázky. Proto se ptá appka sama.
+ */
+export function ConfirmDelete({
+  open,
+  title,
+  description,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  description?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+      title={title}
+      description={description}
+      footer={
+        <>
+          <Button variant="outline" onClick={onCancel}>
+            Nechat
+          </Button>
+          <Button variant="destructive" onClick={onConfirm}>
+            <Trash2 className="size-4" /> Smazat
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        Soubor zmizí z telefonu, ne jen z appky. Vrátit to nejde.
+      </p>
+    </Dialog>
   );
 }

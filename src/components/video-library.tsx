@@ -4,7 +4,7 @@ import * as React from "react";
 import { Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SelectedMark, SelectionActions, SelectionHeader } from "@/components/selection";
+import { ConfirmDelete, SelectedMark, SelectionActions, SelectionHeader } from "@/components/selection";
 import type { ToastMessage } from "@/components/providers/toast-provider";
 import { UNDO_MS, countWord, mergeBack } from "@/lib/undo";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
@@ -141,6 +141,8 @@ export function VideoLibrary({
   const [selected, setSelected] = React.useState<Set<string> | null>(null);
   const [deleting, setDeleting] = React.useState(false);
   const selecting = selected !== null;
+  /** Filmy čekající na potvrzení, že se mají smazat z telefonu. */
+  const [confirming, setConfirming] = React.useState<VideoItem[]>([]);
   /**
    * Je v telefonu nainstalovaná appka, která umí nativní přehrávač?
    *
@@ -286,19 +288,25 @@ export function VideoLibrary({
   /**
    * Smaže filmy.
    *
-   * Film z telefonu maže Android a zeptá se vlastním oknem - jednou za celý
-   * výběr. To je ta jediná otázka: appka se před ním neptá a po něm nic
-   * nehlásí, zmizelé filmy jsou odpověď dost jasná. Odkliknuté okno není
-   * chyba, filmy prostě zůstanou.
+   * Film z telefonu se maže až po otázce appky (`ConfirmDelete`), jednou za
+   * celý výběr. Na systémové okno Androidu spolehnout nejde - s přístupem ke
+   * všem souborům ho appka nedostane a filmy pak mizely bez jediné otázky.
+   * Po smazání se nic nehlásí, zmizelé filmy jsou odpověď dost jasná.
    *
    * Ručně vybraný soubor v telefonu nic nezabírá - jen zmizí ze seznamu,
    * bez otázky a s „Vrátit" v hlášce.
    */
-  const deleteVideos = async (target: VideoItem[]) => {
+  const deleteVideos = async (target: VideoItem[], confirmed = false) => {
     if (!target.length) return;
-    setSelected(null);
     const onDevice = target.filter((video) => video.source === "device");
     const local = target.filter((video) => video.source === "local");
+    if (onDevice.length && !confirmed) {
+      // Výběr zůstane - kdyby si to uživatel rozmyslel, nemusí vybírat znovu.
+      setConfirming(target);
+      return;
+    }
+    setConfirming([]);
+    setSelected(null);
 
     if (onDevice.length) {
       setDeleting(true);
@@ -362,9 +370,18 @@ export function VideoLibrary({
   // obrazovku, takže se má zavřít dřív, než se odejde ze sekce.
   React.useEffect(() => {
     // Výběr filmů je navrchu taky - Zpět ho zruší dřív, než odejde ze sekce.
-    onPlayerChange?.(currentId ? () => setCurrentId(null) : selecting ? () => setSelected(null) : null);
+    const asking = confirming.length > 0;
+    onPlayerChange?.(
+      currentId
+        ? () => setCurrentId(null)
+        : asking
+          ? () => setConfirming([])
+          : selecting
+            ? () => setSelected(null)
+            : null,
+    );
     return () => onPlayerChange?.(null);
-  }, [currentId, selecting, onPlayerChange]);
+  }, [currentId, confirming.length, selecting, onPlayerChange]);
 
   // Povolení k videím se uděluje v systémovém nastavení - po návratu se
   // knihovna přečte znovu, jinak to vypadá, že povolení nezabralo.
@@ -597,6 +614,16 @@ export function VideoLibrary({
           V telefonu žádné video není.
         </p>
       ) : null}
+
+      <ConfirmDelete
+        open={confirming.length > 0}
+        title="Smazat z telefonu?"
+        description={
+          confirming.length === 1 ? confirming[0].title : countWord(confirming.length, ["video", "videa", "videí"])
+        }
+        onCancel={() => setConfirming([])}
+        onConfirm={() => void deleteVideos(confirming, true)}
+      />
 
       {selected ? (
         <SelectionActions

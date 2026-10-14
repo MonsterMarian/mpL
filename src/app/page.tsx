@@ -40,7 +40,7 @@ import { LibraryView, type Browse, type LibraryTab } from "@/components/music/li
 import { NowPlaying } from "@/components/music/now-playing";
 import { PlayerDock } from "@/components/music/player-dock";
 import { TrackMenu, type MenuView } from "@/components/music/track-menu";
-import { SelectionActions, SelectionHeader, SelectedMark } from "@/components/selection";
+import { ConfirmDelete, SelectionActions, SelectionHeader, SelectedMark } from "@/components/selection";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Sheet } from "@/components/ui/sheet";
@@ -270,6 +270,8 @@ export default function HomePage() {
   const [selected, setSelected] = React.useState<Set<string> | null>(null);
   /** Čím nabídka začne - lišta výběru ji otevírá rovnou na playlistech. */
   const [menuView, setMenuView] = React.useState<MenuView>("menu");
+  /** Skladby čekající na potvrzení, že se mají smazat z telefonu. */
+  const [confirmTracks, setConfirmTracks] = React.useState<Track[]>([]);
   const [deleting, setDeleting] = React.useState(false);
   const [libraryTab, setLibraryTab] = React.useState<LibraryTab>("tracks");
   /** Otevřené album, interpret nebo playlist. */
@@ -986,6 +988,10 @@ export default function HomePage() {
       closeVideoPlayer.current();
       return true;
     }
+    if (confirmTracks.length) {
+      setConfirmTracks([]);
+      return true;
+    }
     if (menuTracks.length) {
       setMenuTracks([]);
       return true;
@@ -1485,18 +1491,26 @@ export default function HomePage() {
   /**
    * Smazání skladeb.
    *
-   * Soubor v telefonu maže Android a sám se zeptá vlastním oknem - to je ta
-   * jediná otázka, appka se před ním už neptá a po něm nic nehlásí: zmizelá
-   * skladba je odpověď dost jasná. Odmítnuté okno není chyba, skladba prostě
-   * zůstane, kde byla.
+   * Soubor v telefonu se maže až po otázce appky (`ConfirmDelete`) - vrátit
+   * to nejde a na systémové okno Androidu spolehnout nejde: s přístupem ke
+   * všem souborům ho appka nedostane. Po smazání se nic nehlásí, zmizelá
+   * skladba je odpověď dost jasná. Odmítnuté systémové okno (bez přístupu ke
+   * všem souborům) není chyba, skladba prostě zůstane, kde byla.
    *
    * Co v telefonu neleží (ručně vybraný soubor), jen zmizí z knihovny - bez
    * otázky, zato s „Vrátit" v hlášce.
    */
-  const deleteTracks = async (target: Track[]) => {
+  const deleteTracks = async (target: Track[], confirmed = false) => {
     if (!target.length) return;
     const onDevice = canReadDeviceMedia() ? target.filter((track) => track.source === "device") : [];
     const elsewhere = target.filter((track) => !onDevice.includes(track));
+    if (onDevice.length && !confirmed) {
+      // Výběr zůstane - kdyby si to uživatel rozmyslel, nemusí vybírat znovu.
+      setMenuTracks([]);
+      setConfirmTracks(target);
+      return;
+    }
+    setConfirmTracks([]);
     closeMenu();
 
     if (onDevice.length) {
@@ -2995,6 +3009,14 @@ export default function HomePage() {
         onSleep={() => setSleepOpen(true)}
         onPlayFromQueue={(trackId) => startTrack(trackId)}
         onRemoveFromQueue={(trackId) => setQueue((previous) => dropFromQueue(previous, trackId))}
+      />
+
+      <ConfirmDelete
+        open={confirmTracks.length > 0}
+        title="Smazat z telefonu?"
+        description={confirmTracks.length ? label(confirmTracks) : undefined}
+        onCancel={() => setConfirmTracks([])}
+        onConfirm={() => void deleteTracks(confirmTracks, true)}
       />
 
       {activeView === "reader" && docSelected && !activeDoc ? (
