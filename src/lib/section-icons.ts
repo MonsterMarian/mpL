@@ -50,7 +50,7 @@ export interface SectionIconChoice {
 export const SECTION_ICONS: Record<SectionId, SectionIconChoice[]> = {
   library: [
     { id: "library", label: "Police" },
-    { id: "music", label: "Nota" },
+    { id: "music", label: "Značka" },
     { id: "disc", label: "Deska" },
     { id: "headphones", label: "Sluchátka" },
     { id: "audio-lines", label: "Vlna" },

@@ -17,7 +17,6 @@ import {
   FileUp,
   FolderOpen,
   Loader2,
-  Music2,
   Pause,
   Play,
   Search,

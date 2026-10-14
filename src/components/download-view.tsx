@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, ArrowDownToLine, Loader2, Music2, RotateCw, Trash2, Video } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, Loader2, RotateCw, Trash2, Video } from "lucide-react";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { Input } from "@/components/ui/input";
 import {
   MediaLibrary,
@@ -291,7 +292,7 @@ export function DownloadView({
       <form onSubmit={start} className="flex flex-col gap-3">
         <div className="flex gap-1 rounded-full bg-white/[0.04] p-1">
           {([
-            { id: "audio" as const, label: "Hudba", icon: Music2 },
+            { id: "audio" as const, label: "Hudba", icon: BrandIcon },
             { id: "video" as const, label: "Video", icon: Video },
           ]).map((option) => {
             const Icon = option.icon;
@@ -405,7 +406,7 @@ export function DownloadView({
                   ) : isVideoFile(record.fileName) ? (
                     <Video className="size-4" />
                   ) : (
-                    <Music2 className="size-4" />
+                    <BrandIcon className="size-4" />
                   )}
                 </span>
                 <span className="min-w-0 flex-1">

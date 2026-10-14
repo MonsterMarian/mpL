@@ -21,9 +21,8 @@ import {
   Headphones,
   Inbox,
   Library,
-  ListMusic,
+  ListOrdered,
   MonitorPlay,
-  Music2,
   Newspaper,
   Notebook,
   PackageOpen,
@@ -34,6 +33,8 @@ import {
   Video,
   Videotape,
 } from "lucide-react";
+import type * as React from "react";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import type { SectionIconId } from "@/lib/section-icons";
 
 /**
@@ -42,14 +43,15 @@ import type { SectionIconId } from "@/lib/section-icons";
  * Jmenovité importy schválně: kdyby se sáhlo po dynamickém přístupu do
  * knihovny, skončí v balíku všech patnáct set ikon lucide.
  */
-const ICONS: Record<SectionIconId, typeof Library> = {
+const ICONS: Record<SectionIconId, React.ComponentType<{ className?: string }>> = {
   library: Library,
-  music: Music2,
+  // Místo noty značka appky - nota v mpL nikde není.
+  music: BrandIcon,
   disc: Disc3,
   headphones: Headphones,
   "audio-lines": AudioLines,
   radio: Radio,
-  "list-music": ListMusic,
+  "list-music": ListOrdered,
   cassette: CassetteTape,
   "book-open-text": BookOpenText,
   book: Book,

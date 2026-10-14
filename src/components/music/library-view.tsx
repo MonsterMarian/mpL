@@ -8,9 +8,8 @@ import {
   Disc3,
   Heart,
   Loader2,
-  ListMusic,
+  ListOrdered,
   Mic2,
-  Music2,
   Pencil,
   Play,
   Plus,
@@ -37,6 +36,7 @@ import {
 } from "@/lib/library";
 import type { Playlist } from "@/lib/playlists";
 import { BRAND_MARK } from "@/lib/brand";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { Cover, TrackRow } from "./track-row";
 
 /**
@@ -53,11 +53,11 @@ export interface Browse {
   key: string;
 }
 
-const TABS: { id: LibraryTab; label: string; icon: typeof Music2 }[] = [
-  { id: "tracks", label: "Skladby", icon: Music2 },
+const TABS: { id: LibraryTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "tracks", label: "Skladby", icon: BrandIcon },
   { id: "albums", label: "Alba", icon: Disc3 },
   { id: "artists", label: "Interpreti", icon: Mic2 },
-  { id: "playlists", label: "Playlisty", icon: ListMusic },
+  { id: "playlists", label: "Playlisty", icon: ListOrdered },
 ];
 
 const FILTERS: { id: LibraryFilter; label: string }[] = [

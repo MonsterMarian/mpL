@@ -4,7 +4,7 @@ import * as React from "react";
 import {
   ChevronDown,
   Heart,
-  ListMusic,
+  ListOrdered,
   MoreVertical,
   Pause,
   Play,
@@ -309,7 +309,7 @@ export function NowPlaying({
               queueOpen ? "text-brand" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <ListMusic className="size-4" /> Fronta
+            <ListOrdered className="size-4" /> Fronta
             {upcoming.length ? <span className="tabular-nums opacity-70">{upcoming.length}</span> : null}
           </button>
           <button
