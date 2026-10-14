@@ -54,11 +54,12 @@ export function Dialog({
     document.addEventListener("keydown", onKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    // Napřed pole formuláře, teprve pak tlačítka - jinak by fokus sebral křížek.
+    // Pole formuláře dostane fokus rovnou. Okno bez pole (potvrzení) si ho
+    // vezme samo: na tlačítku by se rozsvítil rámeček a na křížku vypadal,
+    // jako by appka radila okno zavřít.
     const panel = panelRef.current;
     const focusTarget =
-      panel?.querySelector<HTMLElement>("input:not([type='hidden']), select, textarea") ??
-      panel?.querySelector<HTMLElement>("button");
+      panel?.querySelector<HTMLElement>("input:not([type='hidden']), select, textarea") ?? panel;
     focusTarget?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
@@ -92,9 +93,10 @@ export function Dialog({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label={title}
         className={cn(
-          "animate-in-up relative z-10 w-full bg-popover text-popover-foreground shadow-lg",
+          "animate-in-up relative z-10 w-full bg-popover text-popover-foreground shadow-lg outline-none",
           // Dlouhý obsah (typicky Nastavení) se musí dát doscrollovat, jinak
           // konec zůstane pod okrajem obrazovky. Spodní odsazení počítá
           // s pruhem gest, aby poslední tlačítko nekončilo pod ním.

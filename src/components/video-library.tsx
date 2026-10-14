@@ -622,6 +622,7 @@ export function VideoLibrary({
           confirming.length === 1 ? confirming[0].title : countWord(confirming.length, ["video", "videa", "videí"])
         }
         onCancel={() => setConfirming([])}
+        count={confirming.length}
         onConfirm={() => void deleteVideos(confirming, true)}
       />
 

@@ -2998,6 +2998,7 @@ export default function HomePage() {
         open={confirmTracks.length > 0}
         title="Smazat z telefonu?"
         description={confirmTracks.length ? label(confirmTracks) : undefined}
+        count={confirmTracks.length}
         onCancel={() => setConfirmTracks([])}
         onConfirm={() => void deleteTracks(confirmTracks, true)}
       />

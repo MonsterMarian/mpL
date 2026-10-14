@@ -144,12 +144,15 @@ export function ConfirmDelete({
   open,
   title,
   description,
+  count = 1,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   title: string;
   description?: string;
+  /** Kolik souborů zmizí - podle toho věta v jednotném, nebo množném čísle. */
+  count?: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -173,7 +176,7 @@ export function ConfirmDelete({
       }
     >
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Soubor zmizí z telefonu, ne jen z appky. Vrátit to nejde.
+        {count === 1 ? "Soubor zmizí" : "Soubory zmizí"} z telefonu, ne jen z appky. Vrátit to nejde.
       </p>
     </Dialog>
   );
