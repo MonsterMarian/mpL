@@ -121,12 +121,9 @@ export function DownloadView({
         const record = pendingHistory.current.get(e.id);
         settle(e.id, "completed");
         if (record) setHistory(addDownload({ ...record, at: Date.now() }));
+        // Bez hlášky v appce: „Staženo" ukáže Android v liště oznámení
+        // i s obrázkem, druhá stejná zpráva v appce je k ničemu.
         onDownloadedRef.current?.();
-        onToast?.({
-          tone: "win",
-          title: "Staženo",
-          description: isVideoFile(e.fileName) ? `${e.fileName} je v sekci Video.` : `${e.fileName} je v knihovně.`,
-        });
       }),
     );
 
@@ -176,7 +173,6 @@ export function DownloadView({
           return;
         }
         setBusy("resolving");
-        onToast?.({ tone: "info", title: "Hledám soubor", description: "Rozebírám odkaz…" });
         const found = await resolveStream(address, kind);
         fileUrl = found.url;
         fileName = safeFileName(`${found.author ? `${found.author} - ` : ""}${found.title}`, found.extension);

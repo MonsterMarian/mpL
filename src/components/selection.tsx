@@ -163,8 +163,8 @@ export function ConfirmDelete({
       description={description}
       footer={
         <>
-          <Button variant="outline" onClick={onCancel}>
-            Nechat
+          <Button variant="ghost" onClick={onCancel}>
+            Zrušit
           </Button>
           <Button variant="destructive" onClick={onConfirm}>
             <Trash2 className="size-4" /> Smazat

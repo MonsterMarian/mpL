@@ -133,7 +133,7 @@ import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
 import { loadVideoLayout, type VideoLayout } from "@/lib/video-layout";
 import { BRAND_MARK } from "@/lib/brand";
-import { hideSplash, onAppResume, registerBackButton, syncStatusBar } from "@/lib/native";
+import { hideSplash, onAppResume, registerBackButton, syncStatusBar, tapFeedback } from "@/lib/native";
 
 type View = "library" | "reader" | "video" | "downloads";
 
@@ -503,13 +503,6 @@ export default function HomePage() {
       setMediaPermission("granted");
       setTracks((previous) => [...importedTracks, ...previous.filter((track) => track.source === "local")]);
       setCurrentTrackId((previous) => previous ?? importedTracks[0]?.id ?? null);
-      if (requestPermission) {
-        toast({
-          tone: importedTracks.length ? "win" : "info",
-          title: importedTracks.length ? "Hudba načtena" : "Žádná hudba nenalezena",
-          description: importedTracks.length ? `${importedTracks.length} skladeb ze zařízení.` : "Přidej MP3 do Hudby nebo Stažených souborů.",
-        });
-      }
     } catch (error) {
       console.error("Chyba při načítání hudby ze zařízení", error);
       setMediaPermission("denied");
@@ -838,7 +831,6 @@ export default function HomePage() {
       void pauseNative();
       setIsPlaying(false);
       setSleepAt(null);
-      toast({ tone: "info", title: "Časovač doběhl", description: "Hudba usnula." });
     };
     sleepCheck.current = tick;
     tick();
@@ -1312,7 +1304,6 @@ export default function HomePage() {
       void pauseNative();
       setIsPlaying(false);
       setCurrentTime(0);
-      toast({ tone: "info", title: "Časovač doběhl", description: "Hudba usnula po dohrání skladby." });
       return;
     }
     if (repeatMode === "one") {
@@ -1402,24 +1393,19 @@ export default function HomePage() {
       return where === "next" ? insertNext(base, ids, currentTrackId) : appendToQueue(base, ids, currentTrackId);
     });
     closeMenu();
-    toast({
-      tone: "info",
-      title: where === "next" ? "Zařazeno jako další" : "Přidáno do fronty",
-      description: label(target),
-    });
+    void tapFeedback();
   };
 
   const addTracksToPlaylist = (playlistId: string, target: Track[]) => {
     setPlaylists((previous) => addToPlaylist(previous, playlistId, target.map((track) => track.id)));
     closeMenu();
-    const name = playlists.find((playlist) => playlist.id === playlistId)?.name;
-    toast({ tone: "win", title: "Přidáno do playlistu", description: name ?? label(target) });
+    void tapFeedback();
   };
 
   const createPlaylistWith = (name: string, target: Track[] = []) => {
     setPlaylists((previous) => createPlaylist(previous, name, target.map((track) => track.id)));
     if (target.length) closeMenu();
-    toast({ tone: "win", title: "Playlist založen", description: name });
+    void tapFeedback();
   };
 
   /** Srdce pro celý výběr: když ho má každý, sundá se všem, jinak se přidá. */
@@ -1586,12 +1572,10 @@ export default function HomePage() {
     if (minutes > 0) {
       setSleepAfterTrack(false);
       setSleepAt(Date.now() + minutes * 60_000);
-      toast({ tone: "info", title: `Časovač na ${minutes} minut`, description: "Pak hudba sama ztichne." });
       return;
     }
     setSleepAt(null);
     setSleepAfterTrack(true);
-    toast({ tone: "info", title: "Časovač do konce skladby", description: "Po dohrání se přehrávání zastaví." });
   };
 
   const cancelSleepTimer = () => {
@@ -1633,7 +1617,6 @@ export default function HomePage() {
     // Přes startTrack, ať se i tenhle poslech počítá do statistiky.
     setQueue(buildQueue(addedTracks.map((track) => track.id), addedTracks[0].id, isShuffled));
     startTrack(addedTracks[0].id);
-    toast({ tone: "win", title: `${addedTracks.length} ${addedTracks.length === 1 ? "skladba přidána" : "skladby přidány"}`, description: "Najdeš je mezi skladbami." });
   };
 
   /**

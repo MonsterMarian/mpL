@@ -73,12 +73,14 @@ export function Dialog({
   return createPortal(
     <div
       className={cn(
-        // Okno roste odshora dolů, ne od spodní hrany: na telefonu se čte
-        // shora a poslední volba nemá končit pod prstem u kraje displeje.
-        "fixed inset-0 z-50 flex items-start justify-center",
+        "fixed inset-0 z-50 flex justify-center",
         fullScreen
-          ? "sm:items-center"
-          : "px-2 pt-[calc(2rem+var(--mw-safe-top))] sm:items-center sm:px-0 sm:pt-0",
+          ? "items-start sm:items-center"
+          : // Malé okno (potvrzení, krátký formulář) patří doprostřed, stejně
+            // jako v MicroWins. U horní hrany vypadalo ztracené - klepne se
+            // na Smazat dole a otázka vyskočí úplně nahoře, daleko od prstu.
+            // Odsazení drží i dlouhé okno mimo výřezy a pruh gest.
+            "items-center px-4 pt-[calc(1rem+var(--mw-safe-top))] pb-[calc(1rem+var(--mw-safe-bottom))] sm:px-0 sm:pt-0 sm:pb-0",
       )}
     >
       <div
@@ -103,7 +105,7 @@ export function Dialog({
           // nedosažitelný. S pevnou výškou má panel kam scrollovat.
           fullScreen
             ? "h-[100dvh] overflow-y-auto px-5 pb-[calc(2rem+var(--mw-safe-bottom))] pt-[calc(1.5rem+var(--mw-safe-top))] sm:h-auto sm:max-h-[85dvh] sm:max-w-md sm:rounded-xl sm:border sm:p-5 sm:pb-8"
-            : "max-h-[calc(100dvh-4rem-var(--mw-safe-top)-var(--mw-safe-bottom))] max-w-md overflow-y-auto rounded-xl border p-5 pb-10 sm:max-h-[85dvh] sm:pb-8",
+            : "max-h-[calc(100dvh-2rem-var(--mw-safe-top)-var(--mw-safe-bottom))] max-w-md overflow-y-auto rounded-xl border p-5 sm:max-h-[85dvh]",
           className,
         )}
       >
