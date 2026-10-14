@@ -575,7 +575,7 @@ public class VideoActivity extends Activity {
         );
     }
 
-    /** Horní lišta: zavřít, název filmu, zámek a ozubené kolo. */
+    /** Horní lišta: zavřít, název filmu, otočení, zámek a ozubené kolo. */
     private void addTopBar() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -594,6 +594,10 @@ public class VideoActivity extends Activity {
         name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         name.setPadding(dp(8), 0, dp(8), 0);
         row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        ImageButton rotate = iconButton(R.drawable.ic_player_rotate, "Otočit obrazovku");
+        rotate.setOnClickListener(v -> rotate());
+        row.addView(rotate, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         ImageButton lock = iconButton(R.drawable.ic_player_lock, "Zamknout ovládání");
         lock.setOnClickListener(v -> setLocked(true));
@@ -743,6 +747,19 @@ public class VideoActivity extends Activity {
 
         lockLayer = layer;
         root.addView(layer, fill());
+    }
+
+    /**
+     * Tlačítko otočení: film na výšku převrátí na šířku a naopak. Je to totéž
+     * nastavení jako v ozubeném kole, takže si ho appka pamatuje i pro další
+     * film; "Automaticky" se dá vrátit tamtéž.
+     */
+    private void rotate() {
+        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        orientation = landscape ? 2 : 1;
+        applyOrientation();
+        savePreferences();
+        keepChrome();
     }
 
     private void setLocked(boolean value) {
