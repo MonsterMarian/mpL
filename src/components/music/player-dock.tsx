@@ -134,7 +134,7 @@ export function PlayerDock({
             type="button"
             onClick={onToggle}
             aria-label={isPlaying ? "Pozastavit" : "Přehrát"}
-            className="flex h-11 w-[4.5rem] items-center justify-center rounded-xl bg-foreground text-background transition-transform hover:scale-105"
+            className="flex h-11 w-[4.5rem] items-center justify-center rounded-xl bg-brand text-black transition-transform hover:scale-105"
           >
             {isPlaying ? <Pause className="size-5 fill-current" /> : <Play className="ml-0.5 size-5 fill-current" />}
           </button>
