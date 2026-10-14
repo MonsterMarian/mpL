@@ -1184,6 +1184,15 @@ public class MediaLibraryPlugin extends Plugin {
         deleteTracks(call, uris);
     }
 
+    /**
+     * Smaže videa ze zařízení. Totéž co `deleteAudio`, jen nad videotabulkou
+     * MediaStore - id hudby a videí se tam nekryjí, takže se nesmí plést.
+     */
+    @PluginMethod
+    public void deleteVideo(PluginCall call) {
+        deleteAudio(call);
+    }
+
     @PermissionCallback
     private void writePermissionCallback(PluginCall call) {
         if (!hasWritePermission()) {
@@ -1211,12 +1220,17 @@ public class MediaLibraryPlugin extends Plugin {
             raw = single != null ? Collections.singletonList(single) : Collections.<String>emptyList();
         }
 
+        // Video jde stejnou cestou; pozná se podle metody, kterou appka volala.
+        // Platí to i po návratu z povolení zápisu - volání si jméno nese s sebou.
+        Uri table = "deleteVideo".equals(call.getMethodName())
+            ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            : MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
         List<Uri> uris = new ArrayList<>();
         for (String value : raw) {
             if (value == null || value.trim().isEmpty()) continue;
             try {
                 long id = Long.parseLong(value.trim());
-                uris.add(ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id));
+                uris.add(ContentUris.withAppendedId(table, id));
             } catch (NumberFormatException error) {
                 // Ručně přidaný soubor v MediaStore není - přeskočí se.
             }

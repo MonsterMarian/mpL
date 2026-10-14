@@ -110,7 +110,11 @@ export function TrackMenu({
             icon={Trash2}
             label={fromDevice ? "Smazat ze zařízení" : "Odebrat z knihovny"}
             tone="destructive"
-            onClick={() => setView("delete")}
+            busy={deleting}
+            // Soubor z telefonu potvrzuje Android vlastním oknem, takže by
+            // tahle otázka byla jen druhá stejná za sebou. Ptá se jen tam, kde
+            // se odebírá z knihovny a systém do toho nemluví.
+            onClick={() => (fromDevice ? onDelete() : setView("delete"))}
           />
         </div>
       ) : null}
@@ -208,22 +212,29 @@ function MenuItem({
   label,
   onClick,
   tone,
+  busy = false,
 }: {
   icon: typeof Heart;
   label: string;
   onClick: () => void;
   tone?: "destructive";
+  busy?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={busy}
       className={cn(
         "flex h-12 items-center gap-3 rounded-xl px-3 text-left text-sm transition-colors hover:bg-accent active:bg-accent",
         tone === "destructive" && "text-destructive",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", !tone && "text-muted-foreground")} />
+      {busy ? (
+        <Loader2 className="size-4 shrink-0 animate-spin" />
+      ) : (
+        <Icon className={cn("size-4 shrink-0", !tone && "text-muted-foreground")} />
+      )}
       {label}
     </button>
   );

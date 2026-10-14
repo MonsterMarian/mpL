@@ -100,7 +100,6 @@ export interface LibraryViewProps {
   onQueueSelected?: () => void;
   /** Vybrané skladby; `null` = režim výběru neběží. */
   selected: ReadonlySet<string> | null;
-  onStartSelection: (trackId: string) => void;
   onSelectAll: (trackIds: string[]) => void;
   onEndSelection: () => void;
   onSelectionMenu: () => void;
@@ -142,7 +141,6 @@ export function LibraryView(props: LibraryViewProps) {
     onPlayCollection,
     onCreatePlaylist,
     selected,
-    onStartSelection,
     onSelectAll,
     onEndSelection,
     onSelectionMenu,
@@ -174,7 +172,10 @@ export function LibraryView(props: LibraryViewProps) {
       extra={extra}
       selecting={selected !== null}
       selected={selected?.has(track.id) ?? false}
-      onLongPress={() => onStartSelection(track.id)}
+      // Podržení rovnou otevře nabídku - výběr víc skladeb je v ní. Dřív se
+      // jen vybralo a k mazání se muselo ještě přes tři tečky. Ve výběru
+      // podržení nedělá nic, ať nerozbije, co už je vybrané.
+      onLongPress={selected ? undefined : () => onMenu(track)}
     />
   );
 

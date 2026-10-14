@@ -74,6 +74,8 @@ interface MediaLibraryPlugin {
    * znamená „uživatel to odklikl pryč", ne chybu.
    */
   deleteAudio(options: { ids: string[] }): Promise<{ deleted: boolean }>;
+  /** Totéž pro videa. Je jen v novějších APK - starší hlásí, že metodu nezná. */
+  deleteVideo(options: { ids: string[] }): Promise<{ deleted: boolean }>;
   /**
    * Stáhne soubor z přímé adresy. Obstará to systémový DownloadManager, takže
    * stahování přežije i zavřenou appku a hotový soubor se objeví v knihovně.

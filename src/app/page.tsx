@@ -2242,7 +2242,6 @@ export default function HomePage() {
             onQueueTrack={(track) => queueAction([track], "end")}
             onQueueSelected={() => selected && queueAction(tracks.filter((track) => selected.has(track.id)), "end")}
             selected={selected}
-            onStartSelection={(trackId) => setSelected(new Set([trackId]))}
             onSelectAll={(trackIds) => setSelected(new Set(trackIds))}
             onEndSelection={() => setSelected(null)}
             onSelectionMenu={() => setMenuTracks(tracks.filter((track) => selected?.has(track.id)))}

@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Upload, X } from "lucide-react";
+import { Film, FolderOpen, Loader2, Pause, Play, RotateCcw, RotateCw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Sheet } from "@/components/ui/sheet";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
 import { nativeStreamAvailable, playVideoNatively } from "@/lib/stream";
@@ -134,6 +135,9 @@ export function VideoLibrary({
   const [length, setLength] = React.useState(0);
   const [controlsVisible, setControls] = React.useState(true);
   const [query, setQuery] = React.useState("");
+  /** Film, nad kterým visí nabídka (podržení prstu). */
+  const [menuId, setMenuId] = React.useState<string | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
   /**
    * Je v telefonu nainstalovaná appka, která umí nativní přehrávač?
    *
@@ -274,6 +278,42 @@ export function VideoLibrary({
     setLength(0);
     setControls(true);
     setCurrentId(id);
+  };
+
+  /**
+   * Smaže film z telefonu. Potvrzuje to Android vlastním oknem, takže appka
+   * se znovu neptá; odkliknuté okno není chyba, film prostě zůstane.
+   * Ručně vybraný soubor v telefonu nic nezabírá - jen zmizí ze seznamu.
+   */
+  const deleteVideo = async (video: VideoItem) => {
+    if (video.source === "local") {
+      setVideos((previous) => previous.filter((item) => item.id !== video.id));
+      setMenuId(null);
+      return;
+    }
+    setDeleting(true);
+    try {
+      const result = await MediaLibrary.deleteVideo({ ids: [video.id.replace(/^device-/, "")] });
+      if (!result?.deleted) {
+        onToast?.({ tone: "info", title: "Film zůstává", description: "Mazání nebylo potvrzené." });
+        return;
+      }
+      setVideos((previous) => previous.filter((item) => item.id !== video.id));
+      onToast?.({ tone: "win", title: "Smazáno ze zařízení", description: video.title });
+    } catch (error) {
+      console.error("Film se nepodařilo smazat", error);
+      const missing = (error as { code?: string } | null)?.code === "UNIMPLEMENTED";
+      onToast?.({
+        tone: "warn",
+        title: "Smazání selhalo",
+        description: missing
+          ? "Mazání filmů umí až novější APK - živá aktualizace nativní část nevymění."
+          : "Soubor se nepodařilo odstranit ze zařízení.",
+      });
+    } finally {
+      setDeleting(false);
+      setMenuId(null);
+    }
   };
 
   React.useEffect(() => {
@@ -496,7 +536,7 @@ export function VideoLibrary({
             placeholder="Hledat video"
             className="h-9 text-sm"
           />
-          <VideoGallery layout={layout} videos={shown} onPlay={(id) => void play(id)} />
+          <VideoGallery layout={layout} videos={shown} onPlay={(id) => void play(id)} onMenu={setMenuId} />
           {shown.length === 0 ? (
             <p className="px-1 text-xs text-muted-foreground">Nic neodpovídá hledání.</p>
           ) : null}
@@ -506,8 +546,79 @@ export function VideoLibrary({
           V telefonu žádné video není.
         </p>
       ) : null}
+
+      <VideoMenu
+        video={videos.find((video) => video.id === menuId) ?? null}
+        deleting={deleting}
+        onClose={() => setMenuId(null)}
+        onPlay={(video) => {
+          setMenuId(null);
+          void play(video.id);
+        }}
+        onDelete={(video) => void deleteVideo(video)}
+      />
     </section>
   );
+}
+
+/** Nabídka filmu po podržení prstu - stejně jako u skladeb. */
+function VideoMenu({
+  video,
+  deleting,
+  onClose,
+  onPlay,
+  onDelete,
+}: {
+  video: VideoItem | null;
+  deleting: boolean;
+  onClose: () => void;
+  onPlay: (video: VideoItem) => void;
+  onDelete: (video: VideoItem) => void;
+}) {
+  /** Poslední film zůstane vykreslený, dokud panel dojíždí dolů. */
+  const shown = React.useRef<VideoItem | null>(video);
+  if (video) shown.current = video;
+  const item = video ?? shown.current;
+  if (!item) return null;
+
+  const fromDevice = item.source === "device";
+  const details = [item.durationSeconds ? formatTime(item.durationSeconds) : "", formatSize(item.sizeBytes)]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <Sheet open={video !== null} onOpenChange={(next) => !next && onClose()} title={item.title} description={details}>
+      <div className="flex flex-col gap-1 pb-1">
+        <button
+          type="button"
+          onClick={() => onPlay(item)}
+          className="flex h-12 items-center gap-3 rounded-xl px-3 text-left text-sm transition-colors hover:bg-accent active:bg-accent"
+        >
+          <Play className="size-4 shrink-0 text-muted-foreground" /> Přehrát
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(item)}
+          disabled={deleting}
+          className="flex h-12 items-center gap-3 rounded-xl px-3 text-left text-sm text-destructive transition-colors hover:bg-accent active:bg-accent"
+        >
+          {deleting ? <Loader2 className="size-4 shrink-0 animate-spin" /> : <Trash2 className="size-4 shrink-0" />}
+          {fromDevice ? "Smazat ze zařízení" : "Odebrat ze seznamu"}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+/**
+ * Podržení prstu hlásí WebView jako `contextmenu` - stejně jako u skladeb.
+ * Systémovou nabídku (uložit obrázek…) je potřeba zarazit.
+ */
+function holdFor(onMenu: (id: string) => void, id: string) {
+  return (event: React.MouseEvent) => {
+    event.preventDefault();
+    onMenu(id);
+  };
 }
 
 /**
@@ -521,10 +632,12 @@ function VideoGallery({
   layout,
   videos,
   onPlay,
+  onMenu,
 }: {
   layout: VideoLayout;
   videos: VideoItem[];
   onPlay: (id: string) => void;
+  onMenu: (id: string) => void;
 }) {
   if (layout === "list") {
     return (
@@ -534,6 +647,7 @@ function VideoGallery({
             key={video.id}
             type="button"
             onClick={() => onPlay(video.id)}
+            onContextMenu={holdFor(onMenu, video.id)}
             className="group flex items-center gap-3 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.05]"
           >
             <span className="relative block aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.06]">
@@ -564,6 +678,7 @@ function VideoGallery({
             key={video.id}
             type="button"
             onClick={() => onPlay(video.id)}
+            onContextMenu={holdFor(onMenu, video.id)}
             className="group relative block aspect-video w-full overflow-hidden rounded-2xl bg-white/[0.06] text-left"
           >
             <VideoThumbnail video={video} />
@@ -589,7 +704,13 @@ function VideoGallery({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {videos.map((video) => (
-        <button key={video.id} type="button" onClick={() => onPlay(video.id)} className="group text-left">
+        <button
+          key={video.id}
+          type="button"
+          onClick={() => onPlay(video.id)}
+          onContextMenu={holdFor(onMenu, video.id)}
+          className="group text-left"
+        >
           <span className="relative block aspect-video overflow-hidden rounded-xl bg-white/[0.06]">
             <VideoThumbnail video={video} />
             <span className="absolute bottom-1 right-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
