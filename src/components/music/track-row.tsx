@@ -210,9 +210,9 @@ export function TrackRow({
                 ? selected
                   ? "bg-brand/85 text-black opacity-100"
                   : "bg-black/45 text-white/70 opacity-100"
-                : active
-                  ? "bg-black/50 text-white opacity-100"
-                  : "bg-black/50 text-white opacity-0 group-hover:opacity-100",
+                : // Rozehraná skladba trvalou ikonu nemá: přehrát/pauza už je
+                  // v liště dole a dvě stejná tlačítka nad sebou mátla.
+                  "bg-black/50 text-white opacity-0 group-hover:opacity-100",
             )}
           >
             {selecting ? (
