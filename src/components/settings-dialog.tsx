@@ -10,7 +10,6 @@ import { clearErrors, readErrors, type LoggedError } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
 import { SectionIcon } from "@/components/ui/section-icon";
-import { VIDEO_LAYOUTS, loadVideoLayout, saveVideoLayout, type VideoLayout } from "@/lib/video-layout";
 import {
   SECTION_ICONS,
   loadSectionIcons,
@@ -88,7 +87,6 @@ interface SettingsDialogProps {
   mediaPermission?: "unknown" | "granted" | "denied" | "unavailable";
   onRequestMediaAccess?: () => Promise<void> | void;
   onSectionIconsChange?: (icons: SectionIcons) => void;
-  onVideoLayoutChange?: (layout: VideoLayout) => void;
 }
 
 export function SettingsDialog({
@@ -99,7 +97,6 @@ export function SettingsDialog({
   mediaPermission = "unknown",
   onRequestMediaAccess,
   onSectionIconsChange,
-  onVideoLayoutChange,
 }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = React.useState<Tab>("main");
   
@@ -149,11 +146,6 @@ export function SettingsDialog({
               mediaPermission={mediaPermission} 
               onRequestMediaAccess={onRequestMediaAccess} 
             />
-            {addons.video ? (
-              <Section title="Galerie videí" hint="Vyber, jak se videa ukazují v seznamu.">
-                <VideoLayoutChoice open={open} onChange={onVideoLayoutChange} />
-              </Section>
-            ) : null}
             <SystemPlaybackSection open={open} />
             <NativeCrashSection open={open} />
             <UpdateSection />
@@ -290,58 +282,6 @@ function AddonChoice({
  * Sáhnout uživateli na ikony bez ptaní byl omyl - tvar, který jednomu sedí,
  * druhého tahá za oči. Výchozí zůstávají ty původní.
  */
-/**
- * Podoba galerie videí.
- *
- * Tři varianty, ne jedna "správná": velký náhled je k ničemu u nahrávek
- * z telefonu, kde rozhoduje název, a seznam zase u filmů, kde obrázek řekne
- * všechno. Ať si vybere ten, kdo se na to dívá.
- */
-function VideoLayoutChoice({ open, onChange }: { open: boolean; onChange?: (layout: VideoLayout) => void }) {
-  const [layout, setLayout] = React.useState<VideoLayout | null>(null);
-
-  React.useEffect(() => {
-    if (open) setLayout(loadVideoLayout());
-  }, [open]);
-
-  if (!layout) return null;
-
-  return (
-    <div className="flex flex-col gap-2">
-      {VIDEO_LAYOUTS.map((item) => {
-        const on = layout === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => {
-              setLayout(item.id);
-              saveVideoLayout(item.id);
-              onChange?.(item.id);
-            }}
-            aria-pressed={on}
-            className={cn(
-              "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-              on ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
-            )}
-          >
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">{item.label}</span>
-              <span className="block text-xs text-muted-foreground">{item.hint}</span>
-            </span>
-            <span
-              className={cn(
-                "size-4 shrink-0 rounded-full border-2",
-                on ? "border-brand bg-brand" : "border-muted-foreground/40",
-              )}
-            />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function SectionIconChoice({ open, onChange }: { open: boolean; onChange?: (icons: SectionIcons) => void }) {
   const [icons, setIcons] = React.useState<SectionIcons | null>(null);
 

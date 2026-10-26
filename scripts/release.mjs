@@ -22,7 +22,8 @@ const DEST = "ota";
 const version = new Date().toISOString().replace(/[-:T]/g, ".").slice(0, 16);
 
 console.log(`Verze ${version} - stavím web…`);
-const build = spawnSync("npx", ["next", "build"], {
+// `npm run build`, ne `next build`: jen tak proběhne `prebuild`, který do webu dá worker čtečky PDF
+const build = spawnSync("npm", ["run", "build"], {
   stdio: "inherit",
   shell: true,
   env: { ...process.env, NEXT_PUBLIC_BUNDLE_VERSION: version },

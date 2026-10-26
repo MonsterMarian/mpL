@@ -130,7 +130,6 @@ import { installErrorCapture } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
 import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
-import { loadVideoLayout, type VideoLayout } from "@/lib/video-layout";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, onAppResume, registerBackButton, syncStatusBar, tapFeedback } from "@/lib/native";
 
@@ -281,7 +280,6 @@ export default function HomePage() {
   const [addons, setAddons] = React.useState<Addons>({ reader: true, video: true, downloads: true });
   /** Ikony sekcí si vybírá uživatel v Nastavení. */
   const [sectionIcons, setSectionIcons] = React.useState<SectionIcons>(defaultSectionIcons);
-  const [videoLayout, setVideoLayout] = React.useState<VideoLayout>("grid");
   const [mediaPermission, setMediaPermission] = React.useState<"unknown" | "granted" | "denied" | "unavailable">("unknown");
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
   /**
@@ -607,7 +605,6 @@ export default function HomePage() {
 
     setAddons(loadAddons());
     setSectionIcons(loadSectionIcons());
-    setVideoLayout(loadVideoLayout());
     void loadDeviceDocuments();
     setStorageReady(true);
     void loadDeviceMusic();
@@ -2785,7 +2782,7 @@ export default function HomePage() {
         ) : null}
 
         {activeView === "video" && addons.video ? (
-          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} layout={videoLayout} />
+          <VideoLibrary onBeforePlay={silenceEverything} onToast={toast} onPlayerChange={trackVideoPlayer} />
         ) : null}
 
         {/*
@@ -3061,7 +3058,6 @@ export default function HomePage() {
         mediaPermission={mediaPermission}
         onRequestMediaAccess={requestMediaAccess}
         onSectionIconsChange={setSectionIcons}
-        onVideoLayoutChange={setVideoLayout}
       />
     </div>
   );
