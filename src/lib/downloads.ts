@@ -4,6 +4,8 @@
  * Čistá logika kolem addonu: co se dá stáhnout, jak se bude soubor jmenovat
  * a co appka stáhla naposledy. Samotné stahování obstará systém.
  */
+import { Capacitor } from "@capacitor/core";
+import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 
 export interface DownloadRecord {
   url: string;
@@ -19,10 +21,14 @@ export interface DownloadRecord {
 
 const STORAGE_KEY = "microwins:downloads";
 const LIMIT = 20;
+/**
+ * Kopie historie ve sdílených Dokumentech telefonu. Data appky (a s nimi
+ * localStorage) smaže odinstalace, tenhle soubor ne.
+ */
+const BACKUP_FILE = "P_layer/stahovani.json";
 
-export function loadDownloads(): DownloadRecord[] {
+function parseDownloads(raw: string | null): DownloadRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -35,26 +41,73 @@ export function loadDownloads(): DownloadRecord[] {
   }
 }
 
+export function loadDownloads(): DownloadRecord[] {
+  try {
+    return parseDownloads(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function saveDownloads(list: DownloadRecord[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // soukromý režim - seznam vydrží do zavření appky
+  }
+  if (!Capacitor.isNativePlatform()) return;
+  Filesystem.writeFile({
+    path: BACKUP_FILE,
+    directory: Directory.Documents,
+    encoding: Encoding.UTF8,
+    data: JSON.stringify(list),
+    recursive: true,
+  }).catch((error) => console.warn("Zálohu historie stahování se nepodařilo zapsat", error));
+}
+
+/** Dva seznamy v jeden: stejný odkaz jednou, novější záznam vyhrává. */
+export function mergeDownloads(a: DownloadRecord[], b: DownloadRecord[]): DownloadRecord[] {
+  const byUrl = new Map<string, DownloadRecord>();
+  for (const record of [...a, ...b]) {
+    const known = byUrl.get(record.url);
+    if (!known || record.at > known.at) byUrl.set(record.url, record);
+  }
+  return [...byUrl.values()].sort((x, y) => y.at - x.at).slice(0, LIMIT);
+}
+
+/**
+ * Historie po startu appky - spojená se zálohou v Dokumentech.
+ *
+ * Po přeinstalaci je localStorage prázdné a seznam se vrátí ze zálohy. Po
+ * aktualizaci appky, která zálohu ještě nedělala, se záloha naopak založí.
+ */
+export async function restoreDownloads(): Promise<DownloadRecord[]> {
+  if (!Capacitor.isNativePlatform()) return loadDownloads();
+  let backup: DownloadRecord[] = [];
+  try {
+    const file = await Filesystem.readFile({ path: BACKUP_FILE, directory: Directory.Documents, encoding: Encoding.UTF8 });
+    backup = parseDownloads(String(file.data));
+  } catch {
+    // záloha ještě není - nebo ji appka po přeinstalaci bez „přístupu ke všem souborům" nepřečte
+  }
+  const merged = mergeDownloads(loadDownloads(), backup);
+  saveDownloads(merged);
+  return merged;
+}
+
 /**
  * Zapíše stahování do historie. Stejný odkaz je v ní jednou - povedené
  * opakování tak nahradí řádek, kde stahování selhalo.
  */
 export function addDownload(record: DownloadRecord): DownloadRecord[] {
   const next = [record, ...loadDownloads().filter((item) => item.url !== record.url)].slice(0, LIMIT);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // soukromý režim - seznam vydrží do zavření appky
-  }
+  saveDownloads(next);
   return next;
 }
 
+/** „Vymazat seznam" - jediná cesta, jak historii smazat, i se zálohou. */
 export function clearDownloads(): DownloadRecord[] {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // není kam mazat
-  }
+  saveDownloads([]);
   return [];
 }
 

@@ -4,6 +4,7 @@ import {
   cleanDownloadUrl,
   downloadedTrack,
   guessFileName,
+  mergeDownloads,
   needsResolving,
   safeFileName,
   unsupportedSource,
@@ -91,5 +92,20 @@ describe("stažená skladba v knihovně", () => {
   it("u přímého odkazu bez interpreta stačí název", () => {
     const direct = { url: "https://example.com/sample.mp3", fileName: "sample.mp3", at: 1 };
     expect(downloadedTrack(direct, [{ title: "sample", artist: "<unknown>" }])).toBeDefined();
+  });
+});
+
+describe("záloha historie", () => {
+  /* Po přeinstalaci se seznam vrací ze zálohy a spojí s tím, co mezitím přibylo. */
+  it("spojí localStorage se zálohou, stejný odkaz jednou a novější vyhrává", () => {
+    const local = [{ url: "a", fileName: "A.m4a", at: 5 }];
+    const backup = [
+      { url: "a", fileName: "A.m4a", at: 2, failed: true },
+      { url: "b", fileName: "B.m4a", at: 3 },
+    ];
+    expect(mergeDownloads(local, backup)).toEqual([
+      { url: "a", fileName: "A.m4a", at: 5 },
+      { url: "b", fileName: "B.m4a", at: 3 },
+    ]);
   });
 });

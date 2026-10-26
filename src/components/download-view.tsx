@@ -21,6 +21,7 @@ import {
   guessFileName,
   loadDownloads,
   needsResolving,
+  restoreDownloads,
   safeFileName,
   unsupportedSource,
   type DownloadRecord,
@@ -116,6 +117,7 @@ export function DownloadView({
 
   React.useEffect(() => {
     setHistory(loadDownloads());
+    void restoreDownloads().then(setHistory);
     if (!canReadDeviceMedia()) return;
 
     getNativeStreamInfo().then((info) => {
