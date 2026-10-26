@@ -2871,6 +2871,7 @@ export default function HomePage() {
               onToast={toast}
               onDownloaded={() => void loadDeviceMusic()}
               deviceTracks={mediaPermission === "granted" ? tracks.filter((track) => track.source === "device") : undefined}
+              visible={activeView === "downloads"}
             />
           </div>
         ) : null}

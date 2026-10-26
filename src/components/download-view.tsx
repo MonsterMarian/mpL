@@ -10,6 +10,7 @@ import {
   type DownloadCompleteEvent,
   type DownloadErrorEvent,
   type DownloadProgressEvent,
+  type NativeVideo,
 } from "@/lib/media-library";
 import { getNativeStreamInfo, nativeStreamAvailable, resolveStream } from "@/lib/stream";
 import {
@@ -53,12 +54,15 @@ export function DownloadView({
   onToast,
   onDownloaded,
   deviceTracks,
+  visible,
 }: {
   onToast?: (message: { tone: "info" | "warn" | "win"; title: string; description?: string }) => void;
   /** Hotové stahování knihovnu přečte znovu, ať se soubor hned objeví. */
   onDownloaded?: () => void;
   /** Hudba v telefonu. Bez ní (knihovna nenačtená) se nehádá, co je smazané. */
   deviceTracks?: { title: string; artist: string; artwork: string | null }[];
+  /** Záložka je na očích - videa se přečtou znovu, mohla mezitím zmizet. */
+  visible?: boolean;
 }) {
   const [url, setUrl] = React.useState("");
   const [kind, setKind] = React.useState<Kind>("audio");
@@ -66,6 +70,23 @@ export function DownloadView({
   const [history, setHistory] = React.useState<DownloadRecord[]>([]);
   const [nativeOutdated, setNativeOutdated] = React.useState(false);
   const [activeDownloads, setActiveDownloads] = React.useState<ActiveDownload[]>([]);
+  /** Videa v telefonu. Bez oprávnění (nebo ve starém APK) zůstane prázdné a nic se neoznačí za smazané. */
+  const [deviceVideos, setDeviceVideos] = React.useState<NativeVideo[]>();
+
+  // Videa si appka drží jen v sekci Filmy, ta tu nemusí být připojená - proto vlastní dotaz.
+  const loadVideos = React.useCallback(async () => {
+    if (!canReadDeviceMedia()) return;
+    try {
+      if (!(await MediaLibrary.checkVideoPermission()).granted) return;
+      setDeviceVideos((await MediaLibrary.listVideo()).videos);
+    } catch {
+      // starší APK video neumí - smazaná videa se prostě nepoznají
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (visible) void loadVideos();
+  }, [visible, loadVideos]);
 
   // Ref na onDownloaded, aby listener ve useEffect nebral zastaralou closure
   const onDownloadedRef = React.useRef(onDownloaded);
@@ -129,6 +150,7 @@ export function DownloadView({
         // Bez hlášky v appce: „Staženo" ukáže Android v liště oznámení
         // i s obrázkem, druhá stejná zpráva v appce je k ničemu.
         onDownloadedRef.current?.();
+        void loadVideos();
       }),
     );
 
@@ -399,10 +421,14 @@ export function DownloadView({
           <ul className="divide-y rounded-2xl border">
             {history.map((record) => {
               const recordKind = record.kind ?? (isVideoFile(record.fileName) ? "video" : "audio");
-              const track =
-                deviceTracks && recordKind === "audio" && !record.failed ? downloadedTrack(record, deviceTracks) : undefined;
-              // Smazaná skladba jde stáhnout znovu stejně jako ta, co selhala.
-              const missing = Boolean(deviceTracks) && recordKind === "audio" && !record.failed && !track;
+              const audio = recordKind === "audio";
+              const track = deviceTracks && audio && !record.failed ? downloadedTrack(record, deviceTracks) : undefined;
+              // Video se jmenuje v telefonu stejně, jak ho appka uložila.
+              const present = audio
+                ? Boolean(track)
+                : deviceVideos?.some((video) => video.fileName.toLowerCase() === record.fileName.toLowerCase());
+              // Smazaná skladba či video jde stáhnout znovu stejně jako to, co selhalo.
+              const missing = Boolean(audio ? deviceTracks : deviceVideos) && !record.failed && !present;
               const cover = record.failed ? undefined : (track?.artwork ?? record.artwork);
               return (
               <li key={`${record.at}-${record.fileName}`} className="flex items-center gap-3 px-3 py-2.5">
