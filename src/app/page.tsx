@@ -46,7 +46,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/providers/toast-provider";
 import { cn } from "@/lib/utils";
-import { UNDO_MS, countWord, mergeBack } from "@/lib/undo";
+import { countWord } from "@/lib/undo";
 import {
   MediaLibrary,
   NativeAudioTrack,
@@ -126,7 +126,7 @@ import {
   setNativeQueue,
   stopNative,
 } from "@/lib/playback-service";
-import { installErrorCapture, logPlayback } from "@/lib/diagnostics";
+import { installErrorCapture } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
 import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
@@ -271,6 +271,8 @@ export default function HomePage() {
   const [menuView, setMenuView] = React.useState<MenuView>("menu");
   /** Skladby čekající na potvrzení, že se mají smazat z telefonu. */
   const [confirmTracks, setConfirmTracks] = React.useState<Track[]>([]);
+  /** Knihy čekající na „Smazat z telefonu?" - klíče `lib:`/`dev:` jako ve výběru. */
+  const [confirmDocs, setConfirmDocs] = React.useState<string[]>([]);
   const [deleting, setDeleting] = React.useState(false);
   const [libraryTab, setLibraryTab] = React.useState<LibraryTab>("tracks");
   /** Otevřené album, interpret nebo playlist. */
@@ -700,7 +702,6 @@ export default function HomePage() {
       if (!snapshot?.running || !snapshot.uri) return;
       const track = tracks.find((item) => item.uri === snapshot.uri);
       if (!track) return;
-      logPlayback("služba: appka převzala běžící přehrávání");
       setPlaybackStarted(true);
       nativeLoaded.current = track.id;
       resumeRef.current = null;
@@ -784,7 +785,6 @@ export default function HomePage() {
         if (durationMs > 0) setDuration(durationMs / 1000);
       },
       onTrackChanged: (trackId) => {
-        logPlayback(`služba: přepnuto na ${trackId}`);
         setCurrentTrackId(trackId);
         setIsPlaying(true);
         setCurrentTime(0);
@@ -792,18 +792,15 @@ export default function HomePage() {
         countPlay(trackId, true);
       },
       onCompleted: () => {
-        logPlayback("služba: skladba dohrála");
         controls.current.ended();
       },
       onFailed: (message) => {
-        logPlayback(`služba: ${message}`);
         toast({ tone: "warn", title: "Skladbu se nepodařilo přehrát", description: "Soubor už nemusí být v zařízení." });
         // Nejčastěji soubor zmizel - knihovna se přečte znovu a mrtvý řádek
         // v ní nezůstane.
         void loadDeviceMusicRef.current();
       },
       onCommand: (command) => {
-        logPlayback(`${command.source === "notification" ? "notifikace" : "systém"}: ${command.action}`);
         // Přehrát, pauzu i posun udělala služba sama a stav si vyžádá zpátky
         // vlastní hláškou. Appka řeší jen to, co umí rozhodnout jedině ona:
         // která skladba je na řadě.
@@ -983,6 +980,10 @@ export default function HomePage() {
       setConfirmTracks([]);
       return true;
     }
+    if (confirmDocs.length) {
+      setConfirmDocs([]);
+      return true;
+    }
     if (menuTracks.length) {
       setMenuTracks([]);
       return true;
@@ -1090,7 +1091,6 @@ export default function HomePage() {
 
   /** Nová skladba se počítá do statistiky - z ní žije řazení podle poslechu. */
   const startTrack = (trackId: string, positionMs = 0) => {
-    logPlayback("uživatel: spustil skladbu");
     setPlaybackStarted(true);
     startedAt.current = Date.now();
     // Hudba a předčítání se v jednom přehrávači nepřekřikují.
@@ -1129,12 +1129,10 @@ export default function HomePage() {
 
     if (playsNatively(currentTrack)) {
       if (isPlaying) {
-        logPlayback("uživatel: pauza");
         setIsPlaying(false);
         void pauseNative();
         return;
       }
-      logPlayback("uživatel: přehrát");
       startedAt.current = Date.now();
       stopReading();
       setIsPlaying(true);
@@ -1155,19 +1153,16 @@ export default function HomePage() {
     }
 
     if (isPlaying) {
-      logPlayback("uživatel: pauza");
       audioRef.current?.pause();
       setIsPlaying(false);
       return;
     }
-    logPlayback("uživatel: přehrát");
     startedAt.current = Date.now();
     stopReading();
     audioRef.current
       ?.play()
       .then(() => setIsPlaying(true))
       .catch((error) => {
-        logPlayback(`element: play() odmítnut - ${String(error).slice(0, 80)}`);
         toast({ tone: "warn", title: "Skladbu se nepodařilo spustit", description: "Soubor už nemusí být dostupný v zařízení." });
       });
   };
@@ -1483,7 +1478,7 @@ export default function HomePage() {
    * všem souborům) není chyba, skladba prostě zůstane, kde byla.
    *
    * Co v telefonu neleží (ručně vybraný soubor), jen zmizí z knihovny - bez
-   * otázky, zato s „Vrátit" v hlášce.
+   * otázky i bez hlášky.
    */
   const deleteTracks = async (target: Track[], confirmed = false) => {
     if (!target.length) return;
@@ -1516,54 +1511,7 @@ export default function HomePage() {
       }
     }
 
-    if (elsewhere.length) removeTracksWithUndo(elsewhere);
-  };
-
-  /**
-   * Odebrání z knihovny, které jde vrátit. Skladby, srdíčka, počty přehrání
-   * a místa v playlistech se vrátí, kam patřily; fronta a to, co zrovna hraje,
-   * už ne - to se mezitím mohlo pohnout dál.
-   */
-  const removeTracksWithUndo = (target: Track[]) => {
-    const back = new Set(target.map((track) => track.id));
-    const before = { tracks, playlists, liked, playStats };
-    forgetTracks([...back]);
-    toast({
-      tone: "info",
-      title: "Odebráno z knihovny",
-      description: label(target),
-      duration: UNDO_MS,
-      action: {
-        label: "Vrátit",
-        onClick: () => {
-          setTracks((current) => mergeBack(before.tracks, current, back));
-          setPlaylists((current) =>
-            current.map((playlist) => {
-              const old = before.playlists.find((item) => item.id === playlist.id);
-              if (!old || !old.trackIds.some((id) => back.has(id))) return playlist;
-              const kept = new Set(playlist.trackIds);
-              return {
-                ...playlist,
-                trackIds: [
-                  ...old.trackIds.filter((id) => kept.has(id) || back.has(id)),
-                  ...playlist.trackIds.filter((id) => !old.trackIds.includes(id)),
-                ],
-              };
-            }),
-          );
-          setLiked((current) => {
-            const next = new Set(current);
-            for (const id of back) if (before.liked.has(id)) next.add(id);
-            return next;
-          });
-          setPlayStats((current) => {
-            const next = { ...current };
-            for (const id of back) if (before.playStats[id]) next[id] = before.playStats[id];
-            return next;
-          });
-        },
-      },
-    });
+    if (elsewhere.length) forgetTracks(elsewhere.map((track) => track.id));
   };
 
   const startSleepTimer = (minutes: number) => {
@@ -1890,21 +1838,16 @@ export default function HomePage() {
       openedAt.current += 1;
       showDocument(doc, opened);
 
-      toast(
-        doc.imageOnly
-          ? {
-              tone: "warn",
-              title: "Dokument je obrázkový",
-              description: opened
-                ? "Stránky jsou naskenované. Listovat jde, čtení nahlas a hledání ne."
-                : "Stránky jsou naskenované, text v nich není. Čtení nahlas nepůjde.",
-            }
-          : {
-              tone: "win",
-              title: "Dokument je připravený",
-              description: `${pages.length} ${pages.length === 1 ? "stránka" : "stránek"} pro čtení offline.`,
-            },
-      );
+      // Povedené otevření je vidět samo, hlásí se jen sken bez textu.
+      if (doc.imageOnly) {
+        toast({
+          tone: "warn",
+          title: "Dokument je obrázkový",
+          description: opened
+            ? "Stránky jsou naskenované. Listovat jde, čtení nahlas a hledání ne."
+            : "Stránky jsou naskenované, text v nich není. Čtení nahlas nepůjde.",
+        });
+      }
     } catch (error) {
       console.error("Chyba při načítání dokumentu", error);
       setDocumentError("Soubor se nepodařilo otevřít. Čtečka umí PDF a textové soubory (TXT, MD).");
@@ -1933,46 +1876,31 @@ export default function HomePage() {
       ];
 
   /**
-   * Smazání knih bez otázky „opravdu?": zmizí hned a hláška nabídne „Vrátit".
-   * Doopravdy se smažou, až hláška odejde (viz `lib/undo.ts`).
+   * Smazání knih. Kniha ze složky v telefonu se maže i ze zařízení, a proto
+   * až po otázce appky (`ConfirmDelete`) - stejně jako hudba a filmy. Po
+   * smazání se nic nehlásí.
    *
    * Z knihovny appky mizí jen to, co si appka o knize drží - záložky a uložená
-   * kopie. Kniha ze složky v telefonu se smaže i ze zařízení.
+   * kopie. To jde bez otázky.
    */
-  const deleteDocs = (keys: Iterable<string>) => {
+  const deleteDocs = (keys: Iterable<string>, confirmed = false) => {
     const wanted = new Set(keys);
     const fromLibrary = documents.filter((doc) => wanted.has(`lib:${doc.id}`));
     const fromDevice = deviceDocs.filter((doc) => wanted.has(`dev:${doc.id}`));
-    const count = fromLibrary.length + fromDevice.length;
-    if (!count) return;
+    if (!fromLibrary.length && !fromDevice.length) return;
+    if (fromDevice.length && !confirmed) {
+      // Výběr zůstane - kdyby si to uživatel rozmyslel, nemusí vybírat znovu.
+      setConfirmDocs([...wanted]);
+      return;
+    }
 
+    setConfirmDocs([]);
     setDocSelected(null);
-    const libraryBack = new Set(fromLibrary.map((doc) => doc.id));
-    const deviceBack = new Set(fromDevice.map((doc) => doc.id));
-    const before = { documents, deviceDocs };
-    setDocuments((current) => current.filter((doc) => !libraryBack.has(doc.id)));
-    setDeviceDocs((current) => current.filter((doc) => !deviceBack.has(doc.id)));
-
-    let undone = false;
-    const timer = window.setTimeout(() => {
-      if (!undone) void commitDocDeletes(fromLibrary, fromDevice);
-    }, UNDO_MS);
-
-    toast({
-      tone: "info",
-      title: fromDevice.length ? "Smazáno" : "Odebráno z knihovny",
-      description: count === 1 ? (fromLibrary[0]?.name ?? fromDevice[0].name) : countWord(count, ["soubor", "soubory", "souborů"]),
-      duration: UNDO_MS,
-      action: {
-        label: "Vrátit",
-        onClick: () => {
-          undone = true;
-          window.clearTimeout(timer);
-          setDocuments((current) => mergeBack(before.documents, current, libraryBack));
-          setDeviceDocs((current) => mergeBack(before.deviceDocs, current, deviceBack));
-        },
-      },
-    });
+    const libraryGone = new Set(fromLibrary.map((doc) => doc.id));
+    const deviceGone = new Set(fromDevice.map((doc) => doc.id));
+    setDocuments((current) => current.filter((doc) => !libraryGone.has(doc.id)));
+    setDeviceDocs((current) => current.filter((doc) => !deviceGone.has(doc.id)));
+    void commitDocDeletes(fromLibrary, fromDevice);
   };
 
   const commitDocDeletes = async (fromLibrary: StoredDocument[], fromDevice: NativeDocument[]) => {
@@ -2969,7 +2897,7 @@ export default function HomePage() {
         <div className="mw-safe-bottom" />
       </div>
 
-      <audio ref={audioRef} src={playsNatively(currentTrack) ? undefined : currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => { logPlayback("element: hraje"); setIsPlaying(true); }} onPause={() => { logPlayback("element: pauza"); setIsPlaying(false); }} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={() => { logPlayback("element: konec skladby"); handleEnded(); }} onStalled={() => logPlayback("element: uvázl")} onError={() => { logPlayback(`element: chyba (kód ${audioRef.current?.error?.code ?? "?"})`); if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
+      <audio ref={audioRef} src={playsNatively(currentTrack) ? undefined : currentTrack.src || undefined} preload="metadata" loop={repeatMode === "one"} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => { const nextDuration = event.currentTarget.duration; if (Number.isFinite(nextDuration)) { setDuration(nextDuration); setTracks((previous) => previous.map((track) => track.id === currentTrackId ? { ...track, durationSeconds: nextDuration, duration: formatTime(nextDuration) } : track)); } if (pendingSeek.current > 0) { const seekTo = Math.min(pendingSeek.current, nextDuration || pendingSeek.current); pendingSeek.current = 0; event.currentTarget.currentTime = seekTo; setCurrentTime(seekTo); } }} onEnded={handleEnded} onError={() => { if (currentTrack.id !== EMPTY_TRACK.id) toast({ tone: "warn", title: "Audio soubor není dostupný", description: "Zkontroluj, jestli je skladba stále v zařízení." }); }} className="hidden" />
 
       <NowPlaying
         open={nowPlayingOpen && hasTrack}
@@ -3005,6 +2933,15 @@ export default function HomePage() {
         count={confirmTracks.length}
         onCancel={() => setConfirmTracks([])}
         onConfirm={() => void deleteTracks(confirmTracks, true)}
+      />
+
+      <ConfirmDelete
+        open={confirmDocs.length > 0}
+        title="Smazat z telefonu?"
+        description={confirmDocs.length ? countWord(confirmDocs.length, ["soubor", "soubory", "souborů"]) : undefined}
+        count={confirmDocs.length}
+        onCancel={() => setConfirmDocs([])}
+        onConfirm={() => deleteDocs(confirmDocs, true)}
       />
 
       {activeView === "reader" && docSelected && !activeDoc ? (

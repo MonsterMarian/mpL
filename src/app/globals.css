@@ -293,28 +293,6 @@
     animation: mw-in 0.18s ease-out both;
   }
 
-  /* Odpočet hlášky: pruh dole se za dobu zobrazení stáhne do ztracena. */
-  @keyframes mw-countdown {
-    from {
-      transform: scaleX(1);
-    }
-    to {
-      transform: scaleX(0);
-    }
-  }
-
-  .mw-countdown {
-    transform-origin: left;
-    animation: mw-countdown var(--mw-countdown, 4s) linear both;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .mw-countdown {
-      animation: none;
-      opacity: 0;
-    }
-  }
-
   /*
    * Panel od spodní hrany. Vyjede rychle a dosedne s doběhem, zpátky padá
    * o kus svižněji - odcházející okno nemá na co čekat.

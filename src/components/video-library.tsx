@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDelete, SelectedMark, SelectionActions, SelectionHeader } from "@/components/selection";
 import type { ToastMessage } from "@/components/providers/toast-provider";
-import { UNDO_MS, countWord, mergeBack } from "@/lib/undo";
+import { countWord } from "@/lib/undo";
 import { MediaLibrary, canReadDeviceMedia, playableMediaSource, type NativeVideo } from "@/lib/media-library";
 import { onAppResume } from "@/lib/native";
 import { nativeStreamAvailable, playVideoNatively } from "@/lib/stream";
@@ -294,7 +294,7 @@ export function VideoLibrary({
    * Po smazání se nic nehlásí, zmizelé filmy jsou odpověď dost jasná.
    *
    * Ručně vybraný soubor v telefonu nic nezabírá - jen zmizí ze seznamu,
-   * bez otázky a s „Vrátit" v hlášce.
+   * bez otázky i bez hlášky.
    */
   const deleteVideos = async (target: VideoItem[], confirmed = false) => {
     if (!target.length) return;
@@ -334,16 +334,8 @@ export function VideoLibrary({
     }
 
     if (local.length) {
-      const back = new Set(local.map((video) => video.id));
-      const before = videos;
-      setVideos((previous) => previous.filter((item) => !back.has(item.id)));
-      onToast?.({
-        tone: "info",
-        title: "Odebráno ze seznamu",
-        description: local.length === 1 ? local[0].title : countWord(local.length, ["video", "videa", "videí"]),
-        duration: UNDO_MS,
-        action: { label: "Vrátit", onClick: () => setVideos((current) => mergeBack(before, current, back)) },
-      });
+      const gone = new Set(local.map((video) => video.id));
+      setVideos((previous) => previous.filter((item) => !gone.has(item.id)));
     }
   };
 

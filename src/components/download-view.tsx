@@ -257,19 +257,14 @@ export function DownloadView({
         setHistory(addDownload(record));
       }
       onStarted?.();
-      onToast?.(
-        legacyVideo
-          ? {
-              tone: "warn",
-              title: "Video předáno systému",
-              description: "Tahle verze APK video z YouTube spolehlivě nestáhne. Nainstaluj nové Player.apk.",
-            }
-          : {
-              tone: "info",
-              title: "Stahuji",
-              description: reportsProgress ? "Průběh vidíš níže." : "Průběh vidíš v liště telefonu.",
-            },
-      );
+      // Bez hlášky „Stahuji": průběh ukazuje řádek níže a lišta telefonu.
+      if (legacyVideo) {
+        onToast?.({
+          tone: "warn",
+          title: "Video předáno systému",
+          description: "Tahle verze APK video z YouTube spolehlivě nestáhne. Nainstaluj nové Player.apk.",
+        });
+      }
     } catch (error) {
       console.error("Stahování selhalo", error);
       const message = error instanceof Error ? error.message : String(error);
