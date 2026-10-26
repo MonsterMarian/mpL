@@ -120,7 +120,7 @@ function origin(raw: unknown): DocumentOrigin {
   return { kind: "none" };
 }
 
-export async function listDocuments(): Promise<StoredDocument[]> {
+async function readAll(): Promise<StoredDocument[]> {
   try {
     const raw = isNative() ? await readNative() : await readWeb();
     return raw.map(sane).filter((d): d is StoredDocument => d !== null);
@@ -129,50 +129,66 @@ export async function listDocuments(): Promise<StoredDocument[]> {
   }
 }
 
-/** Uloží dokument; existující záznam se stejným id přepíše (a jde nahoru). */
-export async function saveDocument(document: StoredDocument): Promise<void> {
-  try {
-    const rest = (await listDocuments()).filter((d) => d.id !== document.id);
-    const next = [document, ...rest];
-    if (isNative()) await writeNative(next);
-    else await writeWeb(next);
-  } catch (error) {
-    // Plný disk nebo soukromý režim: dokument dočte aspoň tenhle běh appky.
-    // Zapsat se to musí - potichu ztracená kniha vypadá jako chyba appky
-    // a nikde se nedá zjistit, že za to může úložiště.
-    console.error("Dokument se nepodařilo uložit do knihovny", error);
-  }
-}
-
-export async function removeDocument(id: string): Promise<void> {
-  try {
-    const next = (await listDocuments()).filter((d) => d.id !== id);
-    if (isNative()) await writeNative(next);
-    else await writeWeb(next);
-  } catch {
-    // viz `saveDocument`
-  }
-}
-
 /**
- * Zapíše jen postup ve čtení. Volá se při každém obrácení stránky, takže
- * dokument, který se nezměnil, se nepřepisuje celý - jen se mu upraví číslo.
+ * Seznam se z disku čte jednou za běh appky a dál žije v paměti.
+ *
+ * Dřív se každá změna (i postup ve čtení) seznam znovu přečetla a celý
+ * přepsala. V telefonu to u čtyř knih stálo vteřinu a půl - a dvě takové
+ * změny přes sebe se přepisovaly: pomalejší zápis postupu dokázal smazat
+ * knihu, kterou jiný zápis zrovna uložil.
  */
-export async function saveProgress(
-  id: string,
-  page: number,
-  bookmarks: number[],
-): Promise<void> {
-  try {
-    const documents = await listDocuments();
-    const found = documents.find((d) => d.id === id);
-    if (!found) return;
-    const next = documents.map((d) =>
-      d.id === id ? { ...d, page: clampPage(page, d.pages.length), bookmarks } : d,
-    );
-    if (isNative()) await writeNative(next);
-    else await writeWeb(next);
-  } catch {
-    // viz `saveDocument`
-  }
+let cache: Promise<StoredDocument[]> | null = null;
+let writing: Promise<void> = Promise.resolve();
+let queued = false;
+
+function load(): Promise<StoredDocument[]> {
+  cache ??= readAll();
+  return cache;
+}
+
+/** Zapisuje vždycky jen jeden; změny, které přijdou mezitím, se svezou dalším zápisem. */
+function persist(): Promise<void> {
+  if (queued) return writing;
+  queued = true;
+  writing = writing.then(async () => {
+    queued = false;
+    const documents = await load();
+    try {
+      if (isNative()) await writeNative(documents);
+      else await writeWeb(documents);
+    } catch (error) {
+      // Plný disk nebo soukromý režim: dokument dočte aspoň tenhle běh appky.
+      // Zapsat se to musí - potichu ztracená kniha vypadá jako chyba appky
+      // a nikde se nedá zjistit, že za to může úložiště.
+      console.error("Knihovnu dokumentů se nepodařilo uložit", error);
+    }
+  });
+  return writing;
+}
+
+function update(change: (documents: StoredDocument[]) => StoredDocument[]): Promise<void> {
+  cache = load().then(change);
+  return persist();
+}
+
+export function listDocuments(): Promise<StoredDocument[]> {
+  return load();
+}
+
+/** Uloží dokument; existující záznam se stejným id přepíše (a jde nahoru). */
+export function saveDocument(document: StoredDocument): Promise<void> {
+  return update((documents) => [document, ...documents.filter((d) => d.id !== document.id)]);
+}
+
+export function removeDocument(id: string): Promise<void> {
+  return update((documents) => documents.filter((d) => d.id !== id));
+}
+
+/** Zapíše jen postup ve čtení. Volá se při obracení stránek, takže nezměněný seznam se nepřepisuje. */
+export async function saveProgress(id: string, page: number, bookmarks: number[]): Promise<void> {
+  const found = (await load()).find((d) => d.id === id);
+  if (!found) return;
+  const next = clampPage(page, found.pages.length);
+  if (found.page === next && found.bookmarks.join() === bookmarks.join()) return;
+  await update((documents) => documents.map((d) => (d.id === id ? { ...d, page: next, bookmarks } : d)));
 }

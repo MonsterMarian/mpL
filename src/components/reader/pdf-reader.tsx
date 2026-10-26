@@ -479,8 +479,16 @@ export function PdfReader({
       if (found.length) jumpTo(found[0].page, "smooth");
     }, 220);
     return () => window.clearTimeout(timer);
+    // `jumpTo` se nesleduje schválně: mění se s každým překreslením rodiče
+    // a hledání pak po každém skoku (obsah, další nález) vrátilo čtenáře
+    // zpátky na první nález.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, pageTexts, jumpTo]);
+  }, [query, pageTexts]);
+
+  // Zavřené hledání nemá na stránkách nechat svítit nálezy, které už nejdou procházet.
+  React.useEffect(() => {
+    if (panel !== "find") setQuery("");
+  }, [panel]);
 
   const goToHit = (index: number) => {
     if (!hits.length) return;

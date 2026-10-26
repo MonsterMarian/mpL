@@ -208,15 +208,26 @@ async function extractPages(
   pdf: PDFDocumentProxy,
   onProgress?: (percent: number) => void,
 ): Promise<DocumentPage[]> {
-  const pages: DocumentPage[] = [];
-  for (let index = 1; index <= pdf.numPages; index += 1) {
-    const page = await pdf.getPage(index);
-    const content = await page.getTextContent();
-    pages.push({ text: pageText(textFromContent(content).text), label: `Strana ${index}` });
-    page.cleanup();
-    onProgress?.(Math.round((index / pdf.numPages) * 100));
-  }
-  return pages;
+  // Všechny stránky do workeru naráz: po jedné se čekalo na každou cestu tam
+  // a zpátky. A procenta jen párkrát za vteřinu - každé hlášení překreslí
+  // celou obrazovku a u knihy o čtyřech stech stranách to bylo víc práce než
+  // samotné čtení textu (12 s proti 3 s v telefonu).
+  let done = 0;
+  let reported = 0;
+  return Promise.all(
+    Array.from({ length: pdf.numPages }, async (_, at) => {
+      const page = await pdf.getPage(at + 1);
+      const content = await page.getTextContent();
+      page.cleanup();
+      done += 1;
+      const now = performance.now();
+      if (done === pdf.numPages || now - reported > 150) {
+        reported = now;
+        onProgress?.(Math.round((done / pdf.numPages) * 100));
+      }
+      return { text: pageText(textFromContent(content).text), label: `Strana ${at + 1}` };
+    }),
+  );
 }
 
 function mapNativeTrack(track: NativeAudioTrack): Track {
@@ -1591,6 +1602,10 @@ export default function HomePage() {
   };
 
   const openDocument = (doc: StoredDocument) => {
+    // Nahoru v knihovně: po startu appky se obnovuje první kniha seznamu, a to
+    // má být ta naposledy čtená, ne naposledy přidaná.
+    void saveDocument(doc);
+    setDocuments((previous) => [doc, ...previous.filter((item) => item.id !== doc.id)]);
     showDocument(doc, null);
     void loadDocumentFile(doc);
   };
@@ -1611,9 +1626,9 @@ export default function HomePage() {
   };
 
   /** Zapamatuje si, kde soubor dokumentu leží - podruhé se už hledat nemusí. */
-  const rememberOrigin = async (doc: StoredDocument, origin: DocumentOrigin) => {
+  const rememberOrigin = (doc: StoredDocument, origin: DocumentOrigin) => {
     const next: StoredDocument = { ...doc, origin };
-    await saveDocument(next);
+    void saveDocument(next);
     setDocuments((previous) => previous.map((item) => (item.id === doc.id ? next : item)));
   };
 
@@ -1643,7 +1658,7 @@ export default function HomePage() {
           return;
         }
         origin = { kind: "device", uri: found.uri };
-        await rememberOrigin(doc, origin);
+        rememberOrigin(doc, origin);
       }
 
       const bytes = origin.kind === "device" ? await readFileByUri(origin.uri) : await readDocumentFile(doc.id);
@@ -1830,7 +1845,8 @@ export default function HomePage() {
         aspect,
       };
 
-      await saveDocument(doc);
+      // Na disk se zapisuje na pozadí - knihovna v paměti už knihu má.
+      void saveDocument(doc);
       setDocuments((previous) => [doc, ...previous.filter((d) => d.id !== doc.id)]);
       openedAt.current += 1;
       showDocument(doc, opened);
@@ -2156,6 +2172,15 @@ export default function HomePage() {
     if (!documentId_) return;
     const timer = window.setTimeout(() => {
       void saveProgress(documentId_, documentPage, documentBookmarks);
+      // I knihovna v paměti - jinak karta ukazovala starou stranu a znovu
+      // otevřená kniha naskočila tam, kde byla při startu appky.
+      setDocuments((previous) =>
+        previous.map((item) =>
+          item.id === documentId_ && (item.page !== documentPage || item.bookmarks !== documentBookmarks)
+            ? { ...item, page: documentPage, bookmarks: documentBookmarks }
+            : item,
+        ),
+      );
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [documentId_, documentPage, documentBookmarks]);
