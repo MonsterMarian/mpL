@@ -13,6 +13,8 @@ export interface DownloadRecord {
   kind?: "audio" | "video";
   /** Stahování selhalo - v historii má tlačítko „Stáhnout znovu“. */
   failed?: boolean;
+  /** Náhled z YouTube. Zůstane v historii, i když skladbu někdo smaže. */
+  artwork?: string;
 }
 
 const STORAGE_KEY = "microwins:downloads";
@@ -152,4 +154,23 @@ export function guessFileName(url: string): string {
   } catch {
     return "stazeny-soubor.mp3";
   }
+}
+
+/**
+ * Skladba z knihovny, kterou záznam stáhl - nebo nic, když ji někdo smazal.
+ *
+ * Jméno souboru vzniklo z „interpret - název" a tytéž dvě věci se zapsaly do
+ * tagů, takže jde složit zpátky. Bez interpreta (přímý odkaz) zbyde jen název.
+ */
+export function downloadedTrack<T extends { title: string; artist: string }>(
+  record: DownloadRecord,
+  tracks: T[],
+): T | undefined {
+  const base = (name: string) => name.replace(/\.[a-z0-9]{2,4}$/i, "").toLowerCase();
+  const wanted = base(record.fileName);
+  return tracks.find(
+    (track) =>
+      base(safeFileName(`${track.artist} - ${track.title}`, "mp3")) === wanted ||
+      base(safeFileName(track.title, "mp3")) === wanted,
+  );
 }

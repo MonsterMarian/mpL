@@ -16,6 +16,7 @@ import {
   addDownload,
   cleanDownloadUrl,
   clearDownloads,
+  downloadedTrack,
   guessFileName,
   loadDownloads,
   needsResolving,
@@ -51,10 +52,13 @@ interface ActiveDownload {
 export function DownloadView({
   onToast,
   onDownloaded,
+  deviceTracks,
 }: {
   onToast?: (message: { tone: "info" | "warn" | "win"; title: string; description?: string }) => void;
   /** Hotové stahování knihovnu přečte znovu, ať se soubor hned objeví. */
   onDownloaded?: () => void;
+  /** Hudba v telefonu. Bez ní (knihovna nenačtená) se nehádá, co je smazané. */
+  deviceTracks?: { title: string; artist: string; artwork: string | null }[];
 }) {
   const [url, setUrl] = React.useState("");
   const [kind, setKind] = React.useState<Kind>("audio");
@@ -204,7 +208,7 @@ export function DownloadView({
       // systémovému stahovači, který nehlásí nic - jeho řádek by tu visel
       // na „0 %" navždy, takže se u něj spoléhá na lištu systému.
       const reportsProgress = result?.reportsProgress ?? /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(savedName);
-      const record: DownloadRecord = { url: address, fileName: savedName, at: Date.now(), kind };
+      const record: DownloadRecord = { url: address, fileName: savedName, at: Date.now(), kind, artwork: streamArtwork };
       if (downloadId && reportsProgress && !finished.current.has(downloadId)) {
         pendingHistory.current.set(downloadId, record);
         setActiveDownloads((prev) =>
@@ -393,11 +397,18 @@ export function DownloadView({
             </button>
           </div>
           <ul className="divide-y rounded-2xl border">
-            {history.map((record) => (
+            {history.map((record) => {
+              const recordKind = record.kind ?? (isVideoFile(record.fileName) ? "video" : "audio");
+              const track =
+                deviceTracks && recordKind === "audio" && !record.failed ? downloadedTrack(record, deviceTracks) : undefined;
+              // Smazaná skladba jde stáhnout znovu stejně jako ta, co selhala.
+              const missing = Boolean(deviceTracks) && recordKind === "audio" && !record.failed && !track;
+              const cover = record.failed ? undefined : (track?.artwork ?? record.artwork);
+              return (
               <li key={`${record.at}-${record.fileName}`} className="flex items-center gap-3 px-3 py-2.5">
                 <span
                   className={cn(
-                    "grid size-9 shrink-0 place-items-center rounded-lg bg-white/[0.06]",
+                    "relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white/[0.06]",
                     record.failed ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
@@ -408,6 +419,18 @@ export function DownloadView({
                   ) : (
                     <BrandIcon className="size-4" />
                   )}
+                  {/* Obrázek přes ikonu - když se nenačte (offline, smazaný), zůstane ikona. */}
+                  {cover ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={cover}
+                      alt=""
+                      className={cn("absolute inset-0 size-full object-cover", missing && "opacity-50")}
+                      onError={(event) => {
+                        event.currentTarget.hidden = true;
+                      }}
+                    />
+                  ) : null}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{record.fileName}</span>
@@ -417,17 +440,15 @@ export function DownloadView({
                       record.failed ? "text-destructive" : "text-muted-foreground",
                     )}
                   >
-                    {record.failed ? "Stahování selhalo" : record.url}
+                    {record.failed ? "Stahování selhalo" : missing ? "Smazáno z telefonu" : record.url}
                   </span>
                 </span>
-                {/* Znovu jen tam, kde to selhalo - povedené stahování nemá co opakovat. */}
-                {record.failed ? (
+                {/* Znovu jen tam, kde to selhalo nebo kde skladba z telefonu zmizela. */}
+                {record.failed || missing ? (
                   <button
                     type="button"
                     disabled={busy !== null}
-                    onClick={() =>
-                      void download(record.url, record.kind ?? (isVideoFile(record.fileName) ? "video" : "audio"))
-                    }
+                    onClick={() => void download(record.url, recordKind)}
                     className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-brand px-3 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
                     <RotateCw className="size-3.5" /> Stáhnout znovu
@@ -438,7 +459,8 @@ export function DownloadView({
                   </span>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       ) : null}

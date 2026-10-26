@@ -2867,7 +2867,11 @@ export default function HomePage() {
         */}
         {addons.downloads ? (
           <div hidden={activeView !== "downloads"}>
-            <DownloadView onToast={toast} onDownloaded={() => void loadDeviceMusic()} />
+            <DownloadView
+              onToast={toast}
+              onDownloaded={() => void loadDeviceMusic()}
+              deviceTracks={mediaPermission === "granted" ? tracks.filter((track) => track.source === "device") : undefined}
+            />
           </div>
         ) : null}
       </main>

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addDownload,
   cleanDownloadUrl,
+  downloadedTrack,
   guessFileName,
   needsResolving,
   safeFileName,
@@ -72,5 +73,23 @@ describe("historie stahování", () => {
     addDownload({ url: "https://youtu.be/a", fileName: "A.m4a", at: 1, kind: "audio", failed: true });
     const next = addDownload({ url: "https://youtu.be/a", fileName: "A.m4a", at: 2, kind: "audio" });
     expect(next).toEqual([{ url: "https://youtu.be/a", fileName: "A.m4a", at: 2, kind: "audio" }]);
+  });
+});
+
+describe("stažená skladba v knihovně", () => {
+  const record = { url: "https://youtu.be/a", fileName: "AC-DC - Thunderstruck.m4a", at: 1, kind: "audio" as const };
+
+  it("najde skladbu podle interpreta a názvu, ze kterých vzniklo jméno souboru", () => {
+    const track = { title: "Thunderstruck", artist: "AC/DC" };
+    expect(downloadedTrack(record, [{ title: "Jiná", artist: "AC/DC" }, track])).toBe(track);
+  });
+
+  it("smazanou skladbu nenajde", () => {
+    expect(downloadedTrack(record, [{ title: "Highway to Hell", artist: "AC/DC" }])).toBeUndefined();
+  });
+
+  it("u přímého odkazu bez interpreta stačí název", () => {
+    const direct = { url: "https://example.com/sample.mp3", fileName: "sample.mp3", at: 1 };
+    expect(downloadedTrack(direct, [{ title: "sample", artist: "<unknown>" }])).toBeDefined();
   });
 });
