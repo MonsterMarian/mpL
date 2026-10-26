@@ -598,12 +598,14 @@ function UpdateSection() {
     setChecking(true);
     const res = await liveUpdate.checkForUpdate();
     setChecking(false);
-    setPending(liveUpdate.pendingBundleVersion());
+    const waiting = liveUpdate.pendingBundleVersion();
+    setPending(waiting);
 
     if (res.kind === "downloaded") {
       setStatusMsg("Aktualizace stažena. Změny se projeví po restartu.");
     } else if (res.kind === "up-to-date") {
-      setStatusMsg("Máš nejnovější verzi.");
+      // „up-to-date" přijde i ve chvíli, kdy nejnovější verze je stažená a jen čeká na nasazení
+      setStatusMsg(waiting ? "Nejnovější verze je stažená, stačí ji nasadit." : "Máš nejnovější verzi.");
     } else if (res.kind === "disabled") {
       setStatusMsg("Chybí adresa aktualizací.");
     } else {
