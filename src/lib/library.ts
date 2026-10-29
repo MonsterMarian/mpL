@@ -26,7 +26,7 @@ export interface Track {
    * ale notifikace a zámek čtou soubor přímo, takže potřebují tu nepřeloženou.
    */
   artworkSource?: string | null;
-  /** Kdy skladba přibyla do zařízení - podle toho řadí „Naposledy přidané". */
+  /** Kdy skladba přibyla do zařízení - podle toho řadí „Datum stažení". */
   addedAt: number;
   source: "device" | "local";
 }
@@ -61,10 +61,11 @@ export type LibraryFilter = "all" | "liked";
 export type RepeatMode = "off" | "all" | "one";
 export type SortKey = "added" | "recent" | "played" | "title" | "titleDesc" | "artist" | "duration";
 
+/** První je výchozí - kdo si přeřadil, najde cestu zpátky nahoře. */
 export const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "added", label: "Datum stažení (výchozí)" },
   { key: "recent", label: "Naposledy hrané" },
   { key: "played", label: "Nejposlouchanější" },
-  { key: "added", label: "Naposledy přidané" },
   { key: "title", label: "Název A–Z" },
   { key: "titleDesc", label: "Název Z–A" },
   { key: "artist", label: "Interpret A–Z" },
