@@ -336,7 +336,7 @@ export function DownloadView({
           })}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             value={url}
             onChange={(event) => setUrl(event.target.value)}
@@ -344,7 +344,7 @@ export function DownloadView({
             inputMode="url"
             autoComplete="off"
             spellCheck={false}
-            className="h-11 flex-1 rounded-xl text-sm"
+            className="h-9 text-sm sm:flex-1"
           />
           <button
             type="submit"
