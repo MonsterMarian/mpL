@@ -34,14 +34,6 @@ export function readErrors(): LoggedError[] {
   }
 }
 
-export function clearErrors(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // soukromý režim - není kam mazat
-  }
-}
-
 export function recordError(message: string, source?: string): void {
   try {
     const entry: LoggedError = { at: Date.now(), message: message.slice(0, 400), source: source?.slice(0, 200) };

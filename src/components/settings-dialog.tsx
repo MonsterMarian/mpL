@@ -1,14 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import * as liveUpdate from "@/lib/live-update";
-import { clearErrors, readErrors, type LoggedError } from "@/lib/diagnostics";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
-import { clearNativeCrash, lastNativeCrash } from "@/lib/stream";
 import { SectionIcon } from "@/components/ui/section-icon";
 import {
   SECTION_ICONS,
@@ -148,9 +145,7 @@ export function SettingsDialog({
               onRequestMediaAccess={onRequestMediaAccess} 
             />
             <SystemPlaybackSection open={open} />
-            <NativeCrashSection open={open} />
             <UpdateSection />
-            <ErrorSection open={open} />
           </div>
         ) : (
           <div className="flex flex-col gap-5 animate-in-up">
@@ -213,22 +208,34 @@ function MediaSection({
     <Section title="Hudba ze zařízení" hint="Povol přístup, ať P/_ayer najde stažené skladby v telefonu.">
       <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5 text-sm">
         <div className="flex items-center justify-between gap-2">
-          <span className="font-medium text-foreground">Lokální poslech</span>
-          <span className={cn("text-xs font-medium", mediaPermission === "granted" ? "text-win" : "text-muted-foreground")}>
-             {mediaPermission === "granted" ? "Povolený" : mediaPermission === "denied" ? "Zamítnutý" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}
-          </span>
+          <span className="font-medium text-foreground">Přístup k hudbě</span>
+          <PermissionState
+            granted={mediaPermission === "granted"}
+            label={mediaPermission === "denied" ? "Zamítnuto" : mediaPermission === "unavailable" ? "Prohlížeč" : "Čeká"}
+          />
         </div>
-        <Button 
-          type="button" 
-          variant={mediaPermission === "granted" ? "outline" : "default"} 
-          disabled={isRequestingMedia || mediaPermission === "unavailable"} 
-          onClick={handleRequestMediaAccess}
-          className="mt-2"
-        >
-          {isRequestingMedia ? "Čekám…" : mediaPermission === "denied" ? "Otevřít nastavení" : mediaPermission === "granted" ? "Obnovit" : "Povolit přístup"}
-        </Button>
+        {mediaPermission === "granted" ? null : (
+          <Button
+            type="button"
+            disabled={isRequestingMedia || mediaPermission === "unavailable"}
+            onClick={handleRequestMediaAccess}
+            className="mt-2"
+          >
+            {isRequestingMedia ? "Čekám…" : mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}
+          </Button>
+        )}
       </div>
     </Section>
+  );
+}
+
+/** Stav oprávnění: povolené jako štítek s fajfkou, ostatní jen šedým textem. */
+function PermissionState({ granted, label }: { granted: boolean; label: string }) {
+  if (!granted) return <span className="text-xs font-medium text-muted-foreground">{label}</span>;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-brand/15 px-2 py-0.5 text-xs font-medium text-brand">
+      <Check className="size-3.5" /> Povoleno
+    </span>
   );
 }
 
@@ -419,9 +426,7 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
       <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5 text-sm">
         <div className="flex items-center justify-between gap-2">
           <span className="font-medium text-foreground">Notifikace</span>
-          <span className={cn("text-xs font-medium", granted ? "text-win" : "text-muted-foreground")}>
-            {granted ? "Povolené" : support.notifications === "denied" ? "Zamítnuté" : "Čeká"}
-          </span>
+          <PermissionState granted={granted} label={support.notifications === "denied" ? "Zamítnuto" : "Čeká"} />
         </div>
         {granted ? null : (
           <Button
@@ -440,126 +445,13 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
   );
 }
 
-/**
- * Poslední pád nativní části.
- *
- * Pád v Javě appku zavře a nezůstane po něm nic, co by šlo z telefonu přečíst.
- * Tady je výpis, který se dá zkopírovat a poslat - jinak se hledá poslepu.
- */
-function NativeCrashSection({ open }: { open: boolean }) {
-  const [crash, setCrash] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (open) void lastNativeCrash().then(setCrash);
-  }, [open]);
-
-  if (!crash) return null;
-
-  const newline = String.fromCharCode(10);
-  const [stamp, ...rest] = crash.split(newline);
-  const when = Number(stamp);
-  const trace = rest.join(newline);
-
-  return (
-    <Section title="Poslední pád appky" hint="Tohle mi pošli, když appka spadne - je z toho vidět, kde přesně.">
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-        <div className="flex items-center gap-2 text-xs text-destructive">
-          <AlertTriangle className="size-3.5 shrink-0" />
-          <span className="tabular-nums">
-            {Number.isFinite(when) ? new Date(when).toLocaleString("cs") : "neznámo kdy"}
-          </span>
-        </div>
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-muted-foreground">
-          {trace}
-        </pre>
-      </div>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={() => void navigator.clipboard?.writeText(crash)}>
-          Zkopírovat
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            void clearNativeCrash();
-            setCrash(null);
-          }}
-        >
-          Vymazat
-        </Button>
-      </div>
-    </Section>
-  );
-}
-
-/**
- * Co appku naposledy položilo.
- *
- * V telefonu není konzole a bílá obrazovka neřekne nic - tohle je jediné
- * místo, odkud se dá pád popsat, aniž by se telefon připojoval kabelem.
- * Když je čisto, sekce se vůbec nekreslí.
- */
-function ErrorSection({ open }: { open: boolean }) {
-  const [errors, setErrors] = React.useState<LoggedError[]>([]);
-
-  React.useEffect(() => {
-    if (open) setErrors(readErrors());
-  }, [open]);
-
-  if (!errors.length) return null;
-
-  return (
-    <Section title="Poslední chyby" hint="Zkopíruj a pošli, když appka spadne - jinak není podle čeho hledat.">
-      <div className="flex flex-col gap-2">
-        {errors.map((error) => (
-          <div key={error.at} className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
-            <div className="flex items-center gap-2 text-xs text-destructive">
-              <AlertTriangle className="size-3.5 shrink-0" />
-              <span className="tabular-nums">{new Date(error.at).toLocaleString("cs")}</span>
-            </div>
-            <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">{error.message}</p>
-            {error.source ? <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground/70">{error.source}</p> : null}
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void navigator.clipboard?.writeText(
-              errors.map((e) => `${new Date(e.at).toISOString()} ${e.message}${e.source ? ` (${e.source})` : ""}`).join("\n"),
-            );
-          }}
-        >
-          Zkopírovat
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            clearErrors();
-            setErrors([]);
-          }}
-        >
-          Vymazat
-        </Button>
-      </div>
-    </Section>
-  );
-}
-
 function UpdateSection() {
-  const [url, setUrl] = React.useState("");
   const [current, setCurrent] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<string | null>(null);
   const [checking, setChecking] = React.useState(false);
   const [statusMsg, setStatusMsg] = React.useState("");
 
-  const DEFAULT_URL = liveUpdate.DEFAULT_UPDATE_URL || "";
-
   React.useEffect(() => {
-    setUrl(liveUpdate.getUpdateUrl());
     setCurrent(liveUpdate.currentBundleVersion());
     setPending(liveUpdate.pendingBundleVersion());
   }, []);
@@ -577,7 +469,6 @@ function UpdateSection() {
   };
 
   const onCheck = async () => {
-    liveUpdate.setUpdateUrl(url);
     setChecking(true);
     const res = await liveUpdate.checkForUpdate();
     setChecking(false);
@@ -597,37 +488,7 @@ function UpdateSection() {
   };
 
   return (
-    <Section
-      title="Aktualizace z GitHubu"
-      hint="Appka si při startu sama stáhne novou verzi."
-    >
-      <details className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-          Adresa manifestu {url === DEFAULT_URL ? "(výchozí)" : "(vlastní)"}
-        </summary>
-        <Input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onBlur={() => liveUpdate.setUpdateUrl(url)}
-          placeholder={DEFAULT_URL}
-          autoComplete="off"
-          spellCheck={false}
-          className="mt-2 font-mono text-xs"
-        />
-        {url !== DEFAULT_URL && (DEFAULT_URL as string) !== "" ? (
-          <button
-            type="button"
-            onClick={() => {
-              setUrl(DEFAULT_URL);
-              liveUpdate.setUpdateUrl(DEFAULT_URL);
-            }}
-            className="mt-1.5 text-muted-foreground hover:text-foreground"
-          >
-            Vrátit výchozí adresu
-          </button>
-        ) : null}
-      </details>
-
+    <Section title="Aktualizace" hint="Appka si při startu sama stáhne novou verzi.">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" disabled={checking} onClick={onCheck}>
           <RefreshCw className={cn("size-4 mr-2", checking && "animate-spin")} />
