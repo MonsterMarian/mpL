@@ -70,7 +70,6 @@ import {
   sortTracks,
   trackCountLabel,
   upcomingIds,
-  type LibraryFilter,
   type PlayStats,
   type Queue,
   type RepeatMode,
@@ -259,7 +258,6 @@ export default function HomePage() {
   const [isShuffled, setIsShuffled] = React.useState(false);
   const [repeatMode, setRepeatMode] = React.useState<RepeatMode>("off");
   const [query, setQuery] = React.useState("");
-  const [libraryFilter, setLibraryFilter] = React.useState<LibraryFilter>("all");
   const [sortKey, setSortKey] = React.useState<SortKey>("added");
   const [liked, setLiked] = React.useState<Set<string>>(new Set());
   /** Statistika poslechu podle id skladby - živí řazení „Nejposlouchanější". */
@@ -428,8 +426,8 @@ export default function HomePage() {
 
   /** Co je vidět v seznamu skladeb - po hledání, filtru a řazení. */
   const visibleTracks = React.useMemo(
-    () => sortTracks(filterTracks(tracks, query, libraryFilter, liked), sortKey, playStats),
-    [tracks, query, libraryFilter, liked, sortKey, playStats],
+    () => sortTracks(filterTracks(tracks, query, libraryTab === "liked" ? "liked" : "all", liked), sortKey, playStats),
+    [tracks, query, libraryTab, liked, sortKey, playStats],
   );
 
   /** Co ve frontě čeká. Skladby, které mezitím ze zařízení zmizely, se přeskočí. */
@@ -2374,8 +2372,6 @@ export default function HomePage() {
             onQueryChange={setQuery}
             sortKey={sortKey}
             onSortChange={setSortKey}
-            filter={libraryFilter}
-            onFilterChange={setLibraryFilter}
             tab={libraryTab}
             onTabChange={setLibraryTab}
             browse={browse}
@@ -2904,7 +2900,7 @@ export default function HomePage() {
                   >
                     <span
                       className={cn(
-                        "flex h-9 w-16 items-center justify-center rounded-full transition-colors",
+                        "ui-tab flex h-9 w-16 items-center justify-center rounded-full transition-colors",
                         active && "bg-secondary text-secondary-foreground",
                       )}
                     >

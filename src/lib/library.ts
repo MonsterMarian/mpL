@@ -57,7 +57,7 @@ export function mergePlayStats(base: PlayStats, incoming: PlayStats): PlayStats 
   return next ?? base;
 }
 
-export type LibraryFilter = "all" | "liked" | "local";
+export type LibraryFilter = "all" | "liked";
 export type RepeatMode = "off" | "all" | "one";
 export type SortKey = "added" | "recent" | "played" | "title" | "titleDesc" | "artist" | "duration";
 
@@ -113,8 +113,7 @@ export function filterTracks(
   return tracks.filter((track) => {
     const matchesQuery =
       !needle || `${track.title} ${track.artist} ${track.album}`.toLowerCase().includes(needle);
-    const matchesFilter =
-      filter === "all" || (filter === "liked" ? liked.has(track.id) : track.source === "local");
+    const matchesFilter = filter === "all" || liked.has(track.id);
     return matchesQuery && matchesFilter;
   });
 }

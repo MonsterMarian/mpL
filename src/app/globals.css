@@ -1209,6 +1209,30 @@
 
 [data-look="unified"] .ui-seg-item {
   padding-block: 0.375rem;
+  border-radius: var(--radius-md);
+}
+
+/* Hranaté místo kulatých: záložky, přepínače, tlačítka s rámečkem i volby ve čtečce. */
+[data-look="unified"] .ui-tab,
+[data-look="unified"] .pdf-chip,
+[data-look="unified"] .pdf-spot,
+[data-look="unified"] .pdf-back {
+  border-radius: var(--radius-lg);
+}
+
+[data-look="unified"] .ui-seg {
+  border-radius: var(--radius-xl);
+}
+
+[data-look="unified"] .ui-ghost {
+  height: 2.25rem;
+  border-radius: var(--radius-lg);
+}
+
+[data-look="unified"] .ui-icon-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-lg);
 }
 
 [data-look="unified"] .ui-title {

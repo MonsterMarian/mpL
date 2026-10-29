@@ -52,7 +52,7 @@ export function SelectionHeader({
         type="button"
         onClick={onSelectAll}
         className={cn(
-          "flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors hover:bg-accent",
+          "ui-ghost flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors hover:bg-accent",
           allSelected && "border-brand/40 text-brand",
         )}
       >

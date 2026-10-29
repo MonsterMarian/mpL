@@ -56,7 +56,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="flex h-11 items-center justify-center rounded-full border px-6 text-sm"
+            className="ui-ghost flex h-11 items-center justify-center rounded-full border px-6 text-sm"
           >
             Restartovat aplikaci
           </button>

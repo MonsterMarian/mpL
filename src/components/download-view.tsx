@@ -313,7 +313,7 @@ export function DownloadView({
       ) : null}
 
       <form onSubmit={start} className="flex flex-col gap-3">
-        <div className="flex gap-1 rounded-full bg-white/[0.04] p-1">
+        <div className="ui-seg flex gap-1 rounded-full bg-white/[0.04] p-1">
           {([
             { id: "audio" as const, label: "Hudba", icon: BrandIcon },
             { id: "video" as const, label: "Video", icon: Video },

@@ -49,10 +49,6 @@ describe("výběr skladeb", () => {
   it("filtr oblíbených bere jen zaškrtnuté", () => {
     expect(filterTracks(tracks, "", "liked", new Set(["b"])).map((t) => t.id)).toEqual(["b"]);
   });
-
-  it("filtr vlastních souborů nechá jen ručně přidané", () => {
-    expect(filterTracks(tracks, "", "local", new Set()).map((t) => t.id)).toEqual(["b"]);
-  });
 });
 
 describe("řazení", () => {

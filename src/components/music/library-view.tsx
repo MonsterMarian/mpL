@@ -30,7 +30,6 @@ import {
   groupByArtist,
   trackCountLabel,
   type Collection,
-  type LibraryFilter,
   type PlayStats,
   type SortKey,
   type Track,
@@ -42,11 +41,11 @@ import { Cover, TrackRow } from "./track-row";
 /**
  * Knihovna hudby.
  *
- * Čtyři pohledy na tatáž data: seznam skladeb, alba, interpreti a vlastní
- * playlisty. Do alba, interpreta i playlistu se vchází - nerozbaluje se to na
+ * Pět pohledů na tatáž data: seznam skladeb, oblíbené, alba, interpreti
+ * a vlastní playlisty. Do alba, interpreta i playlistu se vchází - nerozbaluje se to na
  * místě, protože seznam pak přestane být seznamem.
  */
-export type LibraryTab = "tracks" | "albums" | "artists" | "playlists";
+export type LibraryTab = "tracks" | "liked" | "albums" | "artists" | "playlists";
 
 export interface Browse {
   kind: LibraryTab;
@@ -55,15 +54,10 @@ export interface Browse {
 
 const TABS: { id: LibraryTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "tracks", label: "Skladby", icon: Library },
+  { id: "liked", label: "Oblíbené", icon: Heart },
   { id: "albums", label: "Alba", icon: Disc3 },
   { id: "artists", label: "Interpreti", icon: Mic2 },
   { id: "playlists", label: "Playlisty", icon: ListOrdered },
-];
-
-const FILTERS: { id: LibraryFilter; label: string }[] = [
-  { id: "all", label: "Vše" },
-  { id: "liked", label: "Oblíbené" },
-  { id: "local", label: "Moje soubory" },
 ];
 
 export interface LibraryViewProps {
@@ -78,8 +72,6 @@ export interface LibraryViewProps {
   onQueryChange: (value: string) => void;
   sortKey: SortKey;
   onSortChange: (key: SortKey) => void;
-  filter: LibraryFilter;
-  onFilterChange: (filter: LibraryFilter) => void;
   tab: LibraryTab;
   onTabChange: (tab: LibraryTab) => void;
   browse: Browse | null;
@@ -118,8 +110,6 @@ export function LibraryView(props: LibraryViewProps) {
     onQueryChange,
     sortKey,
     onSortChange,
-    filter,
-    onFilterChange,
     tab,
     onTabChange,
     browse,
@@ -218,7 +208,7 @@ export function LibraryView(props: LibraryViewProps) {
               type="button"
               onClick={() => onTabChange(item.id)}
               className={cn(
-                "flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors",
+                "ui-tab flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors",
                 tab === item.id ? "bg-brand text-black" : "bg-white/[0.05] text-muted-foreground hover:text-foreground",
               )}
             >
@@ -229,7 +219,7 @@ export function LibraryView(props: LibraryViewProps) {
         })}
       </div>
 
-      {tab === "tracks" ? (
+      {tab === "tracks" || tab === "liked" ? (
         <>
           <div className="mb-3 flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
@@ -244,22 +234,6 @@ export function LibraryView(props: LibraryViewProps) {
             <SortMenu value={sortKey} onChange={onSortChange} />
           </div>
 
-          <div className="mb-4 flex gap-1 rounded-full bg-white/[0.04] p-1">
-            {FILTERS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onFilterChange(item.id)}
-                className={cn(
-                  "flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                  filter === item.id ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
           {visibleTracks.length ? (
             <div className="-mx-2">
               {visibleTracks.map((track) => row(track, visibleIds))}
@@ -271,6 +245,15 @@ export function LibraryView(props: LibraryViewProps) {
               isLoadingMedia={isLoadingMedia}
               onRequestMediaAccess={onRequestMediaAccess}
               onUpload={onUpload}
+              // Prázdné oblíbené: vybírá se z celé knihovny, ne ze souborů v telefonu.
+              onPickTracks={
+                tab === "liked" && !query.trim()
+                  ? () => {
+                      onTabChange("tracks");
+                      onSelectAll([]);
+                    }
+                  : undefined
+              }
             />
           )}
         </>
@@ -337,7 +320,7 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (key: SortKey
         aria-expanded={open}
         aria-label={`Řazení: ${active.label}`}
         title={`Řazení: ${active.label}`}
-        className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        className="ui-ghost flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowDownUp className="size-3.5 shrink-0" />
         <span className="hidden whitespace-nowrap sm:inline">{active.label}</span>
@@ -589,7 +572,7 @@ function CollectionDetail({
           type="button"
           onClick={() => onPlayCollection(queueIds, true)}
           disabled={!items.length}
-          className="flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-40"
+          className="ui-ghost flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-40"
         >
           <Shuffle className="size-4" /> Náhodně
         </button>
@@ -602,7 +585,7 @@ function CollectionDetail({
                 setRenaming((value) => !value);
               }}
               aria-label="Přejmenovat playlist"
-              className="flex size-11 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="ui-icon-btn flex size-11 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Pencil className="size-4" />
             </button>
@@ -613,7 +596,7 @@ function CollectionDetail({
                 onBack();
               }}
               aria-label="Smazat playlist"
-              className="flex size-11 items-center justify-center rounded-full border text-destructive transition-colors hover:bg-accent"
+              className="ui-icon-btn flex size-11 items-center justify-center rounded-full border text-destructive transition-colors hover:bg-accent"
             >
               <Trash2 className="size-4" />
             </button>
@@ -663,12 +646,15 @@ function EmptyLibrary({
   isLoadingMedia,
   onRequestMediaAccess,
   onUpload,
+  onPickTracks,
 }: {
   hasTracks: boolean;
   mediaPermission: "unknown" | "granted" | "denied" | "unavailable";
   isLoadingMedia: boolean;
   onRequestMediaAccess: () => void;
   onUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  /** Prázdné oblíbené - tlačítko otevře výběr z celé knihovny. */
+  onPickTracks?: () => void;
 }) {
   return (
     <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 px-6 text-center">
@@ -677,28 +663,39 @@ function EmptyLibrary({
         {hasTracks ? <Heart className="size-5" /> : <img src={BRAND_MARK} alt="" className="size-8" />}
       </div>
       <p className="font-medium">
-        {hasTracks
-          ? "Tady je zatím ticho."
-          : mediaPermission === "denied"
-            ? "Přístup k hudbě je vypnutý"
-            : "Zatím tu nejsou žádné skladby"}
+        {onPickTracks
+          ? "Zatím nic oblíbeného"
+          : hasTracks
+            ? "Nic neodpovídá hledání"
+            : mediaPermission === "denied"
+              ? "Přístup k hudbě je vypnutý"
+              : "Zatím tu nejsou žádné skladby"}
       </p>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        {hasTracks
-          ? "Zkus změnit filtr nebo hledaný text."
-          : mediaPermission === "denied"
-            ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio."
-            : mediaPermission === "unavailable"
-              ? "V prohlížeči hudbu v telefonu nevidím - vyber soubory ručně."
-              : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}
+        {onPickTracks
+          ? "Vyber skladby z knihovny a dej jim Oblíbit."
+          : hasTracks
+            ? "Zkus změnit hledaný text."
+            : mediaPermission === "denied"
+              ? "Android ho zamítl. Otevři nastavení aplikace a povol Hudbu a audio."
+              : mediaPermission === "unavailable"
+                ? "V prohlížeči hudbu v telefonu nevidím - vyber soubory ručně."
+                : "Přehrávač načte hudbu z telefonu, včetně složky Stažené."}
       </p>
       {/*
         Prázdno je jediné místo, odkud se dá hudba přidat - tlačítka nad
-        seznamem zmizela, protože v plné knihovně jen zabírala řádek. Výběr
-        souboru zůstává i tam, kde knihovna něco má: prázdný filtr „Moje
-        soubory" je přesně chvíle, kdy si někdo chce soubor přidat ručně.
+        seznamem zmizela, protože v plné knihovně jen zabírala řádek.
       */}
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        {onPickTracks ? (
+          <button
+            type="button"
+            onClick={onPickTracks}
+            className="ui-pick flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent"
+          >
+            <Check className="size-3.5" /> Vybrat skladby
+          </button>
+        ) : null}
         {!hasTracks && mediaPermission !== "unavailable" ? (
           <button
             type="button"
@@ -710,10 +707,12 @@ function EmptyLibrary({
             {mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}
           </button>
         ) : null}
-        <label className="ui-pick flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent">
-          <Upload className="size-3.5" /> Vybrat soubory
-          <input type="file" accept="audio/*" multiple onChange={onUpload} className="hidden" />
-        </label>
+        {!hasTracks ? (
+          <label className="ui-pick flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent">
+            <Upload className="size-3.5" /> Vybrat soubory
+            <input type="file" accept="audio/*" multiple onChange={onUpload} className="hidden" />
+          </label>
+        ) : null}
       </div>
     </div>
   );
