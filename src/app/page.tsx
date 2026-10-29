@@ -130,6 +130,7 @@ import { installErrorCapture } from "@/lib/diagnostics";
 import { SectionIcon } from "@/components/ui/section-icon";
 import { DocumentCover } from "@/components/document-cover";
 import { loadSectionIcons, defaultSectionIcons, type SectionIcons } from "@/lib/section-icons";
+import { applyUnifiedLook, loadUnifiedLook } from "@/lib/look";
 import { BRAND_MARK } from "@/lib/brand";
 import { hideSplash, onAppResume, registerBackButton, syncStatusBar, tapFeedback } from "@/lib/native";
 
@@ -616,6 +617,7 @@ export default function HomePage() {
 
     setAddons(loadAddons());
     setSectionIcons(loadSectionIcons());
+    applyUnifiedLook(loadUnifiedLook());
     void loadDeviceDocuments();
     setStorageReady(true);
     void loadDeviceMusic();
@@ -2468,7 +2470,7 @@ export default function HomePage() {
                         <ChevronLeft className="size-3.5" /> Zpět na složky
                       </button>
                     ) : null}
-                    <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 text-xs font-medium transition-colors hover:bg-white/10">
+                    <label className="ui-pick flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 text-xs font-medium transition-colors hover:bg-white/10">
                       <FileUp className="size-3.5" /> Vybrat soubor
                       <input
                         type="file"
@@ -2650,7 +2652,7 @@ export default function HomePage() {
                     </div>
                     <div className="relative sm:w-56">
                       <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 rounded-xl border-white/10 bg-white/[0.04] pl-9 text-xs" />
+                      <Input value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} placeholder="Hledat v dokumentu" className="h-9 pl-9 text-sm" />
                     </div>
                   </div>
 
@@ -3029,7 +3031,7 @@ export default function HomePage() {
             <button
               type="button"
               onClick={cancelSleepTimer}
-              className="mt-1 flex h-11 items-center gap-3 rounded-lg bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+              className="ui-cta mt-1 flex h-11 items-center gap-3 rounded-lg bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90"
             >
               <TimerReset className="size-4 shrink-0" />
               {sleepAt !== null ? `Zrušit časovač (${Math.ceil(sleepLeft / 60000)} min)` : "Zrušit časovač"}

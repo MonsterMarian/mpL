@@ -49,7 +49,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
           <button
             type="button"
             onClick={() => this.setState({ error: null })}
-            className="flex h-11 items-center justify-center rounded-full bg-brand px-6 text-sm font-semibold text-black"
+            className="ui-cta flex h-11 items-center justify-center rounded-full bg-brand px-6 text-sm font-semibold text-black"
           >
             Zkusit znovu
           </button>

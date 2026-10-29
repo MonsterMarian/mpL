@@ -177,7 +177,7 @@ export function NowPlaying({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="mt-4 flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90"
+                  className="ui-cta ui-cta-sm mt-4 flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90"
                 >
                   <Plus className="size-3.5" /> Vybrat skladby z knihovny
                 </button>

@@ -151,12 +151,12 @@ export function TrackMenu({
               onChange={(event) => setNewName(event.target.value)}
               placeholder="Nový playlist"
               maxLength={60}
-              className="h-11 rounded-xl"
+              className="h-9 text-sm"
             />
             <button
               type="submit"
               disabled={!newName.trim()}
-              className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="ui-cta flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               <Plus className="size-4" /> Založit
             </button>

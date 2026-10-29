@@ -238,7 +238,7 @@ export function LibraryView(props: LibraryViewProps) {
                 value={query}
                 onChange={(event) => onQueryChange(event.target.value)}
                 placeholder="Hledat"
-                className="h-9 rounded-full border-white/10 bg-white/[0.04] pl-9 text-xs"
+                className="h-9 pl-9 text-sm"
               />
             </div>
             <SortMenu value={sortKey} onChange={onSortChange} />
@@ -453,12 +453,12 @@ function Playlists({
           onChange={(event) => setName(event.target.value)}
           placeholder="Název nového playlistu"
           maxLength={60}
-          className="h-10 rounded-xl border-white/10 bg-white/[0.04] text-sm"
+          className="h-9 text-sm"
         />
         <button
           type="submit"
           disabled={!name.trim()}
-          className="flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="ui-cta flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           <Plus className="size-4" /> Založit
         </button>
@@ -581,7 +581,7 @@ function CollectionDetail({
           type="button"
           onClick={() => onPlayCollection(queueIds, false)}
           disabled={!items.length}
-          className="flex h-11 items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="ui-cta flex h-11 items-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           <Play className="size-4 fill-current" /> Přehrát
         </button>
@@ -710,7 +710,7 @@ function EmptyLibrary({
             {mediaPermission === "denied" ? "Otevřít nastavení" : "Povolit přístup"}
           </button>
         ) : null}
-        <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent">
+        <label className="ui-pick flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium hover:bg-accent">
           <Upload className="size-3.5" /> Vybrat soubory
           <input type="file" accept="audio/*" multiple onChange={onUpload} className="hidden" />
         </label>

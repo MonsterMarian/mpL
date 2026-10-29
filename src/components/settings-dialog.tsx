@@ -18,6 +18,7 @@ import {
   type SectionIcons,
   type SectionId,
 } from "@/lib/section-icons";
+import { loadUnifiedLook, saveUnifiedLook } from "@/lib/look";
 import { cn } from "@/lib/utils";
 
 type Tab = "main" | "addons";
@@ -160,6 +161,10 @@ export function SettingsDialog({
             <Section title="Ikony sekcí" hint="Volba se projeví hned ve spodní liště.">
               <SectionIconChoice open={open} onChange={onSectionIconsChange} />
             </Section>
+
+            <Section title="Vzhled" hint="Zkušební přepínač: porovnej starou a sjednocenou podobu.">
+              <UnifiedLookToggle open={open} />
+            </Section>
           </div>
         )}
       </div>
@@ -236,43 +241,81 @@ function AddonChoice({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      {ADDONS.map((addon) => {
-        const on = addons[addon.id];
-        return (
-          <button
-            key={addon.id}
-            type="button"
-            onClick={() => {
-              saveAddon(addon.id, !on);
-              onAddonChange?.(addon.id, !on);
-            }}
-            aria-pressed={on}
-            className={cn(
-              "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-              on ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
-            )}
-          >
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">{addon.label}</span>
-              <span className="block text-xs text-muted-foreground">{addon.hint}</span>
-            </span>
-            <span
-              className={cn(
-                "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-                on ? "bg-brand" : "bg-muted-foreground/30",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-1 size-4 rounded-full bg-black shadow transition-[left] duration-200",
-                  on ? "left-6" : "left-1",
-                )}
-              />
-            </span>
-          </button>
-        );
-      })}
+      {ADDONS.map((addon) => (
+        <ToggleRow
+          key={addon.id}
+          label={addon.label}
+          hint={addon.hint}
+          on={addons[addon.id]}
+          onToggle={(on) => {
+            saveAddon(addon.id, on);
+            onAddonChange?.(addon.id, on);
+          }}
+        />
+      ))}
     </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  on,
+  onToggle,
+}: {
+  label: string;
+  hint: string;
+  on: boolean;
+  onToggle: (on: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!on)}
+      aria-pressed={on}
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+        on ? "border-foreground/40 bg-accent" : "hover:bg-accent/50",
+      )}
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <span
+        className={cn(
+          "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+          on ? "bg-brand" : "bg-muted-foreground/30",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-1 size-4 rounded-full bg-black shadow transition-[left] duration-200",
+            on ? "left-6" : "left-1",
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
+function UnifiedLookToggle({ open }: { open: boolean }) {
+  const [on, setOn] = React.useState(false);
+
+  React.useEffect(() => {
+    if (open) setOn(loadUnifiedLook());
+  }, [open]);
+
+  return (
+    <ToggleRow
+      label="Sjednocený vzhled"
+      hint="Oranžová tlačítka, „Vybrat soubor“, přepínače a nadpisy stránek v jedné podobě."
+      on={on}
+      onToggle={(next) => {
+        setOn(next);
+        saveUnifiedLook(next);
+      }}
+    />
   );
 }
 

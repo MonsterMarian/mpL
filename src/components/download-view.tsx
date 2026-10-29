@@ -291,7 +291,7 @@ export function DownloadView({
         <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-brand">
           <ArrowDownToLine className="size-3.5" /> Addon · stahování
         </p>
-        <h1 className="text-3xl font-semibold tracking-tight">Stahování</h1>
+        <h1 className="ui-title text-3xl font-semibold tracking-tight">Stahování</h1>
         <p className="mt-2 max-w-lg text-sm text-muted-foreground">
           Odkaz na YouTube, Spotify, nebo přímo na soubor. Stažené jde do Hudby (Filmů)
           v telefonu, takže si to knihovna appky najde sama.
@@ -325,7 +325,7 @@ export function DownloadView({
                 type="button"
                 onClick={() => setKind(option.id)}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-colors",
+                  "ui-seg-item flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-colors",
                   kind === option.id ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -349,7 +349,7 @@ export function DownloadView({
           <button
             type="submit"
             disabled={!url.trim() || busy !== null}
-            className="flex h-11 items-center justify-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="ui-cta flex h-11 items-center justify-center gap-2 rounded-xl bg-brand px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : <ArrowDownToLine className="size-4" />}
             {busy === "resolving" ? "Hledám…" : "Stáhnout"}

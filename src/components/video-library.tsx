@@ -393,12 +393,12 @@ export function VideoLibrary({
           <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-brand">
             <Film className="size-3.5" /> Addon · video
           </p>
-          <h1 className="text-3xl font-semibold tracking-tight">Video</h1>
+          <h1 className="ui-title text-3xl font-semibold tracking-tight">Video</h1>
           <p className="mt-2 max-w-lg text-sm text-muted-foreground">
             MP4 z telefonu. Když jede video, hudba i předčítání mlčí — zvuk je jeden.
           </p>
         </div>
-        <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90">
+        <label className="ui-pick inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-brand px-4 text-sm font-semibold text-black transition-opacity hover:opacity-90">
           <Upload className="size-4" /> Vybrat soubor
           <input type="file" accept="video/*" multiple onChange={addFiles} className="hidden" />
         </label>
