@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookTitle,
   buildTextPages,
   clampPage,
   documentId,
@@ -143,5 +144,25 @@ describe("pozice kusů na stránce", () => {
       at = segment.end;
     }
     expect(text.slice(at).trim()).toBe("");
+  });
+});
+
+describe("název knihy ze souboru", () => {
+  it("uklidí názvy z webu a Z-Library", () => {
+    expect(
+      bookTitle(
+        "dokumen.pub_traction-how-any-startup-can-achieve-rapid-customer-growth-9780241242551-024124255x-978-0-698-41187-6-0698411870.pdf",
+      ),
+    ).toBe("Traction how any startup can achieve rapid customer growth");
+    expect(bookTitle("Tim Schwab_The Bill Gates Problem (Z-Library).pdf")).toBe("Tim Schwab The Bill Gates Problem");
+    expect(bookTitle("CZ_Admiral_William_H._McRaven_Make_Your_Bed_(Z-Library).pdf")).toBe(
+      "CZ Admiral William H. McRaven Make Your Bed",
+    );
+  });
+
+  it("vlastní pomlčky a slušné názvy nechá být", () => {
+    expect(bookTitle("Psycho-cybernetics_CZ.pdf")).toBe("Psycho-cybernetics CZ");
+    expect(bookTitle("Awaken the Giant Within - Tony Robbins.pdf")).toBe("Awaken the Giant Within - Tony Robbins");
+    expect(bookTitle("poznamky-2026.txt")).toBe("Poznamky 2026");
   });
 });

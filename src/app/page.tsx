@@ -89,6 +89,7 @@ import {
 } from "@/lib/playlists";
 import {
   buildTextPages,
+  bookTitle,
   clampPage,
   documentId,
   isImageOnly,
@@ -227,6 +228,66 @@ async function extractPages(
       }
       return { text: pageText(textFromContent(content).text), label: `Strana ${at + 1}` };
     }),
+  );
+}
+
+/**
+ * Pokračovat ve čtení.
+ *
+ * Naposledy čtená kniha nahoře v Dokumentech - jedno klepnutí a čtenář je
+ * zpátky na stránce, kde skončil. Obálka je rozmazaná i do pozadí karty,
+ * takže každá kniha má kartu ve svých barvách.
+ */
+function ContinueReading({ document: doc, onOpen }: { document: StoredDocument; onOpen: () => void }) {
+  const at = clampPage(doc.page, doc.pages.length);
+  const percent = doc.pages.length > 1 ? Math.round((at / (doc.pages.length - 1)) * 100) : 0;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative mb-6 flex w-full items-center gap-4 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 pr-4 text-left transition-colors hover:border-white/[0.14] active:scale-[0.99]"
+    >
+      {doc.thumbnail ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URI z pdf.js
+        <img
+          src={doc.thumbnail}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 size-full scale-150 object-cover opacity-30 blur-2xl saturate-150"
+        />
+      ) : null}
+      <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black/30 via-black/60 to-black/80" />
+
+      <span className="relative aspect-[3/4] w-[4.5rem] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.06] shadow-[0_8px_24px_rgb(0_0_0/0.45)]">
+        {doc.thumbnail ? (
+          // eslint-disable-next-line @next/next/no-img-element -- data URI z pdf.js
+          <img src={doc.thumbnail} alt="" aria-hidden="true" className="size-full object-cover" />
+        ) : (
+          <span className="flex size-full items-center justify-center">
+            <FileText className="size-6 text-muted-foreground" />
+          </span>
+        )}
+      </span>
+
+      <span className="relative min-w-0 flex-1">
+        <span className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-brand">Pokračovat ve čtení</span>
+        <span className="mt-1 line-clamp-2 text-[15px] font-semibold leading-snug tracking-[-0.01em]">{bookTitle(doc.name)}</span>
+        <span className="mt-2.5 flex items-center justify-between gap-2 text-[11px] tabular-nums text-white/60">
+          <span>
+            Strana {at + 1} z {doc.pages.length}
+          </span>
+          <span>{percent} %</span>
+        </span>
+        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-white/10">
+          <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.max(percent, 2)}%` }} />
+        </span>
+      </span>
+
+      <span className="relative flex size-11 shrink-0 items-center justify-center rounded-full bg-brand text-black shadow-[0_6px_18px_rgb(245_163_58/0.35)] transition-transform group-hover:scale-105">
+        <BookOpen className="size-5" />
+      </span>
+    </button>
   );
 }
 
@@ -620,20 +681,12 @@ export default function HomePage() {
     setStorageReady(true);
     void loadDeviceMusic();
 
-    // Knihovna dokumentů z disku. Naposledy otevřený se rovnou nabídne
-    // a otevře se na stránce, kde uživatel skončil.
+    // Knihovna dokumentů z disku. Naposledy čtená kniha se neotevírá sama -
+    // Dokumenty po startu ukážou knihovnu a v ní kartu „Pokračovat ve čtení".
+    // Dřív se kniha otevřela i tomu, kdo chtěl jinou, a appka po každém
+    // startu zbytečně rozebírala PDF, i když se šlo poslouchat hudbu.
     void listDocuments().then((stored) => {
-      if (!stored.length) return;
-      setDocuments(stored);
-      const last = stored[0];
-      setDocumentId(last.id);
-      setDocumentPage(last.page);
-      setDocumentBookmarks(last.bookmarks);
-      // Tohle je ten důvod, proč se kniha po startu appky ukazovala jako holý
-      // text: obnovil se záznam z knihovny, ale soubor, ze kterého se kreslí
-      // stránky, si nikdo nevyžádal. Čtečka pak neměla co vykreslit a spadla
-      // na náhradní zobrazení - a vypadalo to, že vykreslování prostě nefunguje.
-      void loadDocumentFile(last);
+      if (stored.length) setDocuments(stored);
     });
   }, [loadDeviceMusic]);
 
@@ -2413,6 +2466,10 @@ export default function HomePage() {
             </div>
             )}
 
+            {documents.length > 0 && !activeDoc && !docSelected && docFolder === null ? (
+              <ContinueReading document={documents[0]} onOpen={() => openDocument(documents[0])} />
+            ) : null}
+
             {/*
               Co leží v telefonu. Ruční výběr souboru zůstává, ale jako záloha -
               knihy a skripta jsou v telefonu už teď a hledat je přes systémový
@@ -2513,7 +2570,7 @@ export default function HomePage() {
                             <DocumentCover document={doc} className="aspect-[3/4] w-full" />
                             {docSelected ? <SelectedMark selected={docSelected.has(`dev:${doc.id}`)} /> : null}
                           </span>
-                          <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
+                          <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
                           <span className="block text-[11px] text-muted-foreground">
                             {Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB
                           </span>
@@ -2562,7 +2619,7 @@ export default function HomePage() {
                           </span>
                           {docSelected ? <SelectedMark selected={docSelected.has(`lib:${doc.id}`)} /> : null}
                         </span>
-                        <span className="mt-1.5 block truncate text-xs font-medium">{doc.name}</span>
+                        <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
                         <span className="block text-[11px] tabular-nums text-muted-foreground">
                           {at + 1} / {doc.pages.length}
                         </span>

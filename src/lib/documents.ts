@@ -109,6 +109,27 @@ export function documentId(name: string, size: number): string {
 }
 
 /** Stránka v mezích dokumentu - uložený index může být z kratší verze souboru. */
+/**
+ * Název knihy z názvu souboru.
+ *
+ * Soubory z webu se jmenují jako „dokumen.pub_traction-how-any-…-9780241242551"
+ * nebo „… (Z-Library)". Na kartě má stát kniha, ne adresa, ze které přišla:
+ * pryč přípona, předpona webu, značka Z-Library a ISBN se vším za ním.
+ * Pomlčky se mění na mezery jen v názvech bez mezer - „Psycho-cybernetics"
+ * má pomlčku vlastní.
+ */
+export function bookTitle(fileName: string): string {
+  let title = fileName
+    .replace(/\.[a-z0-9]{2,4}$/i, "")
+    .replace(/^[a-z0-9-]+\.(?:com|pub|org|net|io)_/i, "")
+    .replace(/\s*\(z-?lib(?:rary|\.org)?\)\s*/gi, " ")
+    .replace(/[-_ ](?:97[89])?\d{9}[\dx](?:[-_ ].*)?$/i, "")
+    .replace(/_+/g, " ");
+  if (!title.trim().includes(" ")) title = title.replace(/-+/g, " ");
+  title = title.replace(/\s+/g, " ").trim();
+  return title ? title[0].toUpperCase() + title.slice(1) : fileName;
+}
+
 export function clampPage(page: number, pageCount: number): number {
   if (pageCount <= 0) return 0;
   if (!Number.isFinite(page)) return 0;
