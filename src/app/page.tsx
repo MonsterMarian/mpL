@@ -2248,6 +2248,20 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId_, documentPage, documentBookmarks]);
 
+  // Appka do pozadí (zamčení, přepnutí, zavření): postup hned, odložené
+  // uložení by systém mohl zaříznout dřív, než doběhne.
+  const progressNow = React.useRef<{ id: string; page: number; bookmarks: number[] } | null>(null);
+  progressNow.current = documentId_ ? { id: documentId_, page: documentPage, bookmarks: documentBookmarks } : null;
+
+  React.useEffect(() => {
+    const flush = () => {
+      const now = progressNow.current;
+      if (document.visibilityState === "hidden" && now) void saveProgress(now.id, now.page, now.bookmarks);
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, []);
+
   /*
     Rozečtená věta se drží na obrazovce. Bez tohohle se zvýraznění po pár
     větách vyroluje pryč a poslouchající kouká na kus stránky, který se dávno
