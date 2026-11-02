@@ -2510,20 +2510,25 @@ export default function HomePage() {
                   bloku, takže se hledalo, které z nich vlastně dělá co.
                 */}
                 <div className="mb-3 flex items-center gap-2">
-                  <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {docFolder ? docFolder : deviceDocs.length > 0 ? "Složky" : "Knihovna"}
+                  {/* Jen jméno složky, ne celá cesta: „WhatsApp/…/WhatsApp Documents" roztáhla stránku do šířky. */}
+                  <h2 className="min-w-0 flex-1 truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {docFolder
+                      ? (documentFolders.find((folder) => folder.name === docFolder)?.label ?? docFolder)
+                      : deviceDocs.length > 0
+                        ? "Složky"
+                        : "Knihovna"}
                   </h2>
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     {docFolder ? (
                       <button
                         type="button"
                         onClick={() => setDocFolder(null)}
-                        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                        className="flex items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                       >
                         <ChevronLeft className="size-3.5" /> Zpět na složky
                       </button>
                     ) : null}
-                    <label className="ui-pick flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 text-xs font-medium transition-colors hover:bg-white/10">
+                    <label className="ui-pick flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-white/10 bg-white/[0.06] px-3 text-xs font-medium transition-colors hover:bg-white/10">
                       <FileUp className="size-3.5" /> Vybrat soubor
                       <input
                         type="file"
