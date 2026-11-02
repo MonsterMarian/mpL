@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   BookOpen,
+  Check,
   BookOpenText,
   Bookmark,
   BookmarkCheck,
@@ -237,6 +238,49 @@ async function extractPages(
 /** Kolik stránek jde do workeru naráz při čtení textu. */
 const TEXT_BATCH = 24;
 
+/** Kde je kniha: nezačatá, rozečtená, nebo dočtená - a kolik z ní je za čtenářem. */
+function readingState(doc: StoredDocument) {
+  const at = clampPage(doc.page, doc.pages.length);
+  const last = doc.pages.length - 1;
+  const percent = last > 0 ? Math.round((at / last) * 100) : 0;
+  const state: "new" | "reading" | "done" = at === 0 ? "new" : at >= last ? "done" : "reading";
+  return { at, percent, state };
+}
+
+function readingLabel(doc: StoredDocument): string {
+  const { at, state } = readingState(doc);
+  if (state === "done") return "Dočteno";
+  if (state === "reading") return `Strana ${at + 1} z ${doc.pages.length}`;
+  return countWord(doc.pages.length, ["strana", "strany", "stran"]);
+}
+
+/**
+ * Značka rozečtené knihy na obálce.
+ *
+ * Tenký pruh na spodku obálky přehlédl skoro každý - rozečtená kniha vypadala
+ * stejně jako nezačatá. Štítek s procenty je vidět na první pohled.
+ */
+function ReadingMark({ document: doc }: { document: StoredDocument }) {
+  const { percent, state } = readingState(doc);
+  if (state === "new") return null;
+  return (
+    <>
+      <span className="pointer-events-none absolute bottom-2.5 left-1.5 inline-flex items-center gap-0.5 rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-black shadow-[0_2px_8px_rgb(0_0_0/0.4)]">
+        {state === "done" ? (
+          <>
+            <Check className="size-3" /> Dočteno
+          </>
+        ) : (
+          `${percent} %`
+        )}
+      </span>
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/55">
+        <span className="block h-full bg-brand" style={{ width: `${state === "done" ? 100 : Math.max(percent, 3)}%` }} />
+      </span>
+    </>
+  );
+}
+
 /**
  * Pokračovat ve čtení.
  *
@@ -245,8 +289,7 @@ const TEXT_BATCH = 24;
  * takže každá kniha má kartu ve svých barvách.
  */
 function ContinueReading({ document: doc, onOpen }: { document: StoredDocument; onOpen: () => void }) {
-  const at = clampPage(doc.page, doc.pages.length);
-  const percent = doc.pages.length > 1 ? Math.round((at / (doc.pages.length - 1)) * 100) : 0;
+  const { at, percent } = readingState(doc);
 
   return (
     <button
@@ -2583,7 +2626,10 @@ export default function HomePage() {
                   <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
                     {deviceDocs
                       .filter((doc) => (doc.folder || "Jinde") === docFolder)
-                      .map((doc) => (
+                      .map((doc) => {
+                        const known = documents.find((item) => item.name === doc.name);
+                        const started = known && readingState(known).state !== "new";
+                        return (
                         <button
                           key={doc.id}
                           type="button"
@@ -2597,14 +2643,16 @@ export default function HomePage() {
                         >
                           <span className="relative block overflow-hidden rounded-xl">
                             <DocumentCover document={doc} className="aspect-[3/4] w-full" />
+                            {known ? <ReadingMark document={known} /> : null}
                             {docSelected ? <SelectedMark selected={docSelected.has(`dev:${doc.id}`)} /> : null}
                           </span>
                           <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
-                          <span className="block text-[11px] text-muted-foreground">
-                            {Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB
+                          <span className={cn("block truncate text-[11px] tabular-nums", started ? "text-brand/90" : "text-muted-foreground")}>
+                            {known && started ? readingLabel(known) : `${Math.max(1, Math.round(doc.sizeBytes / 1024 / 1024))} MB`}
                           </span>
                         </button>
-                      ))}
+                        );
+                      })}
                   </div>
                 )}
               </div>
@@ -2618,8 +2666,6 @@ export default function HomePage() {
               */
               <div className="mb-6 grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
                 {documents.map((doc) => {
-                  const at = clampPage(doc.page, doc.pages.length);
-                  const read = doc.pages.length > 1 ? (at / (doc.pages.length - 1)) * 100 : 0;
                   return (
                     <div key={doc.id} className="group relative">
                       <button
@@ -2643,14 +2689,17 @@ export default function HomePage() {
                           ) : (
                             <FileText className="size-7 text-muted-foreground" />
                           )}
-                          <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/10">
-                            <span className="block h-full bg-brand" style={{ width: `${read}%` }} />
-                          </span>
+                          <ReadingMark document={doc} />
                           {docSelected ? <SelectedMark selected={docSelected.has(`lib:${doc.id}`)} /> : null}
                         </span>
                         <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
-                        <span className="block text-[11px] tabular-nums text-muted-foreground">
-                          {at + 1} / {doc.pages.length}
+                        <span
+                          className={cn(
+                            "block truncate text-[11px] tabular-nums",
+                            readingState(doc).state === "new" ? "text-muted-foreground" : "text-brand/90",
+                          )}
+                        >
+                          {readingLabel(doc)}
                         </span>
                       </button>
                       {/*
