@@ -109,6 +109,14 @@ export function documentId(name: string, size: number): string {
 }
 
 /** Stránka v mezích dokumentu - uložený index může být z kratší verze souboru. */
+function isIsbn(code: string): boolean {
+  const digits = code.toUpperCase().split("").map((char) => (char === "X" ? 10 : Number(char)));
+  if (digits.length === 13) {
+    return digits.reduce((sum, digit, at) => sum + digit * (at % 2 ? 3 : 1), 0) % 10 === 0;
+  }
+  return digits.reduce((sum, digit, at) => sum + digit * (10 - at), 0) % 11 === 0;
+}
+
 /**
  * Název knihy z názvu souboru.
  *
@@ -118,13 +126,16 @@ export function documentId(name: string, size: number): string {
  * Pomlčky se mění na mezery jen v názvech bez mezer - „Psycho-cybernetics"
  * má pomlčku vlastní.
  */
+
 export function bookTitle(fileName: string): string {
   let title = fileName
     .replace(/\.[a-z0-9]{2,4}$/i, "")
     .replace(/^[a-z0-9-]+\.(?:com|pub|org|net|io)_/i, "")
-    .replace(/\s*\(z-?lib(?:rary|\.org)?\)\s*/gi, " ")
-    .replace(/[-_ ](?:97[89])?\d{9}[\dx](?:[-_ ].*)?$/i, "")
-    .replace(/_+/g, " ");
+    .replace(/\s*\(z-?lib(?:rary|\.org)?\)\s*/gi, " ");
+  // ISBN jen s platnou kontrolní číslicí - „Faktura_2026100512" si číslo nechá.
+  const isbn = /[-_ ]((?:97[89])?\d{9}[\dx])(?:[-_ ].*)?$/i.exec(title);
+  if (isbn && isIsbn(isbn[1])) title = title.slice(0, isbn.index);
+  title = title.replace(/_+/g, " ");
   if (!title.trim().includes(" ")) title = title.replace(/-+/g, " ");
   title = title.replace(/\s+/g, " ").trim();
   return title ? title[0].toUpperCase() + title.slice(1) : fileName;

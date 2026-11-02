@@ -26,6 +26,8 @@ const LIMIT = 20;
  * localStorage) smaže odinstalace, tenhle soubor ne.
  */
 const BACKUP_FILE = "P_layer/stahovani.json";
+/** Záloha existuje, ale nejde přečíst - nesmí se přepsat tím málem, co appka zrovna má. */
+let backupBlocked = false;
 
 function parseDownloads(raw: string | null): DownloadRecord[] {
   try {
@@ -55,7 +57,7 @@ function saveDownloads(list: DownloadRecord[]) {
   } catch {
     // soukromý režim - seznam vydrží do zavření appky
   }
-  if (!Capacitor.isNativePlatform()) return;
+  if (!Capacitor.isNativePlatform() || backupBlocked) return;
   Filesystem.writeFile({
     path: BACKUP_FILE,
     directory: Directory.Documents,
@@ -83,12 +85,16 @@ export function mergeDownloads(a: DownloadRecord[], b: DownloadRecord[]): Downlo
  */
 export async function restoreDownloads(): Promise<DownloadRecord[]> {
   if (!Capacitor.isNativePlatform()) return loadDownloads();
-  let backup: DownloadRecord[] = [];
+  let backup: DownloadRecord[];
   try {
     const file = await Filesystem.readFile({ path: BACKUP_FILE, directory: Directory.Documents, encoding: Encoding.UTF8 });
     backup = parseDownloads(String(file.data));
-  } catch {
-    // záloha ještě není - nebo ji appka po přeinstalaci bez „přístupu ke všem souborům" nepřečte
+  } catch (error) {
+    // Záloha ještě není - tu založí první stahování. Nebo ji appka po
+    // přeinstalaci bez „přístupu ke všem souborům" nepřečte: pak se do ní
+    // nezapisuje vůbec, přepsala by ji prázdným seznamem.
+    if (!/does not exist|no such file|not found/i.test(String(error))) backupBlocked = true;
+    return loadDownloads();
   }
   const merged = mergeDownloads(loadDownloads(), backup);
   saveDownloads(merged);
@@ -226,4 +232,14 @@ export function downloadedTrack<T extends { title: string; artist: string }>(
       base(safeFileName(`${track.artist} - ${track.title}`, "mp3")) === wanted ||
       base(safeFileName(track.title, "mp3")) === wanted,
   );
+}
+
+/**
+ * Je to tentýž stažený soubor? Android soubor stejného jména uloží jako
+ * „Video (1).mp4" - historie ale zná jen „Video.mp4" a video by vypadalo
+ * jako smazané.
+ */
+export function sameVideoFile(onDevice: string, inHistory: string): boolean {
+  const plain = (name: string) => name.toLowerCase().replace(/ \(\d+\)(?=\.[a-z0-9]+$)/, "");
+  return plain(onDevice) === plain(inHistory);
 }

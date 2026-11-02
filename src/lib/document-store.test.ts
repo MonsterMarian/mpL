@@ -49,5 +49,11 @@ describe("document-store", () => {
     expect(saved.map((d) => d.id).sort()).toEqual(["nova", "stara"]);
     expect(saved.find((d) => d.id === "stara")?.page).toBe(1);
     expect(reads).toHaveBeenCalledTimes(1);
+
+    // Otevřená kniha jde nahoru a nese stranu z úložiště, ne starší ze stavu appky.
+    await store.moveDocumentToTop("stara");
+    const reordered = JSON.parse(disk.get("documents.json")!) as StoredDocument[];
+    expect(reordered.map((d) => d.id)).toEqual(["stara", "nova"]);
+    expect(reordered[0].page).toBe(1);
   });
 });

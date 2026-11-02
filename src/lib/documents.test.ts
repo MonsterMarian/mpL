@@ -164,5 +164,7 @@ describe("název knihy ze souboru", () => {
     expect(bookTitle("Psycho-cybernetics_CZ.pdf")).toBe("Psycho-cybernetics CZ");
     expect(bookTitle("Awaken the Giant Within - Tony Robbins.pdf")).toBe("Awaken the Giant Within - Tony Robbins");
     expect(bookTitle("poznamky-2026.txt")).toBe("Poznamky 2026");
+    // Deset číslic, ale ne ISBN (nesedí kontrolní číslice).
+    expect(bookTitle("Faktura_2026100512.pdf")).toBe("Faktura 2026100512");
   });
 });

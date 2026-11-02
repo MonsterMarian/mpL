@@ -349,6 +349,9 @@ export function PdfReader({
     },
     [takeOver, onPage, scrollToPage],
   );
+  /** Poslední `jumpTo` pro hledání - to se na jeho změny schválně nepouští znovu. */
+  const latestJump = React.useRef(jumpTo);
+  latestJump.current = jumpTo;
 
   // Stránka zvenčí (obsah, hledání, dočtená stránka při předčítání).
   React.useEffect(() => {
@@ -476,13 +479,12 @@ export function PdfReader({
       setHits(found);
       setHit(0);
       // Skočit tam musí i obraz, ne jen číslo stránky dole.
-      if (found.length) jumpTo(found[0].page, "smooth");
+      if (found.length) latestJump.current(found[0].page, "smooth");
     }, 220);
     return () => window.clearTimeout(timer);
-    // `jumpTo` se nesleduje schválně: mění se s každým překreslením rodiče
-    // a hledání pak po každém skoku (obsah, další nález) vrátilo čtenáře
-    // zpátky na první nález.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `jumpTo` se nesleduje schválně (bere se čerstvý přes ref): mění se
+    // s každým překreslením rodiče a hledání pak po každém skoku (obsah,
+    // další nález) vrátilo čtenáře zpátky na první nález.
   }, [query, pageTexts]);
 
   // Zavřené hledání nemá na stránkách nechat svítit nálezy, které už nejdou procházet.

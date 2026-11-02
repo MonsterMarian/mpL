@@ -23,6 +23,7 @@ import {
   needsResolving,
   restoreDownloads,
   safeFileName,
+  sameVideoFile,
   unsupportedSource,
   type DownloadRecord,
 } from "@/lib/downloads";
@@ -423,7 +424,7 @@ export function DownloadView({
               // Video se jmenuje v telefonu stejně, jak ho appka uložila.
               const present = audio
                 ? Boolean(track)
-                : deviceVideos?.some((video) => video.fileName.toLowerCase() === record.fileName.toLowerCase());
+                : deviceVideos?.some((video) => sameVideoFile(video.fileName, record.fileName));
               // Smazaná skladba či video jde stáhnout znovu stejně jako to, co selhalo.
               const missing = Boolean(audio ? deviceTracks : deviceVideos) && !record.failed && !present;
               const cover = record.failed ? undefined : (track?.artwork ?? record.artwork);

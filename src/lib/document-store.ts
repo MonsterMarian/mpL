@@ -184,6 +184,14 @@ export function removeDocument(id: string): Promise<void> {
   return update((documents) => documents.filter((d) => d.id !== id));
 }
 
+/** Posune knihu na začátek seznamu - podle něj se pozná naposledy čtená. */
+export function moveDocumentToTop(id: string): Promise<void> {
+  return update((documents) => {
+    const found = documents.find((d) => d.id === id);
+    return found && documents[0] !== found ? [found, ...documents.filter((d) => d !== found)] : documents;
+  });
+}
+
 /** Zapíše jen postup ve čtení. Volá se při obracení stránek, takže nezměněný seznam se nepřepisuje. */
 export async function saveProgress(id: string, page: number, bookmarks: number[]): Promise<void> {
   const found = (await load()).find((d) => d.id === id);

@@ -247,7 +247,7 @@ export function LibraryView(props: LibraryViewProps) {
               onUpload={onUpload}
               // Prázdné oblíbené: vybírá se z celé knihovny, ne ze souborů v telefonu.
               onPickTracks={
-                tab === "liked" && !query.trim()
+                tab === "liked" && tracks.length > 0 && !query.trim()
                   ? () => {
                       onTabChange("tracks");
                       onSelectAll([]);

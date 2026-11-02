@@ -99,7 +99,7 @@ import {
   type DocumentPage,
   type StoredDocument,
 } from "@/lib/documents";
-import { listDocuments, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
+import { listDocuments, moveDocumentToTop, removeDocument, saveDocument, saveProgress } from "@/lib/document-store";
 import {
   MAX_STORED_BYTES,
   readDocumentFile,
@@ -209,27 +209,33 @@ async function extractPages(
   pdf: PDFDocumentProxy,
   onProgress?: (percent: number) => void,
 ): Promise<DocumentPage[]> {
-  // Všechny stránky do workeru naráz: po jedné se čekalo na každou cestu tam
-  // a zpátky. A procenta jen párkrát za vteřinu - každé hlášení překreslí
-  // celou obrazovku a u knihy o čtyřech stech stranách to bylo víc práce než
+  // Stránky do workeru po dávkách: po jedné se čekalo na každou cestu tam
+  // a zpátky, všechny naráz by u tlusté knihy zahltily paměť telefonu.
+  // A procenta jen párkrát za vteřinu - každé hlášení překreslí celou
+  // obrazovku a u knihy o čtyřech stech stranách to bylo víc práce než
   // samotné čtení textu (12 s proti 3 s v telefonu).
-  let done = 0;
+  const pages: DocumentPage[] = [];
   let reported = 0;
-  return Promise.all(
-    Array.from({ length: pdf.numPages }, async (_, at) => {
-      const page = await pdf.getPage(at + 1);
+  for (let start = 0; start < pdf.numPages; start += TEXT_BATCH) {
+    const batch = Array.from({ length: Math.min(TEXT_BATCH, pdf.numPages - start) }, async (_, offset) => {
+      const index = start + offset + 1;
+      const page = await pdf.getPage(index);
       const content = await page.getTextContent();
       page.cleanup();
-      done += 1;
-      const now = performance.now();
-      if (done === pdf.numPages || now - reported > 150) {
-        reported = now;
-        onProgress?.(Math.round((done / pdf.numPages) * 100));
-      }
-      return { text: pageText(textFromContent(content).text), label: `Strana ${at + 1}` };
-    }),
-  );
+      return { text: pageText(textFromContent(content).text), label: `Strana ${index}` };
+    });
+    pages.push(...(await Promise.all(batch)));
+    const now = performance.now();
+    if (pages.length === pdf.numPages || now - reported > 150) {
+      reported = now;
+      onProgress?.(Math.round((pages.length / pdf.numPages) * 100));
+    }
+  }
+  return pages;
 }
+
+/** Kolik stránek jde do workeru naráz při čtení textu. */
+const TEXT_BATCH = 24;
 
 /**
  * Pokračovat ve čtení.
@@ -1655,9 +1661,10 @@ export default function HomePage() {
   };
 
   const openDocument = (doc: StoredDocument) => {
-    // Nahoru v knihovně: po startu appky se obnovuje první kniha seznamu, a to
-    // má být ta naposledy čtená, ne naposledy přidaná.
-    void saveDocument(doc);
+    // Nahoru v knihovně: karta „Pokračovat ve čtení" ukazuje první knihu
+    // seznamu, a to má být ta naposledy čtená, ne naposledy přidaná. Jen
+    // přesun - celý záznam ze stavu by mohl přepsat novější stranu.
+    void moveDocumentToTop(doc.id);
     setDocuments((previous) => [doc, ...previous.filter((item) => item.id !== doc.id)]);
     showDocument(doc, null);
     void loadDocumentFile(doc);
@@ -1954,7 +1961,7 @@ export default function HomePage() {
     const fromLibrary = documents.filter((doc) => wanted.has(`lib:${doc.id}`));
     const fromDevice = deviceDocs.filter((doc) => wanted.has(`dev:${doc.id}`));
     if (!fromLibrary.length && !fromDevice.length) return;
-    if (fromDevice.length && !confirmed) {
+    if (!confirmed) {
       // Výběr zůstane - kdyby si to uživatel rozmyslel, nemusí vybírat znovu.
       setConfirmDocs([...wanted]);
       return;
@@ -2061,6 +2068,8 @@ export default function HomePage() {
    * tam, kde se skončilo.
    */
   const closeDocument = () => {
+    // Odložené uložení postupu zruší změna knihy - poslední stránka by se ztratila.
+    if (documentId_) persistProgress(documentId_, documentPage, documentBookmarks);
     stopReading();
     setSpeechChunk(0);
     setSpeechPage(null);
@@ -2221,21 +2230,22 @@ export default function HomePage() {
    * několikrát za vteřinu. Vteřina zpoždění se na ztrátě postupu neprojeví,
    * na plynulosti čtení ano.
    */
+  const persistProgress = (id: string, page: number, bookmarks: number[]) => {
+    void saveProgress(id, page, bookmarks);
+    // I knihovna v paměti - jinak karta ukazovala starou stranu a znovu
+    // otevřená kniha naskočila tam, kde byla při startu appky.
+    setDocuments((previous) =>
+      previous.map((item) =>
+        item.id === id && (item.page !== page || item.bookmarks !== bookmarks) ? { ...item, page, bookmarks } : item,
+      ),
+    );
+  };
+
   React.useEffect(() => {
     if (!documentId_) return;
-    const timer = window.setTimeout(() => {
-      void saveProgress(documentId_, documentPage, documentBookmarks);
-      // I knihovna v paměti - jinak karta ukazovala starou stranu a znovu
-      // otevřená kniha naskočila tam, kde byla při startu appky.
-      setDocuments((previous) =>
-        previous.map((item) =>
-          item.id === documentId_ && (item.page !== documentPage || item.bookmarks !== documentBookmarks)
-            ? { ...item, page: documentPage, bookmarks: documentBookmarks }
-            : item,
-        ),
-      );
-    }, 1000);
+    const timer = window.setTimeout(() => persistProgress(documentId_, documentPage, documentBookmarks), 1000);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId_, documentPage, documentBookmarks]);
 
   /*
@@ -3019,8 +3029,13 @@ export default function HomePage() {
 
       <ConfirmDelete
         open={confirmDocs.length > 0}
-        title="Smazat z telefonu?"
+        title={confirmDocs.some((key) => key.startsWith("dev:")) ? "Smazat z telefonu?" : "Odebrat z knihovny?"}
         description={confirmDocs.length ? countWord(confirmDocs.length, ["soubor", "soubory", "souborů"]) : undefined}
+        body={
+          confirmDocs.some((key) => key.startsWith("dev:"))
+            ? undefined
+            : "Zmizí i záložky a strana, kde jsi skončil. Soubor v telefonu zůstane."
+        }
         count={confirmDocs.length}
         onCancel={() => setConfirmDocs([])}
         onConfirm={() => deleteDocs(confirmDocs, true)}

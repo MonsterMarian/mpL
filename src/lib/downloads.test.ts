@@ -7,6 +7,7 @@ import {
   mergeDownloads,
   needsResolving,
   safeFileName,
+  sameVideoFile,
   unsupportedSource,
 } from "./downloads";
 
@@ -107,5 +108,13 @@ describe("záloha historie", () => {
       { url: "a", fileName: "A.m4a", at: 5 },
       { url: "b", fileName: "B.m4a", at: 3 },
     ]);
+  });
+});
+
+describe("sameVideoFile", () => {
+  it("pozná video, které Android přejmenoval kvůli shodě jména", () => {
+    expect(sameVideoFile("Video (1).mp4", "Video.mp4")).toBe(true);
+    expect(sameVideoFile("VIDEO.MP4", "video.mp4")).toBe(true);
+    expect(sameVideoFile("Jiné video.mp4", "Video.mp4")).toBe(false);
   });
 });
