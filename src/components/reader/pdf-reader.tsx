@@ -162,6 +162,8 @@ export function PdfReader({
   const [query, setQuery] = React.useState("");
   const [hits, setHits] = React.useState<SearchHit[]>([]);
   const [hit, setHit] = React.useState(0);
+  /** Stránka, ze které se začalo hledat. Psaní dotazu je jen náhled, čtenář se sem po zavření vrátí. */
+  const searchOrigin = React.useRef<number | null>(null);
   /** Přiblížení během štípnutí dvěma prsty; stránky se překreslí až po něm. */
   const [pinch, setPinch] = React.useState(1);
 
@@ -476,10 +478,13 @@ export function PdfReader({
     }
     const timer = window.setTimeout(() => {
       const found = searchPages(pageTexts, query);
+      // Nejbližší nález od rozečteného místa, ne první v celé knize.
+      const from = searchOrigin.current ?? page;
+      const nearest = Math.max(0, found.findIndex((item) => item.page >= from));
       setHits(found);
-      setHit(0);
+      setHit(nearest);
       // Skočit tam musí i obraz, ne jen číslo stránky dole.
-      if (found.length) latestJump.current(found[0].page, "smooth");
+      if (found.length) latestJump.current(found[nearest].page, "smooth");
     }, 220);
     return () => window.clearTimeout(timer);
     // `jumpTo` se nesleduje schválně (bere se čerstvý přes ref): mění se
@@ -489,12 +494,21 @@ export function PdfReader({
 
   // Zavřené hledání nemá na stránkách nechat svítit nálezy, které už nejdou procházet.
   React.useEffect(() => {
-    if (panel !== "find") setQuery("");
+    if (panel === "find") {
+      searchOrigin.current = page;
+      return;
+    }
+    setQuery("");
+    // Bez zvoleného nálezu zůstává rozečtené místo - uložil by se náhled.
+    if (searchOrigin.current !== null) latestJump.current(searchOrigin.current);
+    searchOrigin.current = null;
+    // Jen při přepnutí panelu; stránka se během hledání mění a tady se nesleduje.
   }, [panel]);
 
   const goToHit = (index: number) => {
     if (!hits.length) return;
     const at = (index + hits.length) % hits.length;
+    searchOrigin.current = null;
     setHit(at);
     jumpTo(hits[at].page, "smooth");
   };

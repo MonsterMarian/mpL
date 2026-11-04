@@ -1,5 +1,5 @@
 # AgentMEMORY — mpL (P/_ayer)
-Aktualizováno: 2026-11-04 12:29
+Aktualizováno: 2026-11-04 14:01
 
 ## Cíl repa
 Android appka (Capacitor): přehrávač hudby, čtečka PDF, video a stahování. Data jen v telefonu.
@@ -9,11 +9,13 @@ Android appka (Capacitor): přehrávač hudby, čtečka PDF, video a stahování
 - Repo https://github.com/MonsterMarian/mpL, větev `main`.
 
 ## Hotovo
+- 2026-11-04 — Police v Dokumentech: pryč pruhy postupu, nadpisy Rozečtené a Ostatní, karta jen u rozečtené knihy. Hledání už nebere rozečtené místo, TXT nehlásí chybějící soubor, lišta textové čtečky se zalamuje.
 - 2026-11-04 — Dokumentace přepsaná podle skutečné appky (README, NOTES, ANDROID); `PUSHWIN.md` smazaný, byl z MicroWins.
 
 ## Rozpracováno
 
 ## Další kroky
+- Neověřeno v telefonu: police, hledání. Video a nativní přehrávání se v prohlížeči testovat nedají.
 - Pozůstatky po MicroWins mimo MD neřešené: jméno a popis v `package.json`, `scripts/import-progress.mjs`, CSS PushWinu v `globals.css`.
 
 ## Rozhodnutí a poznámky
@@ -21,4 +23,5 @@ Android appka (Capacitor): přehrávač hudby, čtečka PDF, video a stahování
 - Rozhodnutí a omezení appky jsou v `NOTES.md`. Starý obsah NOTES byl kopie z MicroWins, platná verze je v repu MicroWins.
 
 ## Log (posledních ~30)
+- 2026-11-04 14:01 — „otestuj mpL, pryč progress bar, nadpis Rozečtené“ → police, hledání, TXT, lišta; 86 testů, klikač 1 500 kroků bez pádu, balík OTA.
 - 2026-11-04 12:29 — „updejtni MD soubory“ → README a NOTES přepsané, ANDROID opravený, PUSHWIN.md pryč; 86 testů prošlo, žádný balík (jen dokumentace).

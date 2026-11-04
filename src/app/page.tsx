@@ -255,29 +255,29 @@ function readingLabel(doc: StoredDocument): string {
 }
 
 /**
- * Značka rozečtené knihy na obálce.
- *
- * Tenký pruh na spodku obálky přehlédl skoro každý - rozečtená kniha vypadala
- * stejně jako nezačatá. Štítek s procenty je vidět na první pohled.
+ * Značka rozečtené knihy na obálce. Tenký pruh na spodku obálky nebyl vidět,
+ * proto zůstal jen štítek a rozečtené knihy mají vlastní nadpis v polici.
  */
 function ReadingMark({ document: doc }: { document: StoredDocument }) {
   const { percent, state } = readingState(doc);
   if (state === "new") return null;
   return (
-    <>
-      <span className="pointer-events-none absolute bottom-2.5 left-1.5 inline-flex items-center gap-0.5 rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-black shadow-[0_2px_8px_rgb(0_0_0/0.4)]">
-        {state === "done" ? (
-          <>
-            <Check className="size-3" /> Dočteno
-          </>
-        ) : (
-          `${percent} %`
-        )}
-      </span>
-      <span className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/55">
-        <span className="block h-full bg-brand" style={{ width: `${state === "done" ? 100 : Math.max(percent, 3)}%` }} />
-      </span>
-    </>
+    <span className="pointer-events-none absolute bottom-1.5 left-1.5 inline-flex items-center gap-0.5 rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-black shadow-[0_2px_8px_rgb(0_0_0/0.4)]">
+      {state === "done" ? (
+        <>
+          <Check className="size-3" /> Dočteno
+        </>
+      ) : (
+        `${percent} %`
+      )}
+    </span>
+  );
+}
+
+/** Nadpis části police, stejný jako nad složkami. */
+function ShelfHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{children}</h2>
   );
 }
 
@@ -327,9 +327,6 @@ function ContinueReading({ document: doc, onOpen }: { document: StoredDocument; 
             Strana {at + 1} z {doc.pages.length}
           </span>
           <span>{percent} %</span>
-        </span>
-        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-white/10">
-          <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.max(percent, 2)}%` }} />
         </span>
       </span>
 
@@ -1745,6 +1742,8 @@ export default function HomePage() {
    * najít podle jména - a když se nenajde, čtečka si o něj řekne.
    */
   const loadDocumentFile = async (doc: StoredDocument) => {
+    // Textový dokument žádný soubor na kreslení nemá - celý je v knihovně.
+    if (!doc.name.toLowerCase().endsWith(".pdf")) return;
     // Rychlé přeskakování mezi knihami: platí vždycky jen poslední otevření.
     const token = openedAt.current + 1;
     openedAt.current = token;
@@ -1999,6 +1998,65 @@ export default function HomePage() {
    * Z knihovny appky mizí jen to, co si appka o knize drží - záložky a uložená
    * kopie. To jde bez otázky.
    */
+  /* Police je rozdělená na rozečtené a ostatní. Jen dokument, který se opravdu
+     čte: dočtená ani nezačatá kniha nemá v kartě ani pod nadpisem co dělat. */
+  const readingDocs = documents.filter((doc) => readingState(doc).state === "reading");
+  const otherDocs = documents.filter((doc) => readingState(doc).state !== "reading");
+
+  const shelfBook = (doc: StoredDocument) => (
+    <div key={doc.id} className="group relative">
+      <button
+        type="button"
+        onClick={() => (docSelected ? toggleDoc(`lib:${doc.id}`) : openDocument(doc))}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          if (!docSelected) setDocSelected(new Set([`lib:${doc.id}`]));
+        }}
+        className="w-full text-left"
+      >
+        <span
+          className={cn(
+            "relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-xl border bg-white/[0.05]",
+            doc.id === documentId_ ? "border-brand/50" : "border-white/[0.08]",
+          )}
+        >
+          {doc.thumbnail ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URI z pdf.js
+            <img src={doc.thumbnail} alt="" aria-hidden="true" loading="lazy" className="size-full object-cover" />
+          ) : (
+            <FileText className="size-7 text-muted-foreground" />
+          )}
+          <ReadingMark document={doc} />
+          {docSelected ? <SelectedMark selected={docSelected.has(`lib:${doc.id}`)} /> : null}
+        </span>
+        <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
+        <span
+          className={cn(
+            "block truncate text-[11px] tabular-nums",
+            readingState(doc).state === "new" ? "text-muted-foreground" : "text-brand/90",
+          )}
+        >
+          {readingLabel(doc)}
+        </span>
+      </button>
+      {/*
+        Vidět pořád, ne až pod myší: na telefonu se najet myší
+        nedá, takže mazání dřív nešlo vůbec. Ve výběru ustoupí
+        značce „vybráno".
+      */}
+      {docSelected ? null : (
+        <button
+          type="button"
+          onClick={() => deleteDocs([`lib:${doc.id}`])}
+          className="absolute right-1 top-1 rounded-lg bg-black/70 p-1.5 text-white/80 transition-colors hover:bg-black/85 hover:text-white"
+          aria-label={`Smazat ${doc.name} z knihovny`}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+
   const deleteDocs = (keys: Iterable<string>, confirmed = false) => {
     const wanted = new Set(keys);
     const fromLibrary = documents.filter((doc) => wanted.has(`lib:${doc.id}`));
@@ -2533,8 +2591,8 @@ export default function HomePage() {
             </div>
             )}
 
-            {documents.length > 0 && !activeDoc && !docSelected && docFolder === null ? (
-              <ContinueReading document={documents[0]} onOpen={() => openDocument(documents[0])} />
+            {readingDocs.length > 0 && !activeDoc && !docSelected && docFolder === null ? (
+              <ContinueReading document={readingDocs[0]} onOpen={() => openDocument(readingDocs[0])} />
             ) : null}
 
             {/*
@@ -2661,66 +2719,22 @@ export default function HomePage() {
             {documents.length > 0 && !activeDoc ? (
               /*
                 Police s náhledy, ne řádka štítků: podle obálky se pozná, co je
-                co, dřív než podle názvu souboru. Pruh pod dlaždicí ukazuje, kam
-                až je přečteno.
+                co, dřív než podle názvu souboru.
               */
-              <div className="mb-6 grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-                {documents.map((doc) => {
-                  return (
-                    <div key={doc.id} className="group relative">
-                      <button
-                        type="button"
-                        onClick={() => (docSelected ? toggleDoc(`lib:${doc.id}`) : openDocument(doc))}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          if (!docSelected) setDocSelected(new Set([`lib:${doc.id}`]));
-                        }}
-                        className="w-full text-left"
-                      >
-                        <span
-                          className={cn(
-                            "relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-xl border bg-white/[0.05]",
-                            doc.id === documentId_ ? "border-brand/50" : "border-white/[0.08]",
-                          )}
-                        >
-                          {doc.thumbnail ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- data URI z pdf.js
-                            <img src={doc.thumbnail} alt="" aria-hidden="true" loading="lazy" className="size-full object-cover" />
-                          ) : (
-                            <FileText className="size-7 text-muted-foreground" />
-                          )}
-                          <ReadingMark document={doc} />
-                          {docSelected ? <SelectedMark selected={docSelected.has(`lib:${doc.id}`)} /> : null}
-                        </span>
-                        <span className="mt-1.5 block truncate text-xs font-medium">{bookTitle(doc.name)}</span>
-                        <span
-                          className={cn(
-                            "block truncate text-[11px] tabular-nums",
-                            readingState(doc).state === "new" ? "text-muted-foreground" : "text-brand/90",
-                          )}
-                        >
-                          {readingLabel(doc)}
-                        </span>
-                      </button>
-                      {/*
-                        Vidět pořád, ne až pod myší: na telefonu se najet myší
-                        nedá, takže mazání dřív nešlo vůbec. Ve výběru ustoupí
-                        značce „vybráno".
-                      */}
-                      {docSelected ? null : (
-                        <button
-                          type="button"
-                          onClick={() => deleteDocs([`lib:${doc.id}`])}
-                          className="absolute right-1 top-1 rounded-lg bg-black/70 p-1.5 text-white/80 transition-colors hover:bg-black/85 hover:text-white"
-                          aria-label={`Smazat ${doc.name} z knihovny`}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <>
+                {readingDocs.length > 0 ? (
+                  <section className="mb-6">
+                    <ShelfHeading>Rozečtené</ShelfHeading>
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">{readingDocs.map(shelfBook)}</div>
+                  </section>
+                ) : null}
+                {otherDocs.length > 0 ? (
+                  <section className="mb-6">
+                    {readingDocs.length > 0 ? <ShelfHeading>Ostatní</ShelfHeading> : null}
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">{otherDocs.map(shelfBook)}</div>
+                  </section>
+                ) : null}
+              </>
             ) : null}
 
             {/*
@@ -2833,7 +2847,7 @@ export default function HomePage() {
                       <button type="button" className="reader-tool" onClick={() => setDocumentZoom((value) => Math.min(140, value + 10))} aria-label="Zvětšit"><ZoomIn className="size-4" /></button>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <button type="button" className={cn("reader-tool", documentBookmarks.includes(documentPage) && "text-brand")} onClick={() => toggleBookmark()} aria-label="Záložka">
                         {documentBookmarks.includes(documentPage) ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
                       </button>

@@ -45,6 +45,8 @@ stav) · React 19 · TypeScript strict · Tailwind 4 · Vitest (86 testů) · Ca
 | **Appka je jen na výšku, na šířku smí jen `VideoActivity`** | Film má vlastní tlačítko otočení. |
 | **Stránka PDF se kreslí s lhůtou a opakováním** | `page.render()` běží přes `requestAnimationFrame`. Na pozadí se slib nikdy neuzavře, takže by vykreslení zůstalo viset. |
 | **Dokument žije na disku, ne v paměti stránky** | Čtečka se má chovat jako hudba: po restartu je knihovna pořád na místě (`document-store.ts`). |
+| **Police dělí knihy na Rozečtené a Ostatní, bez pruhu postupu** | Tenký pruh na obálce nebyl vidět, uživatel ho nechtěl. Postup říká štítek s procenty a nadpis. Karta Pokračovat ve čtení i nadpis platí jen pro knihu rozečtenou: nezačatá ani dočtená tam nepatří. |
+| **Psaní do hledání je jen náhled** | Skok na nález by se uložil jako rozečtené místo, takže hledání by čtenáři vzalo stránku. Hledá se od aktuální strany a po zavření se čtečka vrátí, pokud si čtenář nezvolil konkrétní nález. Zavření celé čtečky s otevřeným hledáním tahle pojistka nepokrývá. |
 | **Živá aktualizace se nasazuje až při dalším startu** | Přepnutí za běhu by uživateli vzalo obrazovku pod rukama. |
 
 ---
