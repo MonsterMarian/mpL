@@ -1,4 +1,4 @@
-# MicroWins jako Android appka
+# P/_ayer (mpL) jako Android appka
 
 Appka běží v telefonu offline ze souborů v APK. Není to zástupce na web —
 nativní obal (Capacitor) drží WebView, splash screen, ikonu, stavovou lištu,
@@ -13,6 +13,7 @@ hardwarové tlačítko Zpět a vibrace.
 | `android/app/src/main/res/` | ikony, splash, barvy a témata |
 | `scripts/android-assets.mjs` | generátor ikon a splashe z jednoho SVG |
 | `src/lib/native.ts` | most do nativní vrstvy (haptika, lišta, splash, tlačítko Zpět) |
+| `android/app/src/main/java/cz/player/app/` | nativní přehrávání, stahování, video a pluginy pro ně |
 | `out/` | statický export webu, který se do APK kopíruje |
 
 ## Nástroje na tomhle počítači
@@ -111,10 +112,8 @@ soubor `.apk.idsig`.
 
 ### Když se něco pokazí
 
-Rozbalovací **Nastavení → Aktualizace → Adresa manifestu** dovolí ukázat appku
-jinam, než kam míří výchozí adresa. Balík, který appku položí, řeší hlídač
-startu v `app/layout.tsx`: když se do pár vteřin nikdo neozve, vrátí se sám
-k verzi z APK. Ruční tlačítko na to bývalo taky, ale zmizelo.
+Balík, který appku položí, řeší hlídač startu v `app/layout.tsx`: když se do
+pár vteřin nikdo neozve, vrátí se sám k verzi z APK.
 
 ### Data při aktualizaci
 
@@ -130,8 +129,8 @@ Uprav SVG v `scripts/android-assets.mjs` a spusť:
 npm run android:assets
 ```
 
-Barvy tam odpovídají tokenům z `src/app/globals.css` (`--background`, `--win`
-v tmavém režimu). Když se změní paleta appky, změň je i tam a přegeneruj.
+Barvy tam odpovídají tokenům z `src/app/globals.css`. Když se změní paleta
+appky, změň je i tam a přegeneruj.
 
 ## Podpisový klíč
 
@@ -163,70 +162,24 @@ C:\Android\jdk\jdk-21.0.12.1+1\bin\keytool.exe -genkeypair -v -keystore android/
 
 ## Data
 
-Ukládají se do `localStorage` uvnitř WebView appky. Zůstávají po zavření i po
-restartu telefonu. **Odinstalace appky je smaže.**
+Nastavení, playlisty, oblíbené, postup ve čtení a seznam stahování jsou
+v `localStorage` uvnitř WebView appky. Zůstávají po zavření i po restartu telefonu.
+**Odinstalace appky je smaže.** Dokumenty leží v souborech appky přes
+`@capacitor/filesystem` a historie stahování má zálohu v Dokumentech.
 
-Záloha: **Nastavení (ozubené kolo) → Data → Exportovat vše**. V appce se soubor
-zapíše a otevře systémové sdílení, takže míří na Disk, do mailu, kamkoli —
-stahovací odkaz jako v prohlížeči ve WebView nefunguje, proto
-`@capacitor/filesystem` a `@capacitor/share`.
-
-Obnova: **Obnovit ze souboru**, nebo vložit obsah zálohy jako text (záchranná
-cesta, když výběr souboru zlobí).
-
-Načtení se nikdy nespustí rovnou — nejdřív se ukáže náhled: co v souboru je,
-co načíst (**vše / jen projekty / jen strom**), jestli **přidat** k současným
-datům nebo je **nahradit**, a kolik čeho po načtení bude. Díky tomu se dají
-natáhnout projekty odjinud, aniž by se sáhlo na strom winů. Volby, které
-soubor neobsahuje, jsou zašedlé. Logika je v `src/lib/import.ts`.
-
-Záloha nese celý `MicroWinsState` (strom, záznamy, microwiny, projekty, úkoly,
-milníky, denní otisky) plus nastavení vzhledu. Formát viz `src/lib/backup.ts`;
-načte i starší holý export bez obálky.
-
-### Data z jiné aplikace
-
-`scripts/import-progress.mjs` převede CSV export z aplikace Progress na zálohu
-MicroWins, kterou pak vezme **Obnovit ze souboru** s rozsahem „jen projekty":
-
-```bash
-node scripts/import-progress.mjs --in <složka s CSV> [--out <soubor.json>]
-```
-
-Skript si na konci sám přepočítá procenta podle pravidel MicroWins a porovná je
-se zdrojem — když se rozejdou, mapování je špatně a skript skončí chybou.
-Komentáře se dopíšou do popisu úkolu (appka je nemá), přílohy se nepřenesou.
-
-#### Doručení dat balíkem (bez souboru)
-
-Data se do telefonu dají dostat i bez kopírování souboru: balík si je přiveze
-s sebou, při prvním spuštění se usadí do `localStorage` a další verze balíku už
-je obsahovat nemusí. `localStorage` patří k adrese `localhost`, kterou výměna
-souborů nemění, takže po odstranění seedu data zůstanou.
-
-1. `node scripts/import-progress.mjs --seed src/lib/seed-import-data.ts`
-2. Přidat `src/lib/seed-import.ts` — jednorázové použití (značka
-   `microwins:seed:<id>` v localStorage), rozsah **jen projekty**, plus
-   pojistka „projekt se stejným názvem a startem už tu je".
-3. Zavolat `applySeed(loaded)` v `store-provider.tsx` při hydrataci.
-4. `npm run ota:bundle`, commit, push. Uživatel nasadí, data se usadí.
-5. **Po potvrzení** smazat oba soubory i volání, vydat čistý balík.
-
-Pátý krok neodkládej — dokud je seed v manifestu, stáhne si ho každý, kdo
-appku s touhle adresou spustí. A pozor: data zůstávají v historii gitu i po
-smazání souboru, takže tímhle neposílej nic, co nemá být veřejné.
-
-**Historie postupu** se skládá zpátky z dat vzniku a poslední změny každého
-úkolu a podúkolu: zaškrtnutí je skok v den odškrtnutí (přesné), u číselných
-úkolů se růst mezi vznikem a poslední změnou odhaduje rovnoměrně. Bez toho by
-graf i deník změn byly u každého projektu jedna přímka. Poslední otisk padne
-nejpozději na včerejšek — s otiskem k dnešku by appka celý přenesený postup
-ohlásila jako přírůstek dne importu.
+Zálohu všech dat do souboru appka nemá. Klíče v `localStorage` mají kvůli původu
+appky předponu `microwins:`. Přejmenovat je jde jen s migrací, jinak appka uložená
+data přestane vidět.
 
 ## Pozor při vývoji
 
-- Routy nesmí být dynamické (`/projects/[id]`). Statický export neumí
-  předgenerovat cesty pro id, která vzniknou až v telefonu — proto
-  `/projects?id=…`, `/projects/stats?id=…` a `/tasks?id=…`.
+- Appka má jedinou stránku `src/app/page.tsx`, sekce jsou stav. Statický export
+  neumí předgenerovat cesty pro id, která vzniknou až v telefonu.
 - Každá změna webu se do appky dostane až přes `cap sync android`.
   Samotný `next build` na APK nesáhne.
+- `npm run build` za běhu dev serveru rozbije dev appku v prohlížeči, server
+  napřed zastav.
+- Worker čtečky PDF kopíruje do webu `scripts/copy-pdf-worker.mjs` (`npm run
+  pdf:worker`). `dev` i `build` ho spouští samy.
+- Čtečku ověřuj s oknem v popředí. `page.render()` běží přes
+  `requestAnimationFrame` a ve skrytém okně se nikdy nedokončí.

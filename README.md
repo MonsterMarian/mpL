@@ -1,37 +1,55 @@
-# MicroWins
+# P/_ayer (mpL)
 
-[MicroWins](https://github.com/MonsterMarian/MicroWins) je webová a mobilní aplikace pro sledování tvých cílů a úspěchů. Skládá se ze dvou hlavních částí:
+Přehrávač a čtečka do telefonu s Androidem. Jedna appka se čtyřmi sekcemi:
 
-1. **Projekty** - Sledování velkých cílů. Můžeš si projekt rozdělit na menší měřitelné úkoly, sledovat postup, tempo, graf vývoje a deník změn.
-2. **Strom winů** - Systém pro evidenci každodenních úspěchů ("microwinů"). Podporuje tři typy záznamů:
-   - **Číselné** (např. počet kilometrů, prodejů - eviduje se překonání dosavadního rekordu)
-   - **Zaškrtávací** (udělal/neudělal, pro budování návyků)
-   - **Jednorázové** (významné milníky, které se staly jednou)
+1. **Knihovna** - hudba z telefonu: skladby, oblíbené, playlisty, fronta,
+   opakování, náhodné pořadí, časovač vypnutí a počty poslechů. Hraje na pozadí,
+   ovládá se i z notifikace a ze zamčené obrazovky.
+2. **Dokumenty** - PDF a textové soubory. Stránky se kreslí jako v originále,
+   appka si pamatuje, kde se skončilo, a umí záložky, obsah, hledání, sépii,
+   přiblížení i předčítání se zvýrazněnou větou. Sken bez textové vrstvy pozná
+   a řekne to rovnou.
+3. **Video** - filmy z telefonu v nativním přehrávači, i ve formátech, které
+   webové přehrávače neumí.
+4. **Stahování** - hudba a video z odkazů. Doběhne i po odchodu z appky
+   a skladba dostane obrázek, název a interpreta přímo do souboru.
 
-Díky propracované **analýze** můžeš sledovat své "streaky" (série dnů bez přerušení), prohlížet si úspěchy v kalendáři a vidět rozložení podle kategorií.
+Dokumenty, Video a Stahování jsou addony: v Nastavení se dají vypnout, zmizí jen
+jejich záložka a data zůstanou. Podržení položky otevře výběr a akce nad ní, a to
+stejně v hudbě, filmech i dokumentech.
 
-Všechna data zůstávají u tebe – aplikace funguje čistě nad `localStorage`, je plně offline a nepotřebuješ žádný účet. O svá data nepřijdeš, protože si je můžeš kdykoliv exportovat i importovat.
+Všechno leží v telefonu, appka nemá účet ani synchronizaci. Nové verze si stahuje
+sama z GitHubu (viz [ANDROID.md](ANDROID.md)).
 
 ---
 
-## 🚀 Spuštění
+## Spuštění
 
-Pro lokální běh projektu:
+Pro lokální běh:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Aplikace poběží na `http://localhost:3000`.
+Aplikace poběží na `http://localhost:3000`. V prohlížeči běží jen webová část.
+Přehrávání hudby, video, knihovna z telefonu a stahování potřebují nativní vrstvu,
+takže je ověříš až v APK. Stavba APK a vydávání jsou v [ANDROID.md](ANDROID.md),
+rozhodnutí a omezení v [NOTES.md](NOTES.md).
 
-## 🛠 Technologie
+Kontrola před vydáním:
 
-- Next.js 15 (App Router)
-- React 19
+```bash
+npm run ci:validate   # tsc + vitest
+```
+
+## Technologie
+
+- Next.js 15 (statický export) a React 19
 - TypeScript (strict mode)
 - Tailwind CSS 4
-- Vitest pro testování doménové logiky
-- Capacitor (pro běh jako nativní Android aplikace)
-
-Doménová logika (pravidla winů, výpočty projektů) je plně oddělena od Reactu a důkladně pokryta testy. Uživatelské rozhraní je postavené na principech `shadcn/ui` s důrazem na čistý vzhled, rychlost a přehlednost. Podporuje tmavý i světlý režim.
+- Vitest pro testování logiky bez Reactu
+- Capacitor 8 (nativní Android appka)
+- `pdfjs-dist` pro čtečku
+- Nativní vrstva v Javě: Media3 ExoPlayer a libVLC na video, NewPipeExtractor
+  na hledání adres streamů, jump3r na převod do MP3
