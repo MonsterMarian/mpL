@@ -114,7 +114,7 @@ import { SpeechSettings } from "@/components/speech-settings";
 import { createSpeaker, SPEECH_RATES, type Speaker } from "@/lib/speech";
 import { readEmbeddedArtwork } from "@/lib/artwork";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { applyPendingUpdate, checkForUpdate, markBootSucceeded } from "@/lib/live-update";
+import { markBootSucceeded, startAutoUpdate } from "@/lib/live-update";
 import {
   currentNativePlayback,
   listenToNativePlayback,
@@ -360,6 +360,9 @@ export default function HomePage() {
   const [tracks, setTracks] = React.useState<Track[]>([]);
   const [currentTrackId, setCurrentTrackId] = React.useState<string | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
+  // Pro automatickou aktualizaci: při hrající hudbě se WebView nepřekresluje.
+  const isPlayingRef = React.useRef(false);
+  isPlayingRef.current = isPlaying;
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
   const [isShuffled, setIsShuffled] = React.useState(false);
@@ -1049,9 +1052,8 @@ export default function HomePage() {
   });
 
   /**
-   * Nativní start appky: splash pryč, lišta v barvě appky a živá aktualizace.
-   * Nejdřív se nasadí balík stažený minule, teprve pak se kouká po novém -
-   * po nasazení se stejně překresluje celé WebView.
+   * Nativní start appky: splash pryč, lišta v barvě appky a automatické
+   * aktualizace (viz `startAutoUpdate`).
    */
   React.useEffect(() => {
     // Odchyt chyb jako první: cokoliv, co spadne pod ním, má být kde přečíst.
@@ -1059,9 +1061,7 @@ export default function HomePage() {
     void hideSplash();
     void syncStatusBar();
     markBootSucceeded();
-    void applyPendingUpdate().then((result) => {
-      if (!result.applied) void checkForUpdate();
-    });
+    return startAutoUpdate(() => isPlayingRef.current);
   }, []);
 
   /**

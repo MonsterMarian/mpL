@@ -1,10 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import * as liveUpdate from "@/lib/live-update";
 import { askForNotifications, playbackSupport, type PlaybackSupport } from "@/lib/playback-service";
 import { SectionIcon } from "@/components/ui/section-icon";
 import {
@@ -145,7 +144,6 @@ export function SettingsDialog({
               onRequestMediaAccess={onRequestMediaAccess} 
             />
             <SystemPlaybackSection open={open} />
-            <UpdateSection />
           </div>
         ) : (
           <div className="flex flex-col gap-5 animate-in-up">
@@ -441,70 +439,6 @@ function SystemPlaybackSection({ open }: { open: boolean }) {
           </Button>
         )}
       </div>
-    </Section>
-  );
-}
-
-function UpdateSection() {
-  const [current, setCurrent] = React.useState<string | null>(null);
-  const [pending, setPending] = React.useState<string | null>(null);
-  const [checking, setChecking] = React.useState(false);
-  const [statusMsg, setStatusMsg] = React.useState("");
-
-  React.useEffect(() => {
-    setCurrent(liveUpdate.currentBundleVersion());
-    setPending(liveUpdate.pendingBundleVersion());
-  }, []);
-
-  const onApply = async () => {
-    const res = await liveUpdate.applyPendingUpdate();
-    if (res.error) {
-      setStatusMsg("Nasazení selhalo: " + res.error);
-      setPending(liveUpdate.pendingBundleVersion());
-      setCurrent(liveUpdate.currentBundleVersion());
-    } else if (!res.applied) {
-      setStatusMsg("Tahle verze už běží");
-      setPending(null);
-    }
-  };
-
-  const onCheck = async () => {
-    setChecking(true);
-    const res = await liveUpdate.checkForUpdate();
-    setChecking(false);
-    const waiting = liveUpdate.pendingBundleVersion();
-    setPending(waiting);
-
-    if (res.kind === "downloaded") {
-      setStatusMsg("Aktualizace stažena. Změny se projeví po restartu.");
-    } else if (res.kind === "up-to-date") {
-      // „up-to-date" přijde i ve chvíli, kdy nejnovější verze je stažená a jen čeká na nasazení
-      setStatusMsg(waiting ? "Nejnovější verze je stažená, stačí ji nasadit." : "Máš nejnovější verzi.");
-    } else if (res.kind === "disabled") {
-      setStatusMsg("Chybí adresa aktualizací.");
-    } else {
-      setStatusMsg("Chyba: " + res.message);
-    }
-  };
-
-  return (
-    <Section title="Aktualizace" hint="Appka si při startu sama stáhne novou verzi.">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" disabled={checking} onClick={onCheck}>
-          <RefreshCw className={cn("size-4 mr-2", checking && "animate-spin")} />
-          {checking ? "Hledám…" : "Zkontrolovat teď"}
-        </Button>
-        {pending ? (
-          <Button size="sm" onClick={onApply}>
-            Nasadit {pending}
-          </Button>
-        ) : null}
-        <span className="tabular text-xs text-muted-foreground">
-          {pending ? `čeká ${pending}` : current ? `verze ${current}` : "verze z APK"}
-        </span>
-      </div>
-      
-      {statusMsg && <div className="text-xs text-brand mt-1">{statusMsg}</div>}
     </Section>
   );
 }
